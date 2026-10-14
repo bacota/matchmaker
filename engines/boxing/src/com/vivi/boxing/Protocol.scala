@@ -2,7 +2,6 @@ package com.vivi.boxing
 
 import upickle.default.{ReadWriter, macroRW}
 import com.vivi.engine.ClockView
-import upickle.implicits.key
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -73,9 +72,9 @@ object Protocol {
         waitingFor: List[String],
         you: Option[String],
         yourPlan: Option[PlanRequest],
-        @key("completed") isCompleted: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        @key("draw") isDraw: Boolean,
+        isDrawn: Boolean,
         /** "knockout", "points", "lot" or "forfeit", once the bout is over. */
         method: Option[String],
         corners: List[CornerView],
@@ -84,7 +83,7 @@ object Protocol {
         /** Whether the bout is past its schedule: an extra round, fought because the bout may not be drawn and was
           * level after the rounds it was scheduled for.
           */
-        @key("extraRound") isExtraRound: Boolean = false
+        hasExtraRound: Boolean = false
     )
 
     /** One corner as a viewer may see it. `fighter` is the fighter's characteristics, and only in the viewer's own
@@ -97,7 +96,7 @@ object Protocol {
         participantId: Long,
         characterId: Long,
         fighter: Option[FighterView],
-        @key("planned") isPlanned: Boolean,
+        isPlanned: Boolean,
         points: Int,
         // What can be seen of a fighter whose characteristics are not the viewer's to know: see
         // `Fighter.impression`. Empty for the viewer's own corner, whose `fighter` says it all.

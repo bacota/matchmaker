@@ -273,9 +273,9 @@ class RankingServiceSpec extends PropertySuite {
         } yield (first, second, third)
         val (first, second, third) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(first.ratings.flatMap(_.rank), (1 to 18).toList ++ List.fill(4)(19))
-        assert(first.isMore)
+        assert(first.hasMore)
         assertEquals(second.ratings.flatMap(_.rank), (23 to 26).toList)
-        assert(!second.isMore)
-        assertEquals(third, Leaderboard(Nil, isMore = false))
+        assert(!second.hasMore)
+        assertEquals(third, Leaderboard(Nil, hasMore = false))
     }
 }

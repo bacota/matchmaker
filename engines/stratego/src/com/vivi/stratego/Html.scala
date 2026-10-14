@@ -393,12 +393,12 @@ $replayScript
     settlePending();
     const status = document.getElementById("status");
     if (!state) status.textContent = login ? "sign in to play" : "not your match";
-    else if (state.completed && ranOut().length) {
+    else if (state.isCompleted && ranOut().length) {
       const late = ranOut();
       status.textContent = !state.you ? late.join(" and ") + " ran out of time"
         : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
     }
-    else if (state.completed) status.textContent = endingText();
+    else if (state.isCompleted) status.textContent = endingText();
     else if (state.phase === "setup")
       status.textContent = deploying() ? "deploy your army: swap any two of your pieces, then deploy"
         : state.you ? "waiting for " + other(state.you) + " to deploy" : "the armies are deploying";
@@ -503,13 +503,13 @@ $replayScript
     state.pieces.forEach(p => { by[p.square] = p; });
     if (deploying()) {
       if (!draft) draft = loadDraft();
-      home(state.you).forEach((sq, i) => { by[sq] = { square: sq, side: state.you, rank: draft[i], revealed: false, moved: false }; });
+      home(state.you).forEach((sq, i) => { by[sq] = { square: sq, side: state.you, rank: draft[i], isRevealed: false, isMoved: false }; });
     }
     // A move that has been made but not yet answered is shown made; the answer replaces it either
     // way, and a refused one goes back. Only over the state it was made from: one that has moved on
     // already holds this move, and perhaps the reply, whose piece may now stand on `from`.
     if (pending && state.moveCount === pending.count && by[pending.from]) {
-      by[pending.to] = Object.assign({}, by[pending.from], { square: pending.to, moved: true });
+      by[pending.to] = Object.assign({}, by[pending.from], { square: pending.to, isMoved: true });
       delete by[pending.from];
     }
     return by;
@@ -574,9 +574,9 @@ $replayScript
     if (!p) return at + ", empty";
     const mine = state && p.side === state.you;
     let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank ? rankName(p.rank) : "unknown piece");
-    if (p.moved && !p.revealed) text += ", has moved";
-    if (mine && p.revealed) text += ", seen by " + other(p.side);
-    else if (replaying() && p.rank && !mine) text += p.revealed ? ", revealed" : ", not yet revealed";
+    if (p.isMoved && !p.isRevealed) text += ", has moved";
+    if (mine && p.isRevealed) text += ", seen by " + other(p.side);
+    else if (replaying() && p.rank && !mine) text += p.isRevealed ? ", revealed" : ", not yet revealed";
     return text;
   }
 
@@ -593,7 +593,7 @@ $replayScript
   function tipText(d) {
     const sq = squareAt(d), p = piecesBySquare()[sq];
     if (!p || LAKES.includes(sq)) return null;
-    if (!p.rank) return "Unknown " + p.side + " piece" + (p.moved ? " — has moved" : "");
+    if (!p.rank) return "Unknown " + p.side + " piece" + (p.isMoved ? " — has moved" : "");
     return rankName(p.rank) + (NUMBER[p.rank] ? " (" + NUMBER[p.rank] + ")" : "");
   }
 
@@ -652,10 +652,10 @@ $replayScript
         '<use href="#rank-' + p.rank + '"/></svg>' + (NUMBER[p.rank] ? '<span class="number">' + NUMBER[p.rank] + "</span>" : "");
       b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
       // Like `known`, either side's, so that a replay shows what each side knew of the other at every step.
-      b.classList.toggle("moved", !!(p && p.moved && !p.revealed));
+      b.classList.toggle("moved", !!(p && p.isMoved && !p.isRevealed));
       // Either side's: a replay shows ranks that were not seen until later, and the mark is what tells them apart, so
       // it means the same at every step — the latest included.
-      b.classList.toggle("known", !!(p && p.rank && p.revealed));
+      b.classList.toggle("known", !!(p && p.rank && p.isRevealed));
       b.classList.toggle("last", last.includes(sq));
       b.classList.toggle("target", targets.includes(sq));
       b.classList.toggle("selected", sq === selected);
@@ -840,7 +840,7 @@ $replayScript
 
   function drawControls() {
     // A seated player may give up at any point until the match is over, setup included.
-    document.getElementById("concede-bar").hidden = !(state && state.you && !state.completed);
+    document.getElementById("concede-bar").hidden = !(state && state.you && !state.isCompleted);
     // Not while a move is out: it is shown made, so its piece is no longer where the controls
     // would offer it from, and it is the only move this turn has.
     const setup = deploying(), play = myTurn() && !pending && !replaying();
@@ -889,7 +889,7 @@ $replayScript
   /* Conceding asks first. In a dialog where the browser has one, or its plain confirm otherwise —
    * old Safari — so that the question is always asked. */
   const concedeDialog = document.getElementById("concede-dialog");
-  function concede() { submit({ concede: true }); }
+  function concede() { submit({ isConcession: true }); }
   document.getElementById("concede").addEventListener("click", () => {
     if (typeof concedeDialog.showModal === "function") concedeDialog.showModal();
     else if (window.confirm("Concede this match? Your opponent wins. This cannot be undone.")) concede();
@@ -994,9 +994,9 @@ $replayScript
     if (state.ending === "conceded") return other(state.winner) + " conceded — " + state.winner + " wins";
     if (state.ending === "flag") return state.winner + " captured the flag";
     if (state.ending === "no-moves")
-      return state.draw ? "neither side can move — drawn" : other(state.winner) + " cannot move — " + state.winner + " wins";
+      return state.isDrawn ? "neither side can move — drawn" : other(state.winner) + " cannot move — " + state.winner + " wins";
     if (state.ending === "cap") return "move limit reached — drawn";
-    return state.draw ? "drawn" : state.winner + " wins";
+    return state.isDrawn ? "drawn" : state.winner + " wins";
   }
 
   // Strongest first, as the key lists them.
@@ -1042,10 +1042,10 @@ $replayScript
    * still being played, or the public board. Decided as the status line decides it: by whoever ran
    * out of time where somebody did, otherwise by the winner. */
   function result() {
-    if (!state || !state.completed || !state.you || publicView) return null;
+    if (!state || !state.isCompleted || !state.you || publicView) return null;
     const late = ranOut();
     if (late.length) return late.includes(state.you) ? "lose" : "win";
-    if (state.draw || !state.winner) return null;
+    if (state.isDrawn || !state.winner) return null;
     return state.winner === state.you ? "win" : "lose";
   }
 
@@ -1063,7 +1063,7 @@ $replayScript
   /* `pending` lets go once the state has moved past it, however the news arrived: the move's own
    * answer, a poll, a push. So a stalled request cannot hold the board once the page knows better. */
   function settlePending() {
-    if (pending && (!state || state.completed || state.moveCount !== pending.count)) {
+    if (pending && (!state || state.isCompleted || state.moveCount !== pending.count)) {
       clearTimeout(pending.timer);
       pending = null;
     }
@@ -1204,7 +1204,7 @@ $replayScript
 
   render();
   if (!state && mayFetch()) refresh();
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
 </script>
 </body>
 </html>
@@ -1229,13 +1229,13 @@ $replayScript
       const piece = by[m.from], defender = by[m.to], gap = Math.abs(m.to - m.from);
       delete by[m.from];
       piece.square = m.to;
-      piece.moved = true;
-      if (gap !== 1 && gap !== 10) piece.revealed = true;
+      piece.isMoved = true;
+      if (gap !== 1 && gap !== 10) piece.isRevealed = true;
       if (!m.battle) { by[m.to] = piece; return; }
       piece.rank = m.battle.attacker;
-      piece.revealed = true;
+      piece.isRevealed = true;
       defender.rank = m.battle.defender;
-      defender.revealed = true;
+      defender.isRevealed = true;
       if (m.battle.result !== "AttackerWins") lost[piece.side].push(m.battle.attacker);
       if (m.battle.result !== "DefenderWins") lost[defender.side].push(m.battle.defender);
       if (m.battle.result === "AttackerWins") by[m.to] = piece;
@@ -1361,7 +1361,7 @@ $replayScript
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
-        else if (state.isDraw) "drawn"
+        else if (state.isDrawn) "drawn"
         else if (state.ending.contains("conceded"))
             state.winner.flatMap(Side.parse).map(w => s"${w.other} conceded — $w wins").getOrElse("over")
         else if (state.ending.contains("flag")) state.winner.map(w => s"$w captured the flag").getOrElse("over")

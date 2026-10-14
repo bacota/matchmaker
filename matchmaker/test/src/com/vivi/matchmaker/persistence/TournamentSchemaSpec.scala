@@ -195,7 +195,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                     ids,
                     Generators.newMatchId().value.toString,
                     "S",
-                    "is_rubber=true;is_ties_allowed=true"
+                    "is_rubber=true;can_tie=true"
                   )
                 )
             }
@@ -224,8 +224,8 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                             SELECT game_id, participant_id, tournament_id, entrant_id FROM seat"""
                 seat = (more: String, values: String) => s"""WITH seat AS (
                           INSERT INTO participant (game_id, game_type, match_id, player_id, tournament_id,
-                                                   is_notify_match_started, is_notify_turn_taken, is_notify_your_turn,
-                                                   is_notify_match_ended$more)
+                                                   is_notified_of_match_started, is_notified_of_turn_taken, is_notified_of_your_turn,
+                                                   is_notified_of_match_ended$more)
                           VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, ${ids.tournament}, true,
                                   true, true, true$values)
                           RETURNING game_id, participant_id, tournament_id, entrant_id)

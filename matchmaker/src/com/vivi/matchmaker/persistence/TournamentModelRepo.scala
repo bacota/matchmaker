@@ -31,8 +31,8 @@ class TournamentModelRepo(session: Session[IO]) {
         modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool
 
     private val modelColumns =
-        "tournament_model_id, version, name, description, classification, pool_size, is_late_entries, " +
-            "first_stage_model_id, is_active, is_choose_roles"
+        "tournament_model_id, version, name, description, classification, pool_size, has_late_entries, " +
+            "first_stage_model_id, is_active, has_role_choice"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -147,16 +147,16 @@ class TournamentModelRepo(session: Session[IO]) {
     private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean)
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.isLateEntries, m.isChooseRoles)
+        (m.version, m.name, m.description, m.classification, m.poolSize, m.hasLateEntries, m.hasRoleChoice)
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            is_late_entries, is_choose_roles, first_stage_model_id)
+                                            has_late_entries, has_role_choice, first_stage_model_id)
           VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, '')""".command
 
     private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
-                 classification = ${text.opt}, pool_size = ${int4.opt}, is_late_entries = $bool, is_choose_roles = $bool,
+                 classification = ${text.opt}, pool_size = ${int4.opt}, has_late_entries = $bool, has_role_choice = $bool,
                  is_active = true
           WHERE tournament_model_id = $modelId""".command
 
@@ -170,7 +170,7 @@ class TournamentModelRepo(session: Session[IO]) {
           VALUES ($modelId, $text, ${StageRows.fields(text)})""".command
 
     private val insertAtomic: Command[(TournamentModelId, String, Boolean)] =
-        sql"""INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, is_rotate_roles)
+        sql"""INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, is_rotating_roles)
           VALUES ($modelId, $text, $bool)""".command
 
     private val insertNesting: Command[(TournamentModelId, String, TournamentModelId)] =
@@ -244,7 +244,7 @@ class TournamentModelRepo(session: Session[IO]) {
                     case None =>
                         for {
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))
-                            _ <- session.execute(insertAtomic)((model, stageId, stage.isRotateRoles))
+                            _ <- session.execute(insertAtomic)((model, stageId, stage.isRotatingRoles))
                         } yield Some(stageId)
                 }
             }

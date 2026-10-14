@@ -97,7 +97,7 @@ class TournamentRounds[T](
             for {
                 due <- session.transaction.use { _ =>
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
-                        case Some(t) if t.status == TournamentStatus.Running && t.settings.isAutoRounds =>
+                        case Some(t) if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds =>
                             requireLoaded(session, t).flatMap { loaded =>
                                 if (Progress.roundComplete(loaded.state)) begin(session, t, None).map(_._2)
                                 else IO.pure(Nil)
@@ -376,7 +376,7 @@ class TournamentRounds[T](
               t.settings.isLive && clock.isDefined
             )
             seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId.get))
-            starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.isUnimportantRoles)
+            starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.hasUnimportantRoles)
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get
                 matches.launchSeat(
@@ -418,7 +418,7 @@ class TournamentRounds[T](
                     case None => IO.raiseError(NotFoundError(s"no player ${participant.playerId}"))
                 }
             }
-        } yield Prepared.Launch(saved, game, enginePlayers, tm.isTiesAllowed)
+        } yield Prepared.Launch(saved, game, enginePlayers, tm.canTie)
     }
 
     /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed: the
@@ -512,7 +512,7 @@ class TournamentRounds[T](
       */
     private def afterRecording(t: Tournament, roundDone: Option[Int]): IO[Unit] =
         roundDone.traverse_ { round =>
-            if (t.settings.isAutoRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
+            if (t.settings.hasAutomaticRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
             else sessionPool.use(notifications.tournamentRoundDone(_, t, round))
         }
 
@@ -715,10 +715,10 @@ class TournamentRounds[T](
             }
         } yield Env(
           design,
-          TournamentGame.of(game).copy(isChooseRoles = t.settings.isChooseRoles),
+          TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings.toMap,
           Some(t.defaultPoolSize),
-          t.settings.isConcurrentRounds
+          t.settings.hasConcurrentRounds
         )
 
     private def requireLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
@@ -801,7 +801,7 @@ object TournamentRounds {
               TournamentGame.of(game),
               d,
               tm.seats.count(!_.isForfeit),
-              tm.isTiesAllowed,
+              tm.canTie,
               choosing = tm.seats.exists(_.chooseOrder.isDefined),
               t.settings.maxTurns
             )

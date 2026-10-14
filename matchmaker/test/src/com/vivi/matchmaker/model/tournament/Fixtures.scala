@@ -13,7 +13,7 @@ object Fixtures {
         TournamentGame(
           (1 to roles).toList.map(i => TournamentRole(i, RoleType.Required, None)) ++
               (1 to recommended).toList.map(i => TournamentRole(roles + i, RoleType.Recommended, None)),
-          isSignificantRoles = significant,
+          hasSignificantRoles = significant,
           moveType = MoveType.Sequential,
           maxTurns = None
         )
@@ -47,7 +47,7 @@ object Fixtures {
         val rng = new Random(seed)
         m => {
             val order = rng.shuffle(m.planned.seats.map(_.entrant))
-            if (m.isTiesAllowed && rng.nextInt(5) == 0) order.map(Placing(_, Some(1), Some(1.0)))
+            if (m.canTie && rng.nextInt(5) == 0) order.map(Placing(_, Some(1), Some(1.0)))
             else order.zipWithIndex.map((e, i) => Placing(e, Some(i + 1), Some((10 - i).toDouble)))
         }
     }

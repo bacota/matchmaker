@@ -82,14 +82,14 @@ object Ranking {
             val mine = matches.filter(_.exists(_.entrant == e))
             e -> Standing(
               e,
-              mine.map(m => points(m, stage.points, stage.pointsForDraw, stage.isPointsBonus).getOrElse(e, 0.0)).sum,
+              mine.map(m => points(m, stage.points, stage.pointsForDraw, stage.hasPointsBonus).getOrElse(e, 0.0)).sum,
               mine.map(scoreDiff(_, e)).sum,
               mine.flatMap(_.find(_.entrant == e).flatMap(_.score)).sum
             )
         }.toMap
 
-        val useRubber = stage.isRubberMatch && game.rubberApplies
-        val tiesAllowed = Ties.allowed(members.size, stage = stage.isTiesAllowed)
+        val useRubber = stage.hasRubberMatch && game.rubberApplies
+        val tiesAllowed = Ties.allowed(members.size, stage = stage.canTie)
         var wanted = List.empty[(Long, Long)]
 
         // Members in groups that are still level, best group first; each group's order within it is decided below.

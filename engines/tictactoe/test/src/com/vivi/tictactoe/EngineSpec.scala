@@ -328,7 +328,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, store, _, m) = fixture()
         val x = m.seatOf(Mark.X).get.cognitoId
         val o = m.seatOf(Mark.O).get.cognitoId
-        recorder.isFailCallbacks = true
+        recorder.isFailingCallbacks = true
 
         // X takes the top row.
         List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) => assert(engine.move("m-1", who, cell).isRight))

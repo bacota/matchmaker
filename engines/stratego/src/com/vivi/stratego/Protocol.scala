@@ -2,7 +2,6 @@ package com.vivi.stratego
 
 import upickle.default.{ReadWriter, macroRW}
 import com.vivi.engine.ClockView
-import upickle.implicits.key
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -24,7 +23,7 @@ object Protocol {
         setup: Option[List[String]] = None,
         from: Option[Int] = None,
         to: Option[Int] = None,
-        @key("concede") isConcede: Option[Boolean] = None
+        isConcession: Option[Boolean] = None
     )
 
     /** The state the play page renders, and what a scripted client polls.
@@ -49,9 +48,9 @@ object Protocol {
         legalMoves: List[List[Int]],
         lastMove: Option[LastMove],
         lost: List[LostView],
-        @key("completed") isCompleted: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        @key("draw") isDraw: Boolean,
+        isDrawn: Boolean,
         ending: Option[String],
         moveCount: Int,
         maxMoves: Int,
@@ -72,8 +71,8 @@ object Protocol {
         square: Int,
         side: String,
         rank: Option[String],
-        @key("revealed") isRevealed: Boolean,
-        @key("moved") isMoved: Boolean
+        isRevealed: Boolean,
+        isMoved: Boolean
     )
 
     case class BattleView(attacker: String, defender: String, result: String)

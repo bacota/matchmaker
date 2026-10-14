@@ -88,7 +88,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         for {
             game <- TestSession.resource.use(
               new GameRepo[String](_)
-                  .create(Generators.genGame(GameType.Plain).sample.get.copy(isUnimportantRoles = !roles))
+                  .create(Generators.genGame(GameType.Plain).sample.get.copy(hasUnimportantRoles = !roles))
             )
             // Only the owner has an address, so the only mail sent is to them.
             owner <- s.registration.register(unique("owner"), unique("sub"), Some(s"${unique("owner")}@example.com"))
@@ -188,7 +188,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(ranking.values.toList.sorted, List(1, 2, 3, 3))
         assert(last.left.exists(_.isInstanceOf[ConflictError]))
         // The elimination matches are not to be drawn, and each seat has a chess clock of half the round.
-        assertEquals(request.flatMap(_.isTiesAllowed), Some(false))
+        assertEquals(request.flatMap(_.canTie), Some(false))
         assertEquals(request.flatMap(_.timeLimitSeconds), Some(Duration.ofDays(1).getSeconds))
     }
 
@@ -216,7 +216,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             f <- started(4, roles = false)
             _ <- f.w.services.notifications.updateMine(
               f.owner.externalId,
-              NotificationPreferences(isTournamentRoundDone = Some(false))
+              NotificationPreferences(isNotifiedOfTournamentRoundDone = Some(false))
             )
             _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
             _ <- reportAll(f)
@@ -245,7 +245,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               roles = false,
               settings = TournamentSettings(
                 isInvitational = false,
-                isAutoRounds = true,
+                hasAutomaticRounds = true,
                 roundDuration = Some(Duration.ofHours(6))
               )
             )

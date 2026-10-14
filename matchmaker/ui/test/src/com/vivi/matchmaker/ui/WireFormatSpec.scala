@@ -182,7 +182,7 @@ class WireFormatSpec extends FunSuite {
               TournamentSettings(
                 roundDuration = Some(Duration.ofHours(1)),
                 maxEntrants = Some(2),
-                isChooseRoles = true
+                hasRoleChoice = true
               ),
               TournamentStatus.Open
             ),

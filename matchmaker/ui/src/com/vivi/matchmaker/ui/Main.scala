@@ -704,7 +704,7 @@ object Views {
               .combineWith(Store.games.signal)
               .map { (challenges, games) =>
                   val mine = challengesIn(game)(challenges).filter { c =>
-                      c.summary.isOwner && !c.summary.tournament.settings.isAutoStart &&
+                      c.summary.isOwner && !c.summary.tournament.settings.isAutoStarted &&
                       leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
                   }
                   if (mine.isEmpty) emptyNode
@@ -757,7 +757,7 @@ object Views {
         List(
           Some(s"$entered of $seats entered"),
           t.settings.roundDuration.map(d => s"${Format.duration(d, TimeLimitUnit.bestFor(d))} to play"),
-          Option.when(t.settings.isAutoStart)("starts when full"),
+          Option.when(t.settings.isAutoStarted)("starts when full"),
           Option.when(t.settings.isLive)("live"),
           Option.when(!t.settings.isFriendly)("rated"),
           t.settings.start.map(at => s"for ${Format.instant(at)}")
@@ -831,7 +831,7 @@ object Views {
           child <-- Store.myChallenges.signal.combineWith(Store.games.signal, currentPlayer).map {
               (challenges, games, player) =>
                   val waiting = challengesIn(game)(challenges).filter { c =>
-                      val ready = c.summary.isOwner && !c.summary.tournament.settings.isAutoStart &&
+                      val ready = c.summary.isOwner && !c.summary.tournament.settings.isAutoStarted &&
                           leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
                       (c.summary.isEntered || c.summary.isOwner) && !ready
                   }
@@ -1125,7 +1125,7 @@ object Views {
               // Said only when there are others, and said as the remedy rather than as a limit: the
               // searcher cannot ask for page two, and would not want it — the next page of a name
               // search is a longer prefix, which is the one thing they can do from here.
-              if (result.isMore)
+              if (result.hasMore)
                   div(
                     cls := "detail",
                     s"Showing the first ${result.players.length}. Type more of the nickname to narrow it."
@@ -2710,7 +2710,7 @@ object Views {
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.isActive))
         // No role has an advantage in winning: ratings are then kept overall only.
-        val unimportantRoles = Var(existing.exists(_.isUnimportantRoles))
+        val unimportantRoles = Var(existing.exists(_.hasUnimportantRoles))
         // How players take turns, and how many a simultaneous game lasts; max turns as typed.
         val moveType: Var[MoveType] = Var(existing.map(_.moveType).getOrElse(MoveType.Sequential))
         val maxTurns = Var(existing.flatMap(_.maxTurns).fold("")(_.toString))
@@ -2943,7 +2943,7 @@ object Views {
                         // from it is matched against.
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
-                        isUnimportantRoles = unimportantRoles.now(),
+                        hasUnimportantRoles = unimportantRoles.now(),
                         moveType = moveType.now(),
                         maxTurns = turns,
                         characterUrl = Option
@@ -3126,7 +3126,7 @@ object Views {
       * the overall ones again.
       */
     private def roleRankings(game: Game, player: Player): Node =
-        if (game.isUnimportantRoles || game.roles.sizeIs < 2) emptyNode
+        if (game.hasUnimportantRoles || game.roles.sizeIs < 2) emptyNode
         else {
             val chosen = Var(Option.empty[GameRole])
             val id = s"role-rankings-${game.gameId.value}"
@@ -3404,7 +3404,7 @@ object Views {
                 "Next",
                 "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
                 "forward",
-                board.signal.map(_.exists(_.isMore)),
+                board.signal.map(_.exists(_.hasMore)),
                 _ + 1
               )
             ),
@@ -3480,7 +3480,7 @@ object Views {
                     p(
                       cls := "detail",
                       s"$who found, shown at the foot of the rankings." +
-                          (if (some.isMore) " Type more of the nickname to narrow it." else "")
+                          (if (some.hasMore) " Type more of the nickname to narrow it." else "")
                     )
             }
           )
@@ -4766,7 +4766,7 @@ object Views {
           ) { busy =>
               val request = ChallengeRequest(
                 characterId = if (characterGame && seatedNow) ownCharacter.now() else None,
-                isPlays = seatedNow,
+                isPlaying = seatedNow,
                 poolSize = Some(seats.now()),
                 roundDuration = durationOf(timeLimit.now(), timeLimitUnit.now()),
                 gameSettings = settingsOf(parameters.now()),
@@ -4774,7 +4774,7 @@ object Views {
                 isFriendly = !administers.now() || friendly.now(),
                 isPublic = isPublic.now(),
                 start = startOf(plannedStart.now()),
-                isAutoStart = autoStart.now() || !seatedNow,
+                isAutoStarted = autoStart.now() || !seatedNow,
                 isOpen = invitee.isEmpty,
                 invitations = if (characterGame) Nil else invitee.map(_.playerId).toList,
                 characterInvitations = if (characterGame) inviteeCharacter.now().toList else Nil

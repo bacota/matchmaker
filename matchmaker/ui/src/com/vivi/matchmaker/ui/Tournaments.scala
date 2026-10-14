@@ -180,7 +180,7 @@ object Tournaments {
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
     private def waitsOnMe(s: TournamentSummary): Boolean =
-        s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoRounds
+        s.isOwner && s.isRoundOver && !s.tournament.settings.hasAutomaticRounds
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
@@ -344,7 +344,7 @@ object Tournaments {
     private def entriesSection(d: TournamentDetail, me: Option[Player]): HtmlElement = {
         val t = d.summary.tournament
         val open =
-            t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.isLateEntries)
+            t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.hasLateEntries)
         val mine = d.entries.filter(e => me.exists(m => e.playerId.contains(m.playerId)))
         val characterGame = d.gameType == GameType.Character
         val chosen: Var[Option[CharacterId]] = Var(None)
@@ -506,7 +506,7 @@ object Tournaments {
                   p(
                     cls := "detail",
                     "Every match of this round is over." +
-                        (if (t.settings.isAutoRounds) ""
+                        (if (t.settings.hasAutomaticRounds) ""
                          else if (d.summary.isOwner) " Start the next round when you are ready."
                          else s" The next starts when ${d.summary.ownerNickname} starts it.")
                   )
@@ -774,20 +774,20 @@ object Tournaments {
         val modelId: Var[Option[TournamentModelId]] = Var(existing.map(_.tournamentModelId))
         val poolSize = Var(existing.fold("")(_.defaultPoolSize.toString))
         val invitational = Var(s0.isInvitational)
-        val autoRounds = Var(s0.isAutoRounds)
+        val autoRounds = Var(s0.hasAutomaticRounds)
         val friendly = Var(s0.isFriendly)
-        val lateEntries = Var(s0.isLateEntries)
-        val concurrentRounds = Var(s0.isConcurrentRounds)
+        val lateEntries = Var(s0.hasLateEntries)
+        val concurrentRounds = Var(s0.hasConcurrentRounds)
         val isPublic = Var(s0.isPublic)
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
         val hours = Var(s0.roundDuration.fold("48")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0")))
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
-        val chooseRoles = Var(s0.isChooseRoles)
+        val chooseRoles = Var(s0.hasRoleChoice)
         val live = Var(s0.isLive)
         val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
-        val autoStart = Var(s0.isAutoStart)
+        val autoStart = Var(s0.isAutoStarted)
         val plannedStart = Var(s0.start.fold("")(Views.localInputOf))
         val parameters = Var(Views.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
@@ -806,30 +806,30 @@ object Tournaments {
             modelId.set(Some(m.tournamentModelId))
             chosen.set(Some(m))
             poolSize.set(m.poolSize.getOrElse(r).toString)
-            lateEntries.set(m.isLateEntries)
-            chooseRoles.set(m.isChooseRoles)
+            lateEntries.set(m.hasLateEntries)
+            chooseRoles.set(m.hasRoleChoice)
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
         def settings = TournamentSettings(
-          isAutoRounds = autoRounds.now(),
+          hasAutomaticRounds = autoRounds.now(),
           isFriendly = friendly.now(),
           isInvitational = invitational.now(),
-          isLateEntries = lateEntries.now(),
+          hasLateEntries = lateEntries.now(),
           minRating = int(minRating),
           maxRating = int(maxRating),
           entriesPerPlayer = int(entries).getOrElse(1),
           roundDuration =
               hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
           maxTurns = int(maxTurns),
-          isConcurrentRounds = concurrentRounds.now(),
+          hasConcurrentRounds = concurrentRounds.now(),
           isPublic = isPublic.now(),
           gameSettings = Views.settingsOf(parameters.now()),
           isLive = live.now(),
           start = Views.startOf(plannedStart.now()),
-          isChooseRoles = chooseRoles.now(),
+          hasRoleChoice = chooseRoles.now(),
           maxEntrants = int(maxEntrants),
-          isAutoStart = autoStart.now() && int(maxEntrants).isDefined
+          isAutoStarted = autoStart.now() && int(maxEntrants).isDefined
         )
         def check(): Unit =
             problems.set(chosen.now() match {

@@ -43,8 +43,8 @@ object TournamentFixtures {
               "",
               None,
               None,
-              isLateEntries = false,
-              TournamentDesign(List(StageDesign(isBrackets = false, demote = None)))
+              hasLateEntries = false,
+              TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
             )
             repo.create(roundRobin) *> repo.read(roundRobin.tournamentModelId).map(_.get)
         }
@@ -138,8 +138,8 @@ object TournamentFixtures {
                     .create(t.gameId, GameType.Character, t.tournamentId, player, Some(character), EloRating.initial)
                 participant <- session.unique(
                   sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, completed_at, due,
-                            game_role_id, elo_start, tournament_id, entrant_id, is_notify_match_started, is_notify_turn_taken,
-                            is_notify_your_turn, is_notify_match_ended)
+                            game_role_id, elo_start, tournament_id, entrant_id, is_notified_of_match_started, is_notified_of_turn_taken,
+                            is_notified_of_your_turn, is_notified_of_match_ended)
                         VALUES (#${t.gameId.value.toString}, $int8, 'C', #${player.value.toString},
                                 #${pending.toString}, #${if (completed) "now()" else "NULL"},
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, #${role.value.toString},

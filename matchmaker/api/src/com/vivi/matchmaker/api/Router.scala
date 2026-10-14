@@ -102,11 +102,11 @@ object Router {
             case ("PUT", "me" :: "notifications" :: Nil) =>
                 body[Json.PreferencesRequest](request).flatMap(r =>
                     noContent(
-                      services.notifications.updateMine(caller, r.preferences, r.isApplyToGames, r.isApplyToMatches)
+                      services.notifications.updateMine(caller, r.preferences, r.isAppliedToGames, r.isAppliedToMatches)
                     )
                 )
 
-            // Same body as the route above, and `isApplyToGames` refused rather than ignored: there is
+            // Same body as the route above, and `isAppliedToGames` refused rather than ignored: there is
             // no level between one game and another for it to mean anything about, so a client that
             // sends it here has asked for something this route cannot do -- and the likely way to end
             // up doing that is to reuse the body of its sibling above, which is exactly the mistake a
@@ -114,7 +114,7 @@ object Router {
             case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
                 withGameId(gameId) { id =>
                     body[Json.PreferencesRequest](request).flatMap { r =>
-                        if (r.isApplyToGames)
+                        if (r.isAppliedToGames)
                             IO.pure(
                               Errors.badRequest(
                                 "applyToGames is not supported for one game's settings; it belongs to PUT /me/notifications"
@@ -122,7 +122,7 @@ object Router {
                             )
                         else
                             noContent(
-                              services.notifications.updateForGame(caller, id, r.preferences, r.isApplyToMatches)
+                              services.notifications.updateForGame(caller, id, r.preferences, r.isAppliedToMatches)
                             )
                     }
                 }

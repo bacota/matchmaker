@@ -8,7 +8,7 @@ import HtmlText.escapeJs
   * after the sign-in's, and hands its own refresh to `keepCurrent` in place of the poll it would otherwise run:
   *
   * {{{
-  * keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  * keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
   * }}}
   *
   * With Play Live off — the default, and the only thing on offer when the engine has no live url — that is the

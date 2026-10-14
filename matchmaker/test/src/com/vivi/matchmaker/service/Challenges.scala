@@ -57,14 +57,14 @@ object Challenges {
                     t <- services.tournaments.createChallenge(
                       game.gameId,
                       ChallengeRequest(
-                        isPlays = false,
+                        isPlaying = false,
                         poolSize = Some(seats.size),
                         roundDuration = roundDuration,
                         gameSettings = settings,
                         isLive = live,
                         isFriendly = friendly,
                         isPublic = isPublic,
-                        isAutoStart = true,
+                        isAutoStarted = true,
                         isOpen = false,
                         invitations = seats.map(_.player.playerId)
                       ),

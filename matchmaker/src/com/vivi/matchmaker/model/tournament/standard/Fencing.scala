@@ -12,14 +12,14 @@ object Fencing
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */
     private val eliminationMatch: TournamentDesign =
-        TournamentDesign(List(StageDesign(isBrackets = false, isRotateRoles = false, demote = Some(2))))
+        TournamentDesign(List(StageDesign(hasBrackets = false, isRotatingRoles = false, demote = Some(2))))
 
     val design: TournamentDesign = TournamentDesign(
       List(
         // Pools of five, whose winner goes through.
         StageDesign(
           poolSize = Some(5),
-          isBrackets = false,
+          hasBrackets = false,
           demote = Some(2),
           points = 1,
           pointsForDraw = 0,
@@ -28,26 +28,26 @@ object Fencing
         // Single elimination down to the semi-finals.
         StageDesign(
           repeat = Repetition.UntilRemaining(4),
-          isBrackets = true,
+          hasBrackets = true,
           poolSize = Some(2),
           design = Some(eliminationMatch)
         ),
         // The final, with the semi-finals' losers kept apart a stratum below.
         StageDesign(
-          isBrackets = true,
+          hasBrackets = true,
           poolSize = Some(2),
           minStratum = Some(-1),
-          isStrictStrata = true,
+          hasStrictStrata = true,
           design = Some(eliminationMatch)
         ),
         // The third-place match, which may be drawn.
         StageDesign(
-          isBrackets = false,
+          hasBrackets = false,
           poolSize = Some(2),
           minStratum = Some(-1),
-          isStrictStrata = true,
+          hasStrictStrata = true,
           demote = None,
-          design = Some(TournamentDesign(List(StageDesign(isBrackets = false, demote = None))))
+          design = Some(TournamentDesign(List(StageDesign(hasBrackets = false, demote = None))))
         )
       )
     )

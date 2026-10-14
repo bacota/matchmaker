@@ -111,12 +111,12 @@ class ArchiveSpec extends FunSuite with QuietTests {
 
     test("archiving that fails leaves the live copy, and matchmaker's next status call archives it".tag(Quiet)) {
         val (engine, routes, live, recorder) = fixture()
-        recorder.isRefuseArchiving = true
+        recorder.isRefusingArchiving = true
         playToTheEnd(engine)
         assert(live.get("m-1").isDefined)
         assert(!recorder.isArchived("m-1"))
 
-        recorder.isRefuseArchiving = false
+        recorder.isRefusingArchiving = false
         val status = routes(EngineRequest("GET", "/matches/m-1/status"))
         assertEquals(read[Protocol.GameStatusResponse](status.body).isCompleted, true)
         assert(recorder.isArchived("m-1"))

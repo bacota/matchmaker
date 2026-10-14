@@ -139,7 +139,7 @@ case class Game(
     /* The admin saying that no role of the game has any advantage in winning it. Unticked, a
      * rated match moves its players' ratings in the roles they played as well as overall, and each
      * role has a leaderboard of its own. */
-    isUnimportantRoles: Boolean = false,
+    hasUnimportantRoles: Boolean = false,
     /* Whether players move in turn or all at once. Sequential for every game until an admin says
      * otherwise. */
     moveType: MoveType = MoveType.Sequential,

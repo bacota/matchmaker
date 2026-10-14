@@ -281,6 +281,6 @@ object ParticipantRepo {
         participantId: ParticipantId,
         playerId: PlayerId,
         gameRoleId: GameRoleId,
-        isAfterCompletion: Boolean
+        isAfterCompleted: Boolean
     )
 }

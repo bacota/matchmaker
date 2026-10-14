@@ -216,7 +216,7 @@ class EngineSpec extends FunSuite with QuietTests {
         engine.move("m-1", alice, Shape.Paper)
         engine.move("m-1", bob, Shape.Paper)
 
-        assert(store.get("m-1").get.isDraw)
+        assert(store.get("m-1").get.isDrawn)
         val results = recorder.results.head._2.results
         assert(results.forall(r => r.rank == 1 && !r.isWinner))
         assert(results.forall(_.scores("outcome").str == "draw"))
@@ -343,7 +343,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a callback that fails does not fail the throw, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, _) = fixture()
-        recorder.isFailCallbacks = true
+        recorder.isFailingCallbacks = true
 
         assert(engine.move("m-1", alice, Shape.Rock).isRight)
         val resolving = engine.move("m-1", bob, Shape.Scissors)
@@ -368,7 +368,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val recorder = RecordingMatchmaker()
         var at = created
         val engine = Engine(store, recorder, "http://engine.test", () => at)
-        engine.createGame(createRequest().copy(isTiesAllowed = Some(false)))
+        engine.createGame(createRequest().copy(canTie = Some(false)))
         (engine, recorder, store, (seconds: Long) => at = at.plusSeconds(seconds))
     }
 
@@ -414,9 +414,9 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, _, store, _, _) = fixture()
         engine.move("m-1", alice, Shape.Rock)
         engine.move("m-1", bob, Shape.Rock)
-        assert(store.get("m-1").get.isDraw)
+        assert(store.get("m-1").get.isDrawn)
         val stored = write(store.get("m-1").get)
-        assert(!stored.contains("tiesAllowed"), "a match that allows ties is stored as it always was")
-        assert(read[RpsMatch](stored).isTiesAllowed)
+        assert(!stored.contains("canTie"), "a match that allows ties is stored as it always was")
+        assert(read[RpsMatch](stored).canTie)
     }
 }

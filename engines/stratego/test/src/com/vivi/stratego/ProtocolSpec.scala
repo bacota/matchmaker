@@ -87,6 +87,6 @@ class ProtocolSpec extends FunSuite {
         assertEquals(read[Protocol.MoveRequest]("""{"setup":["Flag"]}""").setup, Some(List("Flag")))
         // A hidden rank is a null, which is how the page tells hidden from shown — and nothing else of it is sent.
         val hidden = write(Protocol.PieceView(60, "Blue", None, false, true))
-        assertEquals(hidden, """{"square":60,"side":"Blue","rank":null,"revealed":false,"moved":true}""")
+        assertEquals(hidden, """{"square":60,"side":"Blue","rank":null,"isRevealed":false,"isMoved":true}""")
     }
 }

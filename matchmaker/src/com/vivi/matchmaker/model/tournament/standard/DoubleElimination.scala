@@ -12,7 +12,7 @@ object DoubleElimination
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */
     private val eliminationMatch: TournamentDesign =
-        TournamentDesign(List(StageDesign(isBrackets = false, isRotateRoles = false, demote = Some(2))))
+        TournamentDesign(List(StageDesign(hasBrackets = false, isRotatingRoles = false, demote = Some(2))))
 
     val design: TournamentDesign = TournamentDesign(
       List(
@@ -20,14 +20,14 @@ object DoubleElimination
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
-          isBrackets = true,
+          hasBrackets = true,
           demote = Some(2),
           minStratum = Some(-1),
-          isStrictStrata = true,
+          hasStrictStrata = true,
           design = Some(eliminationMatch)
         ),
         // The final between them.
-        StageDesign(design = Some(eliminationMatch), promote = Some(1), demote = Some(2), isStrictStrata = false)
+        StageDesign(design = Some(eliminationMatch), promote = Some(1), demote = Some(2), hasStrictStrata = false)
       )
     )
 }

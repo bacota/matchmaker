@@ -369,7 +369,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                     } yield owner.toSeq.flatMap { offeredBy =>
                         val news = newsOf(notice, tournament, actor.nickname, joined, offeredBy, room)
                         // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
-                        val ready = joined && room.contains(0) && !tournament.settings.isAutoStart
+                        val ready = joined && room.contains(0) && !tournament.settings.isAutoStarted
                         audience
                             .filter(recipient =>
                                 recipient.player.playerId != actor.playerId &&

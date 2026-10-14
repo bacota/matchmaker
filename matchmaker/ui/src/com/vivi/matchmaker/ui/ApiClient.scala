@@ -154,7 +154,7 @@ object ApiClient {
         sendUnit(
           HttpMethod.PUT,
           s"/me/notifications/games/${gameId.value}",
-          Some(write(Json.PreferencesRequest(preferences, isApplyToMatches = applyToMatches)))
+          Some(write(Json.PreferencesRequest(preferences, isAppliedToMatches = applyToMatches)))
         )
 
     /** The caller's answers for one match. Every kind answered, because a seat's own columns are what decides and they
@@ -209,7 +209,7 @@ object ApiClient {
         get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page${roleQuery(role, first = false)}")
 
     /** A game's rated players, overall or in a role, whose nickname begins with `prefix`, with their places: at most
-      * the player search's limit, and `isMore` when there were others.
+      * the player search's limit, and `hasMore` when there were others.
       */
     def findInRankings(gameId: GameId, prefix: String, role: Option[GameRoleId] = None): Future[Leaderboard] =
         get[Leaderboard](

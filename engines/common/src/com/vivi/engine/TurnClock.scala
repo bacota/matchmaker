@@ -2,7 +2,6 @@ package com.vivi.engine
 
 import java.time.{Duration, Instant}
 import upickle.default.{ReadWriter, macroRW}
-import upickle.implicits.key
 
 /** The clock of a live match, kept on the match itself.
   *
@@ -167,8 +166,8 @@ case class ClockView(limitSeconds: Long, kind: String, seats: List[SeatClock], t
   */
 case class SeatClock(
     participantId: Long,
-    @key("waiting") isWaiting: Boolean,
-    @key("running") isRunning: Boolean,
+    isWaiting: Boolean,
+    isRunning: Boolean,
     startedAt: Option[Instant],
     remainingMillis: Option[Long]
 )

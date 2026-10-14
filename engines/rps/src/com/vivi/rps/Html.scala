@@ -136,7 +136,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   function render() {
     // Thrown already, or the match is over, or this viewer has no seat to throw with: the server
     // checks all of it again, and this only keeps the page from asking for a refusal.
-    const canThrow = !!(state && state.you && !state.yourThrow && !state.completed);
+    const canThrow = !!(state && state.you && !state.yourThrow && !state.isCompleted);
     shapes.forEach(([name], i) => {
       // `aria-disabled` rather than `disabled`, which took the keyboard's focus off the page as the
       // throw was made.
@@ -160,7 +160,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
           const you = p.side === (state.you || "") ? " (you)" : "";
           // A throw is shown only when the server sent one, which it does only once the match has
           // resolved. Until then all anyone learns is that a player has moved.
-          const what = p.shape ? " · threw " + p.shape : (p.thrown ? " · thrown" : " · waiting");
+          const what = p.shape ? " · threw " + p.shape : (p.isThrown ? " · thrown" : " · waiting");
           return "<div>" + escapeHtml(p.side) + " · " + escapeHtml(p.cognitoId) + you + what + "</div>";
         }).join("")
       : "";
@@ -171,10 +171,10 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
    * still being played, or the public board. Decided as the status line decides it: by whoever ran
    * out of time where somebody did, otherwise by the winner. */
   function result() {
-    if (!state || !state.completed || !state.you || publicView) return null;
+    if (!state || !state.isCompleted || !state.you || publicView) return null;
     const late = ranOut();
     if (late.length) return late.includes(state.you) ? "lose" : "win";
-    if (state.draw || !state.winner) return null;
+    if (state.isDrawn || !state.winner) return null;
     return state.winner === state.you ? "win" : "lose";
   }
 
@@ -189,13 +189,13 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   function describe() {
     if (!state) return login ? "sign in to play" : "not your match";
-    if (state.completed) {
+    if (state.isCompleted) {
       const late = ranOut();
       if (late.length) {
         if (!state.you) return late.join(" and ") + " ran out of time";
         return late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
       }
-      if (state.draw) return "drawn";
+      if (state.isDrawn) return "drawn";
       if (!state.you) return state.winner + " wins";
       return state.winner === state.you ? "you win" : "you lose";
     }
@@ -289,7 +289,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   if (!state && mayFetch()) refresh();
   // Kept current to the end — polled, or with Play Live told — and for the same reason as
   // tic-tac-toe's board: the other player's throw arrives while this page is doing nothing.
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
 </script>
 </body>
 </html>
@@ -298,7 +298,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
-        else if (state.isDraw) "drawn"
+        else if (state.isDrawn) "drawn"
         else state.winner.map(w => s"$w wins").getOrElse("over")
 
     /* The heading of an unresolved match, server-rendered: "throw" while this viewer still has one

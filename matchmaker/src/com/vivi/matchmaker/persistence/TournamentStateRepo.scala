@@ -74,7 +74,7 @@ class TournamentStateRepo(session: Session[IO]) {
             .to[SeedRow]
 
     private val selectMatches: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT match_id, pool_id, round, status, is_ties_allowed, is_rubber, is_cancelled FROM match
+        sql"""SELECT match_id, pool_id, round, status, can_tie, is_rubber, is_cancelled FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId"""
             .query(int8 *: int8 *: int4 *: text *: bool *: bool *: bool)
             .to[MatchRow]
@@ -184,7 +184,7 @@ class TournamentStateRepo(session: Session[IO]) {
       (GameId, Long, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
     ] =
         sql"""INSERT INTO match (game_id, match_id, description, settings, is_public, is_friendly, status,
-                                 tournament_id, pool_id, round, stage_id, is_ties_allowed, is_rubber)
+                                 tournament_id, pool_id, round, stage_id, can_tie, is_rubber)
           VALUES ($gameId, $int8, '', '{}', $bool, $bool, 'S',
                   $tournamentId, $int8, $int4, $int8, $bool, $bool)""".command
 
@@ -199,13 +199,13 @@ class TournamentStateRepo(session: Session[IO]) {
       Long
     ] =
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, due, game_role_id,
-              tournament_id, entrant_id, choose_order, is_notify_match_started, is_notify_turn_taken, is_notify_your_turn,
-              is_notify_match_ended)
+              tournament_id, entrant_id, choose_order, is_notified_of_match_started, is_notified_of_turn_taken, is_notified_of_your_turn,
+              is_notified_of_match_ended)
           SELECT $gameId, $int8, $text, ${int8.opt}, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
-                 COALESCE(pg.is_notify_match_started, pl.is_notify_match_started, TRUE),
-                 COALESCE(pg.is_notify_turn_taken, pl.is_notify_turn_taken, TRUE),
-                 COALESCE(pg.is_notify_your_turn, pl.is_notify_your_turn, TRUE),
-                 COALESCE(pg.is_notify_match_ended, pl.is_notify_match_ended, TRUE)
+                 COALESCE(pg.is_notified_of_match_started, pl.is_notified_of_match_started, TRUE),
+                 COALESCE(pg.is_notified_of_turn_taken, pl.is_notified_of_turn_taken, TRUE),
+                 COALESCE(pg.is_notified_of_your_turn, pl.is_notified_of_your_turn, TRUE),
+                 COALESCE(pg.is_notified_of_match_ended, pl.is_notified_of_match_ended, TRUE)
           FROM (SELECT 1) one
               LEFT JOIN player pl ON pl.player_id = ${int8.opt}
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
@@ -259,7 +259,7 @@ class TournamentStateRepo(session: Session[IO]) {
 
         // Failing those, the stage of the last atomic pool there is: a round with nothing to play in it, the one after
         // a tournament finishes, still has to name one.
-        val lastStage: Option[Long] = walked.pools.filterNot(_.isNesting).lastOption.map(stageOf)
+        val lastStage: Option[Long] = walked.pools.filterNot(_.isNested).lastOption.map(stageOf)
 
         def ensureRound(r: Int, stage: Option[Long]): IO[Unit] =
             stage
@@ -271,13 +271,13 @@ class TournamentStateRepo(session: Session[IO]) {
             // ---- new pools, parents first ----
             ids <- walked.pools.filter(_.pool.id < 0).foldLeftM(Map.empty[Int, Long]) { (ids, w) =>
                 val parent = if (w.scope < 0) ids(w.scope.toInt) else w.scope
-                val kind = if (w.isNesting) "G" else "A"
+                val kind = if (w.isNested) "G" else "A"
                 val stage = stageOf(w)
                 for {
-                    _ <- ensureRound(effective, if (w.isNesting) None else Some(stage))
+                    _ <- ensureRound(effective, if (w.isNested) None else Some(stage))
                     id <- session.unique(insertPool)((game, tournament, kind, parent, effective, w.pool.stratum))
                     _ <- session
-                        .execute(if (w.isNesting) insertGroup else insertAtomicPool)((game, tournament, id, stage))
+                        .execute(if (w.isNested) insertGroup else insertAtomicPool)((game, tournament, id, stage))
                     _ <- w.pool.members.traverse_(m => session.execute(insertMember)((game, tournament, id, m.entrant)))
                 } yield ids + (w.pool.id -> id)
             }
@@ -364,7 +364,7 @@ class TournamentStateRepo(session: Session[IO]) {
                                     poolId,
                                     planned,
                                     stage,
-                                    m.isTiesAllowed,
+                                    m.canTie,
                                     m.planned.isRubber
                                   )
                                 )
@@ -430,8 +430,8 @@ class TournamentStateRepo(session: Session[IO]) {
         session.execute(startRound)((at, deadline, game, tournament, round)).void
 
     private val completeRound: Query[(GameId, TournamentId, Int), Int] =
-        sql"""UPDATE round SET is_complete = true
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND NOT is_complete
+        sql"""UPDATE round SET is_completed = true
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND NOT is_completed
           RETURNING round""".query(int4)
 
     /** Marks round `round` complete, answering whether this is what did: so that an ending delivered twice tells the
@@ -504,7 +504,7 @@ object TournamentStateRepo {
         pool: Long,
         round: Int,
         status: String,
-        isTiesAllowed: Boolean,
+        canTie: Boolean,
         isRubber: Boolean,
         isCancelled: Boolean
     )
@@ -530,7 +530,7 @@ object TournamentStateRepo {
     /** A pool of a state, with the node it is in: the pool that scopes that node's seeds (negative while new), the
       * stage it belongs to, keyed as the rules name it, and whether that stage is a nesting one.
       */
-    case class WalkedPool(pool: Pool, scope: Long, stageKey: List[Int], isNesting: Boolean)
+    case class WalkedPool(pool: Pool, scope: Long, stageKey: List[Int], isNested: Boolean)
 
     /** A node of a state, with the pool that scopes its seeds. */
     case class WalkedNode(node: Node, scope: Long)
@@ -698,7 +698,7 @@ object TournamentStateRepo {
                       m.isRubber
                     )
                     (
-                      PoolMatch(planned, m.isTiesAllowed, Option.unless(m.status == "S")(m.round), outcome),
+                      PoolMatch(planned, m.canTie, Option.unless(m.status == "S")(m.round), outcome),
                       (p.id.toInt, i + 1) -> MatchId(m.id)
                     )
                 }

@@ -2,7 +2,6 @@ package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import com.vivi.engine.ClockView
-import upickle.implicits.key
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -45,9 +44,9 @@ object Protocol {
         waitingFor: List[String],
         you: Option[String],
         yourThrow: Option[String],
-        @key("completed") isCompleted: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        @key("draw") isDraw: Boolean,
+        isDrawn: Boolean,
         players: List[SeatView],
         clock: Option[ClockView] = None,
         tiedRounds: List[String] = Nil
@@ -60,7 +59,7 @@ object Protocol {
         side: String,
         cognitoId: String,
         participantId: Long,
-        @key("thrown") isThrown: Boolean,
+        isThrown: Boolean,
         shape: Option[String]
     )
 

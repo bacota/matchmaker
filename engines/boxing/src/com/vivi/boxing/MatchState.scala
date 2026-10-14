@@ -4,7 +4,6 @@ import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
-import upickle.implicits.key
 
 /** One corner of a bout.
   *
@@ -53,9 +52,9 @@ case class Round(
   * Like rock-paper-scissors, and unlike tic-tac-toe, both corners move at once: each round, both players plan, neither
   * sees the other's plan, and the round resolves on whichever plan arrives second.
   *
-  * `isTiesAllowed` is false for a bout that must not end in a draw. Then a bout level on points after its scheduled
-  * rounds fights one more, and if that round is level too, its winner is drawn by lot. Defaulted, so a bout stored
-  * before it existed is the bout it always was.
+  * `canTie` is false for a bout that must not end in a draw. Then a bout level on points after its scheduled rounds
+  * fights one more, and if that round is level too, its winner is drawn by lot. Defaulted, so a bout stored before it
+  * existed is the bout it always was.
   */
 case class Bout(
     matchId: String,
@@ -63,7 +62,7 @@ case class Bout(
     scheduledRounds: Int,
     plans: List[Plan],
     isPublic: Boolean,
-    @key("completed") isCompleted: Boolean,
+    isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -75,7 +74,7 @@ case class Bout(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    @key("tiesAllowed") isTiesAllowed: Boolean = true
+    canTie: Boolean = true
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -121,7 +120,7 @@ case class Bout(
     /** How many rounds this bout can last: its schedule, and one more when ties are not allowed and the schedule left
       * it level.
       */
-    def roundLimit: Int = if (!isTiesAllowed && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
+    def roundLimit: Int = if (!canTie && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
 
     /** Whether the bout went to an extra round because it may not be drawn. */
     def extraRound: Boolean = rounds.size > scheduledRounds
@@ -155,7 +154,7 @@ case class Bout(
         rounds.count(r => r.outcome.decision == Decision.Knockdown && r.outcome.winner.contains(side))
 
     /** The winning corner once the bout is over: whoever scored the knockout, or failing one whoever is ahead on
-      * points. `None` while the bout goes on, and `None` for a draw on points, which [[isDraw]] tells apart. In a bout
+      * points. `None` while the bout goes on, and `None` for a draw on points, which [[isDrawn]] tells apart. In a bout
       * the clock ended, whichever corner did not run out — and nobody, if both did.
       */
     def winner: Option[Corner] =
@@ -172,7 +171,7 @@ case class Bout(
                     else None
             }
 
-    def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
 
     /** How a finished bout was won — "knockout", "points" or, in a live bout, "forfeit" — as matchmaker records it and
       * as the page says it.
@@ -364,7 +363,7 @@ object Bout extends Game[Bout, Corner, Plan] {
           resultsCallbackUrl = request.resultsCallbackUrl,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          isTiesAllowed = Protocol.tiesAllowed(request)
+          canTie = Protocol.tiesAllowed(request)
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

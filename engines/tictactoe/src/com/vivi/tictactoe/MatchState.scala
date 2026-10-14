@@ -3,7 +3,6 @@ package com.vivi.tictactoe
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
-import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -37,7 +36,7 @@ case class TicTacToeMatch(
     turn: Mark,
     seats: List[Seat],
     isPublic: Boolean,
-    @key("completed") isCompleted: Boolean,
+    isCompleted: Boolean,
     createdAt: Instant,
     lastMoveAt: Option[Instant],
     moveCallbackUrl: Option[String],
@@ -69,7 +68,7 @@ case class TicTacToeMatch(
       */
     def isOver: Boolean = ranOut || winner.isDefined || board.isFull
 
-    def isDraw: Boolean = !ranOut && winner.isEmpty && board.isFull
+    def isDrawn: Boolean = !ranOut && winner.isEmpty && board.isFull
 
     /** Whether a live match's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
@@ -129,7 +128,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
         m.clock
             .flatMap(_.outcomeOf(seat.participantId))
             .getOrElse(
-              if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDraw) Outcome.Draw else Outcome.Loss
+              if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDrawn) Outcome.Draw else Outcome.Loss
             )
 
     def clock(m: TicTacToeMatch): Option[TurnClock] = m.clock

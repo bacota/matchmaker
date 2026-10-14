@@ -136,8 +136,8 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
           "",
           Some("Round robin"),
           None,
-          isLateEntries = false,
-          TournamentDesign(List(StageDesign(isBrackets = false, demote = None)))
+          hasLateEntries = false,
+          TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
         )
 
     /** `model` written and offered in `game`. */

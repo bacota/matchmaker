@@ -156,7 +156,7 @@ class SimulatorSpec extends ScalaCheckSuite {
 
     test("a late entry joins stratum 0 and plays from the next run") {
         val design =
-            TournamentDesign(List(StageDesign(repeat = Repetition.Fixed(3), isBrackets = false, demote = None)))
+            TournamentDesign(List(StageDesign(repeat = Repetition.Fixed(3), hasBrackets = false, demote = None)))
         val (_, ratings) = field(4)
         val env = Env(design, twoPlayer, ratings + (99L -> 5000))
         val played = play(
@@ -173,7 +173,7 @@ class SimulatorSpec extends ScalaCheckSuite {
     }
 
     test("a round robin of a pool of four plays three rounds and ranks by points") {
-        val design = TournamentDesign(List(StageDesign(isBrackets = false, poolSize = Some(4), demote = None)))
+        val design = TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(4), demote = None)))
         val played = play(design, 4, favourites)
         assertEquals(played.rounds.size, 3)
         assertEquals(played.ranking, Map(1L -> 1, 2L -> 2, 3L -> 3, 4L -> 4))
@@ -181,7 +181,7 @@ class SimulatorSpec extends ScalaCheckSuite {
 
     test("a rubber breaks a tie in a two-player round robin, in a round of its own") {
         val design = TournamentDesign(
-          List(StageDesign(isBrackets = false, poolSize = Some(2), demote = None, isRubberMatch = true))
+          List(StageDesign(hasBrackets = false, poolSize = Some(2), demote = None, hasRubberMatch = true))
         )
         // A draw, then whatever the rubber says: here the favourite.
         var calls = 0
@@ -191,13 +191,13 @@ class SimulatorSpec extends ScalaCheckSuite {
         }
         val played = play(design, 2, drawThenFavourite)
         assertEquals(played.rounds.size, 2)
-        assert(played.rounds(1).forall(r => r.planned.isRubber && !r.isTiesAllowed))
+        assert(played.rounds(1).forall(r => r.planned.isRubber && !r.canTie))
         assertEquals(played.ranking, Map(1L -> 1, 2L -> 2))
     }
 
     test("a three-player game's round robin seats three a match") {
         val g = game(roles = 3)
-        val design = TournamentDesign(List(StageDesign(isBrackets = false, poolSize = Some(4), demote = None)))
+        val design = TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(4), demote = None)))
         val played = play(design, 4, favourites, g = g)
         assert(played.rounds.flatten.forall(_.planned.seats.size == 3))
         assertEquals(played.rounds.flatten.size, 4)

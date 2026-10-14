@@ -27,7 +27,7 @@ class DesignSpec extends FunSuite {
           List(
             StageDesign(demote = Some(1)),
             StageDesign(poolSize = Some(4), demote = Some(4)),
-            StageDesign(promote = Some(3), demote = Some(2), isBrackets = false)
+            StageDesign(promote = Some(3), demote = Some(2), hasBrackets = false)
           )
         )
         val problems = Validation.validate(bad, twoPlayer, None, None).filterNot(_.isWarning).map(_.describe)

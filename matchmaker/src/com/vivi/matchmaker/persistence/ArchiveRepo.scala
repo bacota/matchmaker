@@ -76,7 +76,7 @@ class ArchiveRepo(session: Session[IO]) {
     private val selectForEngine: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.is_archive_friendly
+                 m.is_in_friendly_bucket
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text""".query(row)
@@ -84,7 +84,7 @@ class ArchiveRepo(session: Session[IO]) {
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.is_archive_friendly
+                 m.is_in_friendly_bucket
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text
@@ -93,7 +93,7 @@ class ArchiveRepo(session: Session[IO]) {
     private val selectByIds: Query[(GameId, MatchId), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.is_archive_friendly
+                 m.is_in_friendly_bucket
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.game_id = $gameId AND m.match_id = $matchId""".query(row)
@@ -111,7 +111,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val updateRequest: Command[(String, String, Boolean, GameId, MatchId)] =
         sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now(),
-                 is_archive_friendly = $bool
+                 is_in_friendly_bucket = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the engine has been given a url to upload `sha256`'s content to under `key`, in the friendly bucket
@@ -121,7 +121,7 @@ class ArchiveRepo(session: Session[IO]) {
         session.execute(updateRequest)((key, sha256, friendly, game, id)).void
 
     private val updateBucket: Command[(Boolean, GameId, MatchId)] =
-        sql"""UPDATE match SET is_archive_friendly = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
+        sql"""UPDATE match SET is_in_friendly_bucket = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the archive is now in the friendly bucket, or the permanent one: a move has copied it there, or an
       * upload not yet made is to go there instead.
@@ -142,7 +142,7 @@ class ArchiveRepo(session: Session[IO]) {
         sql"""UPDATE match SET archive_expired_at = now()
           WHERE game_id = $gameId AND match_id = $matchId
             AND archived_at IS NOT NULL AND archive_expired_at IS NULL
-            AND COALESCE(is_archive_friendly, is_friendly)""".command
+            AND COALESCE(is_in_friendly_bucket, is_friendly)""".command
 
     /** Records a friendly archive as gone. The condition is in the update itself, so it needs no lock: two requests
       * that both found the object gone both write the same fact, and the second changes nothing.
@@ -210,7 +210,7 @@ object ArchiveRepo {
       * names `match`.
       */
     def expiredAt(table: String): String =
-        s"CASE WHEN COALESCE($table.is_archive_friendly, $table.is_friendly) THEN $table.archive_expired_at END"
+        s"CASE WHEN COALESCE($table.is_in_friendly_bucket, $table.is_friendly) THEN $table.archive_expired_at END"
 
     /** Whether the match's archive has expired, by the same rule as [[expiredAt]]. */
     def expired(table: String): String = s"(${expiredAt(table)}) IS NOT NULL"
@@ -234,7 +234,7 @@ object ArchiveRepo {
         expiredAt: Option[Instant],
         // Which bucket the archive is in, or is to be uploaded to: true for the friendly one. None until an
         // upload has been asked for. Not `isFriendly`: a move to match a change of that takes time.
-        isArchiveFriendly: Option[Boolean]
+        isInFriendlyBucket: Option[Boolean]
     )
 
     /** A match as its ending is settled: see [[ArchiveRepo.ending]]. */

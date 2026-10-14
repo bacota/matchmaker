@@ -72,7 +72,7 @@ object Generators {
           Seq.empty,
           externalId,
           characterUrl = characterUrl,
-          isUnimportantRoles = unimportantRoles
+          hasUnimportantRoles = unimportantRoles
         )
 
     def genGameWithRole: Gen[Game] =

@@ -455,7 +455,7 @@ object Store {
     /** What the last search answered, or `None` when nothing has been searched for in this session.
       *
       * `None` rather than an empty result, because "no search yet" and "no player by that name" are the two things the
-      * screen has to say differently, and an empty list cannot tell them apart. The `isMore` flag inside it is the
+      * screen has to say differently, and an empty list cannot tell them apart. The `hasMore` flag inside it is the
       * server's word for "there were others" -- the list's own length cannot say so, since a full page may be the last
       * one.
       */

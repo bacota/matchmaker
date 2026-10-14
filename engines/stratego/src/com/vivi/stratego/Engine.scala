@@ -171,7 +171,7 @@ class Engine(
           lost = Side.values.toList.map(s => LostView(s.toString, m.lost(s).map(_.toString))),
           isCompleted = over,
           winner = m.winner.map(_.toString),
-          isDraw = m.isDraw,
+          isDrawn = m.isDrawn,
           ending = m.ending.map(_.label),
           moveCount = m.moves.size,
           maxMoves = m.maxMoves,

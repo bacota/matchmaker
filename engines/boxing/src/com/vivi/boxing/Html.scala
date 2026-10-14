@@ -244,15 +244,15 @@ ${Finale.script(victory, defeat)}
 
   function render() {
     const corner = mine();
-    const live = !!(state && !state.completed);
+    const live = !!(state && !state.isCompleted);
     const canPlan = !!(corner && corner.fighter && live && !state.yourPlan);
 
     document.getElementById("status").textContent = describe();
     showClock(state && state.clock, corner ? corner.participantId : null);
     showFinale(result());
     document.getElementById("round").textContent = state
-      ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds" + (state.extraRound ? ", and an extra round" : "")
-                         : state.extraRound ? "Extra round: the bout was level after " + state.scheduledRounds + " rounds"
+      ? (state.isCompleted ? "Scheduled for " + state.scheduledRounds + " rounds" + (state.hasExtraRound ? ", and an extra round" : "")
+                         : state.hasExtraRound ? "Extra round: the bout was level after " + state.scheduledRounds + " rounds"
                          : "Round " + state.round + " of " + state.scheduledRounds)
       : "";
 
@@ -333,7 +333,7 @@ ${Finale.script(victory, defeat)}
       const stats = c.fighter
         ? "<dl>" + traits.map(([key, label]) => "<dt>" + label + "</dt><dd>" + c.fighter[key] + "</dd>").join("") + "</dl>"
         : '<p class="looks">' + escapeHtml(looks(c.impression || [])) + "</p>";
-      const doing = state.completed ? "" : c.planned ? "Round planned." : "Planning…";
+      const doing = state.isCompleted ? "" : c.isPlanned ? "Round planned." : "Planning…";
       return '<div class="corner ' + escapeHtml(c.side) + '"><h3>' + escapeHtml(cornerName(c.side)) + "</h3>" +
         // The fighter by name, first under the corner: who is in the ring is what the page is about.
         (c.fighterName ? '<p class="fighter-name">' + escapeHtml(c.fighterName) + "</p>" : "") +
@@ -377,24 +377,24 @@ ${Finale.script(victory, defeat)}
    * being fought, or the public board. Decided as `describe` decides it, so the picture and the
    * words never disagree: a forfeit by whoever ran out of time, otherwise by the winner. */
   function result() {
-    if (!state || !state.completed || !state.you || publicView) return null;
+    if (!state || !state.isCompleted || !state.you || publicView) return null;
     if (state.method === "forfeit") {
       const late = state.corners.filter(c => state.clock && state.clock.timedOut.includes(c.participantId)).map(c => c.side);
       if (late.length) return late.includes(state.you) ? "lose" : "win";
     }
-    if (state.draw || !state.winner) return null;
+    if (state.isDrawn || !state.winner) return null;
     return state.winner === state.you ? "win" : "lose";
   }
 
   function describe() {
     if (!state) return login ? "sign in to fight" : "not your bout";
-    if (state.completed) {
+    if (state.isCompleted) {
       if (state.method === "forfeit") {
         const late = state.corners.filter(c => state.clock && state.clock.timedOut.includes(c.participantId)).map(c => c.side);
         if (!state.you) return late.join(" and ") + " ran out of time";
         return late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
       }
-      if (state.draw) return "a draw on points";
+      if (state.isDrawn) return "a draw on points";
       const how = state.method === "knockout" ? " by knockout" : " on points";
       if (!state.you) return state.winner + " wins" + how;
       return (state.winner === state.you ? "you win" : "you lose") + how;
@@ -485,7 +485,7 @@ ${Finale.script(victory, defeat)}
   if (!state && mayFetch()) refresh();
   // Kept current to the end — polled, or with Play Live told: the other corner's plan, and so the
   // round's result, arrive while this page is doing nothing.
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
 </script>
 </body>
 </html>
@@ -1128,7 +1128,7 @@ ${signIn.signInScript}
             case Some(s) if s.isCompleted && s.method.contains("forfeit") => "time ran out"
             case Some(s) if s.isCompleted =>
                 val how = if (s.method.contains("knockout")) " by knockout" else " on points"
-                if (s.isDraw) "a draw on points"
+                if (s.isDrawn) "a draw on points"
                 else
                     s.winner.fold("over") { w =>
                         s.you.fold(s"$w wins$how")(you => (if (you == w) "you win" else "you lose") + how)

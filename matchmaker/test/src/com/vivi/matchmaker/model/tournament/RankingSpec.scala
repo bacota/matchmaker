@@ -53,7 +53,7 @@ class RankingSpec extends FunSuite {
     test("a rubber is asked for to break a pair's tie in a two-role game, and settles it once played (Q7)") {
         val draw = List(List(Placing(1L, Some(1)), Placing(2L, Some(1))))
         val pair = Map(1L -> 1, 2L -> 2)
-        val rubber = StageDesign(isRubberMatch = true)
+        val rubber = StageDesign(hasRubberMatch = true)
         assertEquals(Ranking.rankPool(pair, draw, Map.empty, rubber, twoPlayer).rubbers, List((1L, 2L)))
         val played = Map(Set(1L, 2L) -> List(Placing(1L, Some(2)), Placing(2L, Some(1))))
         assertEquals(Ranking.rankPool(pair, draw, played, rubber, twoPlayer).ranks, Map(2L -> 1, 1L -> 2))

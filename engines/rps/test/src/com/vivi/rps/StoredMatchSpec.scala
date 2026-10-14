@@ -19,7 +19,7 @@ class StoredMatchSpec extends FunSuite {
     private val stored =
         """|{"matchId":"m-1","seats":[{"side":"One","cognitoId":"sub-alice","participantId":11},{"side":"Two",
           |"cognitoId":"sub-bob","participantId":22}],"throws":[{"participantId":11,"shape":"Rock",
-          |"takenAt":"2026-01-01T00:00:01Z","startedAt":"2026-01-01T00:00:00Z"}],"isPublic":true,"completed":false,
+          |"takenAt":"2026-01-01T00:00:01Z","startedAt":"2026-01-01T00:00:00Z"}],"isPublic":true,"isCompleted":false,
           |"createdAt":"2026-01-01T00:00:00Z","moveCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/moves",
           |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results"}""".stripMargin.replace("\n", "")
 

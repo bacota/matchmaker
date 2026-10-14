@@ -210,7 +210,7 @@ class MatchNotificationSpec extends PropertySuite {
                       f.accepter.externalId,
                       f.game.gameId,
                       f.played.matchId,
-                      SeatNotifications.all(true).copy(isYourTurn = false, isTurnTaken = false)
+                      SeatNotifications.all(true).copy(isNotifiedOfYourTurn = false, isNotifiedOfTurnTaken = false)
                     )
                     _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
                 } yield f.notifier.messages.isEmpty

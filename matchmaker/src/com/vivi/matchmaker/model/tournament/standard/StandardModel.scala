@@ -12,7 +12,7 @@ package standard
   *
   * The designs are built for a game of two players. Where a format's pool size follows the game, a stage leaves it
   * unset, to be the tournament's default pool size -- the game's R unless whoever creates it says otherwise -- and a
-  * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `isChooseRoles` is what a
+  * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `hasRoleChoice` is what a
   * tournament made from it starts with: every match's seats choose their roles.
   */
 abstract class StandardModel(
@@ -22,8 +22,8 @@ abstract class StandardModel(
     val description: String,
     val classification: String,
     val poolSize: Option[Int] = None,
-    val isLateEntries: Boolean = false,
-    val isChooseRoles: Boolean = false
+    val hasLateEntries: Boolean = false,
+    val hasRoleChoice: Boolean = false
 ) {
     def design: TournamentDesign
 
@@ -36,9 +36,9 @@ abstract class StandardModel(
           description,
           Some(classification),
           poolSize,
-          isLateEntries,
+          hasLateEntries,
           design,
-          isChooseRoles = isChooseRoles
+          hasRoleChoice = hasRoleChoice
         )
 }
 

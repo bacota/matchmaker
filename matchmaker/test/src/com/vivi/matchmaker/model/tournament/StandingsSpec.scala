@@ -6,7 +6,7 @@ import Fixtures.*
 class StandingsSpec extends FunSuite {
 
     test("a round robin being played shows its finished matches' standings, and a finished table is left as it is") {
-        val design = TournamentDesign(List(StageDesign(isBrackets = false, poolSize = Some(4), demote = None)))
+        val design = TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(4), demote = None)))
         val env = Env(design, twoPlayer, (1L to 4L).map(_ -> 1500).toMap)
         val (first, matches) = Tournament.nextRound(Tournament.start((1L to 4L).toList, env), env)
         // One match of the first slot played, the stronger seed winning; the other not yet.

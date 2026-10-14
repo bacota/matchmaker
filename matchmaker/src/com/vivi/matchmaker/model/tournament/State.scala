@@ -25,7 +25,7 @@ case class PoolMember(
   */
 case class PoolMatch(
     planned: PlannedMatch,
-    isTiesAllowed: Boolean,
+    canTie: Boolean,
     round: Option[Int] = None,
     outcome: Option[List[Placing]] = None
 ) {
@@ -92,7 +92,7 @@ case class TournamentState(
 /** What advancing a tournament needs that is not in its state: the design, the game, and everyone's rating now.
   *
   * `defaultPoolSize` is the tournament's, for a stage that sets no pool size; `None`, as in a test that has no
-  * tournament, is the game's R. `isConcurrentRounds` is the tournament's: set, every round-robin pool may play all of
+  * tournament, is the game's R. `hasConcurrentRounds` is the tournament's: set, every round-robin pool may play all of
   * its matches in one round, as a stage that says so itself may.
   */
 case class Env(
@@ -100,7 +100,7 @@ case class Env(
     game: TournamentGame,
     ratings: Map[Long, Int],
     defaultPoolSize: Option[Int] = None,
-    isConcurrentRounds: Boolean = false
+    hasConcurrentRounds: Boolean = false
 ) {
     def rating(entrant: Long): Int = ratings.getOrElse(entrant, 0)
 
@@ -108,11 +108,11 @@ case class Env(
     def poolSize(stage: StageDesign): Int = stage.poolSizeOr(defaultPoolSize.getOrElse(game.poolSeats))
 
     /** The most matches a member of one of `stage`'s pools plays in a round. */
-    def concurrent(stage: StageDesign): Int = if (isConcurrentRounds) Int.MaxValue else stage.concurrent
+    def concurrent(stage: StageDesign): Int = if (hasConcurrentRounds) Int.MaxValue else stage.concurrent
 }
 
 /** A match of the round being played, with what creating it needs to know. */
-case class RoundMatch(poolId: Int, nodePath: List[Int], stage: Int, planned: PlannedMatch, isTiesAllowed: Boolean)
+case class RoundMatch(poolId: Int, nodePath: List[Int], stage: Int, planned: PlannedMatch, canTie: Boolean)
 
 /** A tournament's progress, as pure functions of its state: starting it, starting each round, recording results, and
   * advancing past what they finish. Matchmaker persists the state between calls and does what it says — creating the
@@ -297,8 +297,8 @@ object Tournament {
           n,
           env.game.requiredSeats,
           stage.advancing,
-          stage.isBrackets,
-          stage.isStrictStrata
+          stage.hasBrackets,
+          stage.hasStrictStrata
         )
         val pooled = formed.flatMap(_.members.map(_.entrant)).toSet
         val pools = formed.zipWithIndex.map { (f, i) =>
@@ -315,11 +315,11 @@ object Tournament {
                             Schedule.roundRobin(
                               f.members.map(_.entrant),
                               env.game,
-                              stage.isRotateRoles,
+                              stage.isRotatingRoles,
                               env.concurrent(stage)
                             )
                         // Ties as the stage says, or by the pool's size: none in a pool of two, an elimination match.
-                        val ties = Ties.allowed(f.members.size, stage = stage.isTiesAllowed)
+                        val ties = Ties.allowed(f.members.size, stage = stage.canTie)
                         Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, ties)))
                 }
         }
@@ -354,7 +354,7 @@ object Tournament {
                         val first = pool.matches.map(_.planned.no).max + 1
                         val added = ranking.rubbers.zipWithIndex.map { case ((a, b), i) =>
                             val seats = Schedule.roles(List(a, b), env.game.seatingRoles.take(2), env.game)
-                            PoolMatch(PlannedMatch(first + i, slot, seats, isRubber = true), isTiesAllowed = false)
+                            PoolMatch(PlannedMatch(first + i, slot, seats, isRubber = true), canTie = false)
                         }
                         pool.copy(matches = pool.matches ++ added)
                     } else
@@ -489,7 +489,7 @@ object Tournament {
             CompletedRun((pooled ++ sat).toMap)
         }
         val breakers = runs.zipWithIndex.collect {
-            case (run, i) if design.stages(run.stage).isTieBreakerStage => i
+            case (run, i) if design.stages(run.stage).hasTieBreakerStage => i
         }.toSet
         val ranked = Ranking.rankNode(completed, breakers)
         // Anyone who never played a run — a tournament that ended before it began — ranks level, last.
@@ -520,7 +520,7 @@ object Tournament {
                 run.pools.flatMap { pool =>
                     pool.matches
                         .filter(wanted)
-                        .map(m => RoundMatch(pool.id, node.path, run.stage, m.planned, m.isTiesAllowed)) ++
+                        .map(m => RoundMatch(pool.id, node.path, run.stage, m.planned, m.canTie)) ++
                         pool.sub.toList.flatMap(walk)
                 }
             }

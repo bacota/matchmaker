@@ -82,7 +82,7 @@ class Engine(
           yourThrow = seat.flatMap(m.throwOf).map(_.shape.toString),
           isCompleted = over,
           winner = Option.when(over)(m.winner.map(_.side.toString)).flatten,
-          isDraw = m.isDraw,
+          isDrawn = m.isDrawn,
           tiedRounds = m.tiedRounds.map(_.toString),
           players = m.seats.map(s =>
               SeatView(

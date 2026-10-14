@@ -372,7 +372,7 @@ object ArchiveService {
     /** The bucket the archive is in, or for a row from before that was recorded, the one its friendliness says — which
       * is where every such archive went, since a match could not change it then.
       */
-    def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.isArchiveFriendly.getOrElse(row.isFriendly))
+    def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.isInFriendlyBucket.getOrElse(row.isFriendly))
 
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)

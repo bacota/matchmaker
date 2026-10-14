@@ -49,9 +49,9 @@ class JsonSpec extends FunSuite {
     // Unimportant roles travel with the game, and a game written before they existed keeps ratings by role.
     test("a game says whether its roles are unimportant, and one that does not say has important ones") {
         val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
-        assert(read[Game](write(game.copy(isUnimportantRoles = true))).isUnimportantRoles)
+        assert(read[Game](write(game.copy(hasUnimportantRoles = true))).hasUnimportantRoles)
         val older = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq.filterNot(_._1 == "unimportantRoles")))
-        assert(!read[Game](older).isUnimportantRoles)
+        assert(!read[Game](older).hasUnimportantRoles)
     }
 
     // The key rides in the save request beside the game's fields and is read apart from them, and a
@@ -82,12 +82,22 @@ class JsonSpec extends FunSuite {
 
         // And so JSON with no tag reads back, which is what a client sends.
         assertEquals(
-          read[SeatNotifications]("""{"isMatchStarted":true,"isTurnTaken":false,"isYourTurn":true,"isMatchEnded":false}"""),
-          SeatNotifications(isMatchStarted = true, isTurnTaken = false, isYourTurn = true, isMatchEnded = false)
+          read[SeatNotifications](
+            """{"isNotifiedOfMatchStarted":true,"isNotifiedOfTurnTaken":false,"isNotifiedOfYourTurn":true,"isNotifiedOfMatchEnded":false}"""
+          ),
+          SeatNotifications(
+            isNotifiedOfMatchStarted = true,
+            isNotifiedOfTurnTaken = false,
+            isNotifiedOfYourTurn = true,
+            isNotifiedOfMatchEnded = false
+          )
         )
         // Four fields, not eleven: the kinds about a challenge are not a seat's to answer, and a
         // body naming them is not a seat's settings.
-        assertEquals(ujson.read(seat).obj.keySet, Set("isMatchStarted", "isTurnTaken", "isYourTurn", "isMatchEnded"))
+        assertEquals(
+          ujson.read(seat).obj.keySet,
+          Set("isNotifiedOfMatchStarted", "isNotifiedOfTurnTaken", "isNotifiedOfYourTurn", "isNotifiedOfMatchEnded")
+        )
     }
 
     // What POST /games/:id/challenges takes. Its Option fields are the bare value when there is one, and absent when
@@ -102,7 +112,7 @@ class JsonSpec extends FunSuite {
           isFriendly = false,
           isPublic = true,
           start = Some(Instant.ofEpochSecond(1000)),
-          isAutoStart = true,
+          isAutoStarted = true,
           isOpen = false,
           invitations = List(PlayerId(2), PlayerId(3))
         )
@@ -122,14 +132,14 @@ class JsonSpec extends FunSuite {
           TournamentModelId("challenge"),
           2,
           TournamentSettings(
-            isAutoRounds = true,
+            hasAutomaticRounds = true,
             isInvitational = true,
             roundDuration = Some(Duration.ofMinutes(30)),
             gameSettings = """{"rounds":"4"}""",
             start = Some(Instant.ofEpochSecond(5000)),
-            isChooseRoles = true,
+            hasRoleChoice = true,
             maxEntrants = Some(2),
-            isAutoStart = true
+            isAutoStarted = true
           ),
           TournamentStatus.Open
         )

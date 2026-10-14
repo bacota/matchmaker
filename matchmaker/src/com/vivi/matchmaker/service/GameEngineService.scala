@@ -112,7 +112,7 @@ class GameEngineService[T](
               resultsCallbackUrl = callbackBaseUrl.map(base =>
                   s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/results"
               ),
-              isTiesAllowed = Option.when(!tiesAllowed)(false)
+              canTie = Option.when(!tiesAllowed)(false)
             )
             response <- engine.createGame(game.url, apiKey, request).onError(_ => undo)
             withUrls = saved.copy(

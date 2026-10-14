@@ -3,7 +3,6 @@ package com.vivi.matchmaker.engine
 import cats.effect.IO
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import upickle.implicits.key
 
 /** One seat in a game the engine is being asked to create.
   *
@@ -55,7 +54,7 @@ case class CreateGameRequest(
       * so that an engine that predates it, or a match that allows ties, is sent exactly what it always was. Whether the
       * engine acts on it is up to the game.
       */
-    @key("tiesAllowed") isTiesAllowed: Option[Boolean] = None
+    canTie: Option[Boolean] = None
 )
 
 /** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move
@@ -88,8 +87,8 @@ case class CreateGameResponse(
   */
 case class EngineParticipantStatus(
     participantId: Long,
-    @key("pending") isPending: Boolean,
-    @key("completed") isCompleted: Boolean,
+    isPending: Boolean,
+    isCompleted: Boolean,
     prevMoveAt: Option[Instant]
 )
 
@@ -108,7 +107,7 @@ case class EngineTurn(participantId: Long, takenAt: Instant, startedAt: Option[I
   * and their durations are what a total (chess clock) time limit is spent against.
   */
 case class GameStatusResponse(
-    @key("completed") isCompleted: Boolean,
+    isCompleted: Boolean,
     participants: List[EngineParticipantStatus],
     turns: List[EngineTurn] = Nil,
     /** The number of the latest move this answer reflects, from an engine that numbers its moves — the same numbering

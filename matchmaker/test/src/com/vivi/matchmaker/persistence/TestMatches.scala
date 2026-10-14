@@ -28,8 +28,8 @@ object TestMatches {
       "",
       None,
       None,
-      isLateEntries = false,
-      TournamentDesign(List(StageDesign(isBrackets = false, demote = None)))
+      hasLateEntries = false,
+      TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
     )
 
     @volatile private var isHolderReady = false
@@ -188,15 +188,15 @@ object TestMatches {
       ParticipantId
     ] =
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, completed_at, due, game_role_id,
-                  elo_start, elo_role_start, tournament_id, entrant_id, is_notify_match_started, is_notify_turn_taken,
-                  is_notify_your_turn, is_notify_match_ended)
+                  elo_start, elo_role_start, tournament_id, entrant_id, is_notified_of_match_started, is_notified_of_turn_taken,
+                  is_notified_of_your_turn, is_notified_of_match_ended)
               SELECT ${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, ${SkunkCodecs.gameType},
                      ${SkunkIdCodecs.playerId}, $bool, CASE WHEN $bool THEN now() END, ${SkunkCodecs.instant.opt},
                      ${SkunkIdCodecs.gameRoleId}, $int4, ${int4.opt}, ${SkunkIdCodecs.tournamentId}, $int8,
-                     COALESCE(pg.is_notify_match_started, pl.is_notify_match_started, TRUE),
-                     COALESCE(pg.is_notify_turn_taken, pl.is_notify_turn_taken, TRUE),
-                     COALESCE(pg.is_notify_your_turn, pl.is_notify_your_turn, TRUE),
-                     COALESCE(pg.is_notify_match_ended, pl.is_notify_match_ended, TRUE)
+                     COALESCE(pg.is_notified_of_match_started, pl.is_notified_of_match_started, TRUE),
+                     COALESCE(pg.is_notified_of_turn_taken, pl.is_notified_of_turn_taken, TRUE),
+                     COALESCE(pg.is_notified_of_your_turn, pl.is_notified_of_your_turn, TRUE),
+                     COALESCE(pg.is_notified_of_match_ended, pl.is_notified_of_match_ended, TRUE)
               FROM player pl
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = ${SkunkIdCodecs.gameId}
               WHERE pl.player_id = ${SkunkIdCodecs.playerId}

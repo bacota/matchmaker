@@ -311,7 +311,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(m.ending, Some(Ending.Conceded))
         assertEquals(m.conceded, Some(Side.Blue))
         assertEquals(m.winner, Some(Side.Red))
-        assert(!m.isDraw)
+        assert(!m.isDrawn)
         assertEquals(StrategoMatch.pending(m), Nil)
         // Not a piece move: the count and the turn order are as they were.
         assertEquals(m.moves, Nil)
@@ -382,7 +382,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!f.m.isOver)
         f.engine.move("m-1", bob, 69, 59)
         assert(f.m.isOver)
-        assert(f.m.isDraw)
+        assert(f.m.isDrawn)
         assert(f.recorder.results.head._2.results.forall(r => r.rank == 1 && !r.isWinner))
         assertEquals(f.recorder.results.head._2.results.head.scores("ending").str, "cap")
     }
@@ -404,7 +404,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a callback that fails does not fail the move, which stands, and the results are still sent".tag(Quiet)) {
         val f = deployed(blueOnA7 = Rank.Flag)
-        f.recorder.isFailCallbacks = true
+        f.recorder.isFailingCallbacks = true
         assert(f.engine.move("m-1", alice, 30, 60).isRight)
         assert(f.m.isCompleted)
         assertEquals(f.recorder.results.size, 1)

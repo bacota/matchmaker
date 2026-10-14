@@ -77,7 +77,7 @@ class EloRatingServiceSpec extends PropertySuite {
                 ),
                 Seq.empty,
                 unique("duel"),
-                isUnimportantRoles = unimportantRoles
+                hasUnimportantRoles = unimportantRoles
               )
             )
         }
@@ -116,7 +116,7 @@ class EloRatingServiceSpec extends PropertySuite {
     private def openChallenge(f: Fixture, friendly: Boolean): IO[Tournament] =
         Challenges.offeredIn(f.game) *> services.tournaments.createChallenge(
           f.game.gameId,
-          ChallengeRequest(isPlays = false, poolSize = Some(2), isFriendly = friendly, isAutoStart = true),
+          ChallengeRequest(isPlaying = false, poolSize = Some(2), isFriendly = friendly, isAutoStarted = true),
           f.host.externalId
         )
 
@@ -342,8 +342,8 @@ class EloRatingServiceSpec extends PropertySuite {
           first.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
           List((f.first.playerId, Some(1), 1516))
         )
-        assert(!first.isMore)
-        assertEquals(host, Leaderboard(Nil, isMore = false))
+        assert(!first.hasMore)
+        assertEquals(host, Leaderboard(Nil, hasMore = false))
         assert(blank.isInstanceOf[ValidationError], blank)
         assert(noGame.isInstanceOf[NotFoundError], noGame)
     }
@@ -670,7 +670,7 @@ class EloRatingServiceSpec extends PropertySuite {
           listed.ratings.map(r => (r.player.playerId, r.rating, r.matches, r.rank)),
           List((f.second.playerId, 2000, 1, Some(1)), (f.first.playerId, 1516, 1, Some(2)))
         )
-        assert(!listed.isMore)
+        assert(!listed.hasMore)
     }
 
     test("only an admin may set a rating, within the range, of a player and game that exist") {

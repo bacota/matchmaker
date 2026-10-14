@@ -202,30 +202,30 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     private var nextCharacterId = 1L
 
     /** While set, [[registerCharacter]] fails as an unreachable matchmaker would, and records nothing. */
-    @volatile var isFailRegistrations: Boolean = false
+    @volatile var isFailingRegistrations: Boolean = false
 
     /** While set, [[saveCharacterState]] fails as an unreachable matchmaker would, and records nothing. */
-    @volatile var isFailStateSaves: Boolean = false
+    @volatile var isFailingStateSaves: Boolean = false
 
     /** While set, [[recordMove]] and [[recordResults]] fail as an unreachable matchmaker would, after recording the
       * attempt — so a test can see that a call was made and that its failure went no further.
       */
-    @volatile var isFailCallbacks: Boolean = false
+    @volatile var isFailingCallbacks: Boolean = false
 
     def recordMove(url: String, notification: Protocol.MoveNotification): Unit = synchronized {
         movesBuffer += (url -> notification)
         log(s"POST $url ${write(notification)}")
-        if (isFailCallbacks) throw AwsError(s"POST $url failed: unreachable")
+        if (isFailingCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def recordResults(url: String, results: Protocol.MatchResults): Unit = synchronized {
         resultsBuffer += (url -> results)
         log(s"POST $url ${write(results)}")
-        if (isFailCallbacks) throw AwsError(s"POST $url failed: unreachable")
+        if (isFailingCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def saveCharacterState(matchmakerUrl: String, characterId: Long, state: String): Unit = synchronized {
-        if (isFailStateSaves) throw AwsError(s"PUT $matchmakerUrl/characters/$characterId/state failed: unreachable")
+        if (isFailingStateSaves) throw AwsError(s"PUT $matchmakerUrl/characters/$characterId/state failed: unreachable")
         statesBuffer += (characterId -> state)
         log(s"PUT $matchmakerUrl/characters/$characterId/state $state")
     }
@@ -236,7 +236,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
 
     def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
         synchronized {
-            if (isFailRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
+            if (isFailingRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
             val id = nextCharacterId
             nextCharacterId += 1
             registrationsBuffer += (id -> request)
@@ -299,7 +299,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     @volatile var isArchivingUnavailable: Boolean = false
 
     /** While set, an upload request is refused as one for a match matchmaker does not know is over: 409. */
-    @volatile var isRefuseArchiving: Boolean = false
+    @volatile var isRefusingArchiving: Boolean = false
 
     def requestArchiveUpload(
         matchmakerUrl: String,
@@ -308,7 +308,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     ): Protocol.ArchiveUploadAnswer = synchronized {
         log(s"POST $matchmakerUrl/matches/$matchId/archive ${write(request)}")
         if (isArchivingUnavailable) throw AwsError("archiving is not configured on this matchmaker (503)")
-        if (isRefuseArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
+        if (isRefusingArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
         archivedAt.get(matchId) match {
             case Some(at) => Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
             case None =>

@@ -31,7 +31,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
     private case class NMatch(
         seats: List[Long],
         isRubber: Boolean,
-        isTiesAllowed: Boolean,
+        canTie: Boolean,
         round: Option[Int],
         outcome: Option[List[Placing]]
     )
@@ -77,7 +77,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                               NMatch(
                                 m.planned.seats.map(_.entrant).sorted,
                                 m.planned.isRubber,
-                                m.isTiesAllowed,
+                                m.canTie,
                                 m.round,
                                 m.outcome.map(_.sortBy(_.entrant))
                               )

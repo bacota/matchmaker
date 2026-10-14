@@ -16,7 +16,7 @@ object Challenge
       "Challenge",
       "One match, of everyone who enters. The players choose their roles once it starts.",
       "Challenge",
-      isChooseRoles = true
+      hasRoleChoice = true
     ) {
 
     /** The model's id, which the challenge screens find their tournaments by. */
@@ -26,10 +26,10 @@ object Challenge
       List(
         StageDesign(
           repeat = Repetition.Fixed(1),
-          isBrackets = false,
+          hasBrackets = false,
           demote = None,
           promote = None,
-          isTiesAllowed = Some(true),
+          canTie = Some(true),
           seedPolicy = SeedPolicy.Constant
         )
       )

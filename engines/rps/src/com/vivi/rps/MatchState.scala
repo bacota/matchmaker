@@ -3,7 +3,6 @@ package com.vivi.rps
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
-import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -36,16 +35,16 @@ case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, star
   * `clock` is a live match's turn clock, and `None` for every other match — defaulted, so that a match stored before
   * live matches existed reads back as the match it was.
   *
-  * `isTiesAllowed` is false for a match that must not end in a draw. Then a tied throw starts another: `throws` holds
-  * every throw of every round, a round being each seat's next throw, and the match is over at the first round somebody
-  * wins. Defaulted, so a match stored before it existed is the one-throw match it always was.
+  * `canTie` is false for a match that must not end in a draw. Then a tied throw starts another: `throws` holds every
+  * throw of every round, a round being each seat's next throw, and the match is over at the first round somebody wins.
+  * Defaulted, so a match stored before it existed is the one-throw match it always was.
   */
 case class RpsMatch(
     matchId: String,
     seats: List[Seat],
     throws: List[ThrowRecord],
     isPublic: Boolean,
-    @key("completed") isCompleted: Boolean,
+    isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -54,7 +53,7 @@ case class RpsMatch(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    @key("tiesAllowed") isTiesAllowed: Boolean = true
+    canTie: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -117,13 +116,13 @@ case class RpsMatch(
       * nothing to end but the pair being complete — or, when ties are not allowed, the moment a pair is thrown that
       * somebody wins. Or, in a live match, the moment the clock ran out on whoever had not.
       */
-    def isOver: Boolean = ranOut || (completeRounds > 0 && (isTiesAllowed || decide(lastRound).isDefined))
+    def isOver: Boolean = ranOut || (completeRounds > 0 && (canTie || decide(lastRound).isDefined))
 
     /** Whether a live match's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
 
     /** The winning seat, once there is one. `None` while a throw is still to come, and `None` for a draw — which
-      * [[isDraw]] is how to tell apart from an unfinished match. In a match the clock ended, whoever threw in time.
+      * [[isDrawn]] is how to tell apart from an unfinished match. In a match the clock ended, whoever threw in time.
       */
     def winner: Option[Seat] =
         if (ranOut) seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win))
@@ -131,7 +130,7 @@ case class RpsMatch(
         else None
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
-    def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
 
     /** How the match came out for one seat. Only meaningful once it is over. */
     def outcomeFor(seat: Seat): Outcome =
@@ -253,7 +252,7 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
               resultsCallbackUrl = request.resultsCallbackUrl,
               gameDisplayName = request.gameDisplayName,
               description = request.description,
-              isTiesAllowed = Protocol.tiesAllowed(request)
+              canTie = Protocol.tiesAllowed(request)
             )
         }
 

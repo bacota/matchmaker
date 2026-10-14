@@ -140,8 +140,8 @@ console.log(JSON.stringify(out));
                   p("square").num.toInt,
                   p("side").str,
                   p("rank").strOpt,
-                  p("revealed").bool,
-                  p("moved").bool
+                  p("isRevealed").bool,
+                  p("isMoved").bool
                 )
             )
             .sortBy(_.square)

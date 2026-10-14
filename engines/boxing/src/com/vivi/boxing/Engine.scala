@@ -179,14 +179,14 @@ class Engine(
           matchId = m.matchId,
           scheduledRounds = m.scheduledRounds,
           round = if (over) m.rounds.size else m.currentRound,
-          isExtraRound = (if (over) m.rounds.size else m.currentRound) > m.scheduledRounds,
+          hasExtraRound = (if (over) m.rounds.size else m.currentRound) > m.scheduledRounds,
           waitingFor = m.pending.map(_.side.toString),
           you = corner.map(_.side.toString),
           yourPlan =
               corner.flatMap(c => m.planOf(c, m.currentRound)).filterNot(_ => over).map(p => planView(p.allocation)),
           isCompleted = over,
           winner = m.winner.map(_.side.toString),
-          isDraw = m.isDraw,
+          isDrawn = m.isDrawn,
           method = m.method,
           corners = m.corners.map(c =>
               CornerView(

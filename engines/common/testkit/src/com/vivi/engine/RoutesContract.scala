@@ -527,7 +527,7 @@ abstract class RoutesContract extends FunSuite {
         stateOf(routes, "sub-alice")
         advance(29)
         val waiting = stateOf(routes, "sub-alice")
-        assertEquals(waiting("completed").bool, false)
+        assertEquals(waiting("isCompleted").bool, false)
         // Bob has not opened it, so if he is being waited on too, his clock has not started.
         val bob = waiting("clock")("seats").arr.find(_("participantId").num == 2)
         assert(bob.forall(_.obj.get("remainingMillis").forall(_.isNull)), s"bob's clock has started: $bob")
@@ -535,7 +535,7 @@ abstract class RoutesContract extends FunSuite {
 
         advance(1)
         val ended = stateOf(routes, "sub-alice")
-        assertEquals(ended("completed").bool, true)
+        assertEquals(ended("isCompleted").bool, true)
         assertEquals(ended("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
         assertEquals(statusOf(routes).isCompleted, true)
 
@@ -636,7 +636,7 @@ abstract class RoutesContract extends FunSuite {
         // since after her first move the match is waiting on bob.
         val alice = aliceClock(stateOf(routes, "sub-alice")).get
         assertEquals(alice("remainingMillis").num, 20000.0)
-        assertEquals(alice("running").bool, false)
+        assertEquals(alice("isRunning").bool, false)
         assertEquals(clock("seats").arr.map(_("participantId").num.toLong).toSet, Set(1L, 2L))
     }
 
@@ -645,7 +645,7 @@ abstract class RoutesContract extends FunSuite {
         stateOf(routes, "sub-alice")
         advance(30)
         val ended = stateOf(routes, "sub-alice")
-        assertEquals(ended("completed").bool, true)
+        assertEquals(ended("isCompleted").bool, true)
         assertEquals(ended("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
         assert(matchmaker.results.head._2.results.forall(_.isForfeit))
     }

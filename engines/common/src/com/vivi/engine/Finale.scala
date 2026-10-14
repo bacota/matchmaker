@@ -8,7 +8,7 @@ package com.vivi.engine
   * {{{
   * const showFinale = finale();
   * ...
-  * showFinale(state && state.completed && state.you ? (iWon ? "win" : "lose") : null);   // from render()
+  * showFinale(state && state.isCompleted && state.you ? (iWon ? "win" : "lose") : null);   // from render()
   * }}}
   *
   * Only for a player with a seat in the match. A draw shows nothing — there is nobody to cheer and nobody to console —

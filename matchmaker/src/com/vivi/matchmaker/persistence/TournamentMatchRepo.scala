@@ -64,12 +64,12 @@ class TournamentMatchRepo(session: Session[IO]) {
     }
 
     private val selectRound: Query[(GameId, TournamentId, Int), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, is_ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND status <> 'S'
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
     private val selectOpen: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, is_ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND status IN ('C', 'D', 'P')
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
@@ -92,12 +92,12 @@ class TournamentMatchRepo(session: Session[IO]) {
             .mapN(assemble)
 
     private val selectOne: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, is_ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'"""
             .query(matchRow)
 
     private val selectOneForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, is_ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'
           FOR UPDATE""".query(matchRow)
 

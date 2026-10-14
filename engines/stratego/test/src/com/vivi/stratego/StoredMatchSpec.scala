@@ -52,13 +52,13 @@ class StoredMatchSpec extends FunSuite {
     private val stored =
         """|{"matchId":"m-1","seats":[{"side":"Red","cognitoId":"sub-alice","participantId":11},{"side":"Blue",
           |"cognitoId":"sub-bob","participantId":22}],"board":[{"square":0,"id":0,"side":"Red","rank":"Flag",
-          |"revealed":false,"moved":false},{"square":60,"id":40,"side":"Blue","rank":"Sergeant","revealed":true,
-          |"moved":false},{"square":99,"id":79,"side":"Blue","rank":"Flag","revealed":false,"moved":false}],
+          |"isRevealed":false,"isMoved":false},{"square":60,"id":40,"side":"Blue","rank":"Sergeant","isRevealed":true,
+          |"isMoved":false},{"square":99,"id":79,"side":"Blue","rank":"Flag","isRevealed":false,"isMoved":false}],
           |"turns":[{"participantId":11,"side":"Red","takenAt":"2026-01-01T00:00:01Z","startedAt":"2026-01-01T00:00:00Z"},
           |{"participantId":22,"side":"Blue","takenAt":"2026-01-01T00:00:02Z","startedAt":"2026-01-01T00:00:00Z"},
           |{"participantId":11,"side":"Red","takenAt":"2026-01-01T00:00:03Z","startedAt":"2026-01-01T00:00:02Z",
           |"step":{"pieceId":30,"from":30,"to":60},"battle":{"attacker":"Scout","defender":"Sergeant",
-          |"result":"DefenderWins"}}],"isPublic":true,"completed":false,"createdAt":"2026-01-01T00:00:00Z",
+          |"result":"DefenderWins"}}],"isPublic":true,"isCompleted":false,"createdAt":"2026-01-01T00:00:00Z",
           |"moveCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/moves",
           |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results","maxMoves":2000}""".stripMargin
             .replace("\n", "")
@@ -72,8 +72,8 @@ class StoredMatchSpec extends FunSuite {
             stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), isConcession = true))
         val stored = write(conceded)
         assertEquals(read[StrategoMatch](stored), conceded)
-        assertEquals("\"concession\":true".r.findAllIn(stored).size, 1)
-        assert(!write(stratego).contains("concession"))
+        assertEquals("\"isConcession\":true".r.findAllIn(stored).size, 1)
+        assert(!write(stratego).contains("isConcession"))
     }
 
     test("a deployment's army is stored on its turn, and reads back; a match stored without one reads as none") {

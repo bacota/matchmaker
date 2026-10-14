@@ -66,18 +66,18 @@ CREATE TABLE player (
     -- (local development). Not unique: two players sharing a mailbox each keep their own identity, and
     -- Cognito already enforces what has to hold.
     email        TEXT,
-    is_notify_challenge_accepted    BOOLEAN,
-    is_notify_challenge_ready       BOOLEAN,
-    is_notify_acceptance_changed    BOOLEAN,
-    is_notify_accepted_challenge_ready BOOLEAN,
-    is_notify_invitation_received   BOOLEAN,
-    is_notify_invitation_accepted   BOOLEAN,
-    is_notify_invitation_rejected   BOOLEAN,
-    is_notify_match_started         BOOLEAN,
-    is_notify_turn_taken            BOOLEAN,
-    is_notify_your_turn             BOOLEAN,
-    is_notify_match_ended           BOOLEAN,
-    is_notify_tournament_round_done BOOLEAN,
+    is_notified_of_challenge_accepted    BOOLEAN,
+    is_notified_of_challenge_ready       BOOLEAN,
+    is_notified_of_acceptance_changed    BOOLEAN,
+    is_notified_of_accepted_challenge_ready BOOLEAN,
+    is_notified_of_invitation_received   BOOLEAN,
+    is_notified_of_invitation_accepted   BOOLEAN,
+    is_notified_of_invitation_rejected   BOOLEAN,
+    is_notified_of_match_started         BOOLEAN,
+    is_notified_of_turn_taken            BOOLEAN,
+    is_notified_of_your_turn             BOOLEAN,
+    is_notified_of_match_ended           BOOLEAN,
+    is_notified_of_tournament_round_done BOOLEAN,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -162,7 +162,7 @@ CREATE TABLE game (
     timeout_action    TEXT NOT NULL DEFAULT 'FORFEIT' CHECK (timeout_action IN ('FORFEIT')),
     -- The admin saying no role has an advantage in winning. Otherwise a rated match moves each player's
     -- rating in their role as well as overall (elo_role_rating).
-    is_unimportant_roles BOOLEAN NOT NULL DEFAULT false,
+    has_unimportant_roles BOOLEAN NOT NULL DEFAULT false,
     -- Whether players move in turn ('seq') or all at once ('sim'), which decides how a tournament divides
     -- a round's time; and how many turns a simultaneous game lasts, where it can say.
     move_type         TEXT NOT NULL DEFAULT 'seq' CONSTRAINT game_move_type_check CHECK (move_type IN ('seq', 'sim')),
@@ -251,18 +251,18 @@ CREATE INDEX ON game_admin (game_id);
 CREATE TABLE player_game (
     player_id BIGINT NOT NULL REFERENCES player,
     game_id   INT NOT NULL REFERENCES game,
-    is_notify_challenge_accepted    BOOLEAN,
-    is_notify_challenge_ready       BOOLEAN,
-    is_notify_acceptance_changed    BOOLEAN,
-    is_notify_accepted_challenge_ready BOOLEAN,
-    is_notify_invitation_received   BOOLEAN,
-    is_notify_invitation_accepted   BOOLEAN,
-    is_notify_invitation_rejected   BOOLEAN,
-    is_notify_match_started         BOOLEAN,
-    is_notify_turn_taken            BOOLEAN,
-    is_notify_your_turn             BOOLEAN,
-    is_notify_match_ended           BOOLEAN,
-    is_notify_tournament_round_done BOOLEAN,
+    is_notified_of_challenge_accepted    BOOLEAN,
+    is_notified_of_challenge_ready       BOOLEAN,
+    is_notified_of_acceptance_changed    BOOLEAN,
+    is_notified_of_accepted_challenge_ready BOOLEAN,
+    is_notified_of_invitation_received   BOOLEAN,
+    is_notified_of_invitation_accepted   BOOLEAN,
+    is_notified_of_invitation_rejected   BOOLEAN,
+    is_notified_of_match_started         BOOLEAN,
+    is_notified_of_turn_taken            BOOLEAN,
+    is_notified_of_your_turn             BOOLEAN,
+    is_notified_of_match_ended           BOOLEAN,
+    is_notified_of_tournament_round_done BOOLEAN,
     create_date TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (player_id, game_id)
@@ -319,10 +319,10 @@ CREATE TABLE tournament_model (
     -- The default pool size the create form suggests. NULL suggests the game's R.
     pool_size            INT CHECK (pool_size > 0),
     first_stage_model_id TEXT NOT NULL,
-    is_late_entries      BOOLEAN NOT NULL DEFAULT false,
+    has_late_entries      BOOLEAN NOT NULL DEFAULT false,
     -- Whether every match's seats choose their roles, in seed order, whatever the game's preference levels
     -- and whether its roles matter. A challenge's do.
-    is_choose_roles      BOOLEAN NOT NULL DEFAULT false,
+    has_role_choice      BOOLEAN NOT NULL DEFAULT false,
     -- False once the code no longer defines it and a tournament made from it has entrants: offered no
     -- longer, and kept for them. Its stages and inner models are deactivated with it.
     is_active            BOOLEAN NOT NULL DEFAULT true,
@@ -341,7 +341,7 @@ CREATE TABLE stage_model (
     pool_size              INT CHECK (pool_size > 0),
     name                   TEXT NOT NULL,
     description            TEXT NOT NULL DEFAULT '',
-    is_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
+    has_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
     -- If both are NULL the stage repeats until the tournament's owner stops it.
     repetitions            INT,
     remaining_participants INT,
@@ -351,15 +351,15 @@ CREATE TABLE stage_model (
     min_stratum            INT DEFAULT 0,
     points_for_win         INT NOT NULL DEFAULT 2,
     points_for_draw        INT NOT NULL DEFAULT 1,
-    is_points_bonus        BOOLEAN NOT NULL DEFAULT true,
+    has_points_bonus        BOOLEAN NOT NULL DEFAULT true,
     promote                INT DEFAULT 1 CHECK (promote IS NULL OR demote IS NULL OR promote < demote),
     -- A rubber match breaks ties in a pool; otherwise the total score differential does.
-    is_rubber_match        BOOLEAN NOT NULL DEFAULT false,
+    has_rubber_match        BOOLEAN NOT NULL DEFAULT false,
     -- Whether a match of an atomic stage may be drawn. NULL for the rule by pool size: not in a pool of
     -- two, which is an elimination match. A rubber match never may.
-    is_ties_allowed        BOOLEAN,
-    is_strict_strata       BOOLEAN NOT NULL DEFAULT true,
-    is_tie_breaker_stage   BOOLEAN NOT NULL DEFAULT false,
+    can_tie        BOOLEAN,
+    has_strict_strata       BOOLEAN NOT NULL DEFAULT true,
+    has_tie_breaker_stage   BOOLEAN NOT NULL DEFAULT false,
     seed_policy            TEXT NOT NULL CHECK (seed_policy IN ('CONST', 'ELO', 'PREV', 'WINNER')),
     current_stage_model_id TEXT,
     -- False with its model's active.
@@ -385,7 +385,7 @@ CREATE TABLE atomic_stage_model (
     tournament_model_id TEXT NOT NULL,
     stage_model_id      TEXT NOT NULL,
     kind                CHAR(1) NOT NULL DEFAULT 'A' CHECK (kind = 'A'),
-    is_rotate_roles     BOOLEAN NOT NULL DEFAULT false,
+    is_rotating_roles     BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY (tournament_model_id, stage_model_id),
     UNIQUE (tournament_model_id, stage_model_id, kind),
     FOREIGN KEY (tournament_model_id, stage_model_id, kind)
@@ -446,10 +446,10 @@ CREATE TABLE tournament (
     -- The model it was made from, one its game offered then. Its stages are copied, so a sync that
     -- rewrites the model later does not change it.
     tournament_model_id TEXT NOT NULL REFERENCES tournament_model,
-    is_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
+    has_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
     first_stage_id      BIGINT NOT NULL,
-    is_late_entries     BOOLEAN NOT NULL DEFAULT false,
-    is_automatic_rounds BOOLEAN NOT NULL DEFAULT false,
+    has_late_entries     BOOLEAN NOT NULL DEFAULT false,
+    has_automatic_rounds BOOLEAN NOT NULL DEFAULT false,
     is_friendly         BOOLEAN NOT NULL DEFAULT true,
     is_invitational     BOOLEAN NOT NULL DEFAULT false,
     min_rating          INT,
@@ -469,11 +469,11 @@ CREATE TABLE tournament (
     -- When it is meant to be played. Shown, and nothing more.
     start               TIMESTAMPTZ,
     -- Copied from its model (see tournament_model).
-    is_choose_roles     BOOLEAN NOT NULL DEFAULT false,
+    has_role_choice     BOOLEAN NOT NULL DEFAULT false,
     -- The most entries it takes, NULL for no limit: a challenge's is its pool size.
     max_entrants        INT CHECK (max_entrants > 0),
     -- Whether it starts by itself as soon as its entries reach max_entrants.
-    is_auto_start       BOOLEAN NOT NULL DEFAULT false,
+    is_auto_started       BOOLEAN NOT NULL DEFAULT false,
     current_round       INT,
     is_stop_requested   BOOLEAN NOT NULL DEFAULT false,
     -- When the owner last asked for the round's overdue matches to be checked, so that a burst of presses
@@ -485,7 +485,7 @@ CREATE TABLE tournament (
     update_date         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id),
     CHECK (min_rating IS NULL OR max_rating IS NULL OR min_rating <= max_rating),
-    CONSTRAINT tournament_auto_start_full CHECK (NOT is_auto_start OR max_entrants IS NOT NULL),
+    CONSTRAINT tournament_auto_start_full CHECK (NOT is_auto_started OR max_entrants IS NOT NULL),
     -- A live match is played against a clock of at least a second.
     CONSTRAINT tournament_live_time_limit
         CHECK (NOT is_live OR (round_duration IS NOT NULL AND round_duration >= INTERVAL '1 second'))
@@ -506,7 +506,7 @@ CREATE TABLE stage (
     pool_size              INT CHECK (pool_size > 0),
     name                   TEXT NOT NULL,
     description            TEXT NOT NULL DEFAULT '',
-    is_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
+    has_concurrent_rounds   BOOLEAN NOT NULL DEFAULT false,
     is_bracketed           BOOLEAN NOT NULL DEFAULT false,
     -- If both are NULL the stage repeats until the tournament's owner stops it.
     repetitions            INT,
@@ -516,15 +516,15 @@ CREATE TABLE stage (
     min_stratum            INT DEFAULT 0,
     points_for_win         INT NOT NULL DEFAULT 2,
     points_for_draw        INT NOT NULL DEFAULT 1,
-    is_points_bonus        BOOLEAN NOT NULL DEFAULT true,
+    has_points_bonus        BOOLEAN NOT NULL DEFAULT true,
     promote                INT DEFAULT 1 CHECK (promote IS NULL OR demote IS NULL OR promote < demote),
     -- A rubber match breaks ties in a pool; otherwise the total score differential does.
-    is_rubber_match        BOOLEAN NOT NULL DEFAULT false,
+    has_rubber_match        BOOLEAN NOT NULL DEFAULT false,
     -- Whether a match of an atomic stage may be drawn. NULL for the rule by pool size: not in a pool of
     -- two, which is an elimination match. A rubber match never may.
-    is_ties_allowed        BOOLEAN,
-    is_strict_strata       BOOLEAN NOT NULL DEFAULT true,
-    is_tie_breaker_stage   BOOLEAN NOT NULL DEFAULT false,
+    can_tie        BOOLEAN,
+    has_strict_strata       BOOLEAN NOT NULL DEFAULT true,
+    has_tie_breaker_stage   BOOLEAN NOT NULL DEFAULT false,
     seed_policy            TEXT NOT NULL CHECK (seed_policy IN ('CONST', 'ELO', 'PREV', 'WINNER')),
     current_stage_id       BIGINT,
     atomic_kind            CHAR(1) GENERATED ALWAYS AS (CASE WHEN kind = 'A' THEN kind END) STORED,
@@ -550,7 +550,7 @@ CREATE TABLE atomic_stage (
     tournament_id BIGINT NOT NULL,
     stage_id      BIGINT NOT NULL,
     kind          CHAR(1) NOT NULL DEFAULT 'A' CHECK (kind = 'A'),
-    is_rotate_roles  BOOLEAN NOT NULL DEFAULT false,
+    is_rotating_roles  BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY (game_id, tournament_id, stage_id),
     UNIQUE (game_id, tournament_id, stage_id, kind),
     FOREIGN KEY (game_id, tournament_id, stage_id, kind) REFERENCES stage (game_id, tournament_id, stage_id, kind)
@@ -587,7 +587,7 @@ CREATE TABLE round (
     stage_id      BIGINT NOT NULL,
     start_date    TIMESTAMPTZ,
     deadline      TIMESTAMPTZ,
-    is_complete   BOOLEAN NOT NULL DEFAULT false,
+    is_completed   BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY (game_id, tournament_id, round),
     -- For match's foreign key, which names the stage as well, so that a match's round and pool agree on it.
     UNIQUE (game_id, tournament_id, round, stage_id),
@@ -920,7 +920,7 @@ CREATE TABLE match (
     -- (MatchService.setFriendly).
     is_friendly        BOOLEAN NOT NULL DEFAULT true,
     -- A tournament match may be drawn unless it is a rubber match, which exists to break a tie.
-    is_ties_allowed    BOOLEAN NOT NULL DEFAULT true,
+    can_tie    BOOLEAN NOT NULL DEFAULT true,
     is_rubber          BOOLEAN NOT NULL DEFAULT false,
     -- What the engine answered its create with. `public_url` only for a public match; `cancel_url` NULL
     -- from an engine with no such route, which is then not told of a cancel.
@@ -949,7 +949,7 @@ CREATE TABLE match (
     -- Which bucket the archive is in: true the friendly one, false the permanent one. Written down rather
     -- than following `is_friendly`, since a match made friendly after archiving is left where it was safe.
     -- NULL until the engine asks to upload.
-    is_archive_friendly   BOOLEAN,
+    is_in_friendly_bucket   BOOLEAN,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, match_id),
@@ -962,7 +962,7 @@ CREATE TABLE match (
     -- A match not yet made in the engine has no urls and no start.
     CONSTRAINT match_not_yet_created
         CHECK (status NOT IN ('S', 'C', 'D') OR (status_url IS NULL AND play_url IS NULL AND start IS NULL)),
-    CONSTRAINT match_rubber_decided CHECK (NOT is_rubber OR NOT is_ties_allowed),
+    CONSTRAINT match_rubber_decided CHECK (NOT is_rubber OR NOT can_tie),
     CONSTRAINT match_live_time_limit
         CHECK (NOT is_live OR (time_limit IS NOT NULL AND time_limit >= INTERVAL '1 second'))
 );
@@ -1013,10 +1013,10 @@ CREATE TABLE participant (
     -- The seat's notifications, resolved when it is created (see player) and changed only by the player
     -- saying so about this match, or carrying a change into the matches they are in. Only the kinds that
     -- can happen to a match under way.
-    is_notify_match_started BOOLEAN NOT NULL,
-    is_notify_turn_taken BOOLEAN NOT NULL,
-    is_notify_your_turn  BOOLEAN NOT NULL,
-    is_notify_match_ended   BOOLEAN NOT NULL,
+    is_notified_of_match_started BOOLEAN NOT NULL,
+    is_notified_of_turn_taken BOOLEAN NOT NULL,
+    is_notified_of_your_turn  BOOLEAN NOT NULL,
+    is_notified_of_match_ended   BOOLEAN NOT NULL,
     -- Only so that the keys at the ALTER below can insist on the subtype game_type says: see invitation's.
     player_kind          CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
     character_kind       CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,

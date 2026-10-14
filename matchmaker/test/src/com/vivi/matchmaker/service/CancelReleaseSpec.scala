@@ -25,7 +25,7 @@ import com.vivi.matchmaker.persistence.{GameRepo, MatchRepo, ParticipantRepo, Te
 class CancelReleaseSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private class RecordingEngine(isFail: Boolean = false) extends GameEngineClient {
+    private class RecordingEngine(isFailing: Boolean = false) extends GameEngineClient {
         @volatile var cancelled: List[(String, Option[String])] = Nil
 
         def createGame(url: String, key: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
@@ -33,7 +33,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         def status(url: String, key: Option[String], since: Option[Instant]): IO[GameStatusResponse] =
             IO.raiseError(new IllegalStateException("not in these tests"))
         override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
-            if (isFail) IO.raiseError(GameEngineError("engine is down"))
+            if (isFailing) IO.raiseError(GameEngineError("engine is down"))
             else IO { cancelled = cancelled :+ (cancelUrl -> apiKey) }
     }
 
@@ -137,7 +137,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
     }
 
     test("an engine that does not answer leaves the cancel standing, and the match owed a retry") {
-        val queueing = Queueing(RecordingEngine(isFail = true))
+        val queueing = Queueing(RecordingEngine(isFailing = true))
         val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 

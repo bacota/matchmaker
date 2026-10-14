@@ -293,7 +293,7 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture(friendly = true).flatMap(archived))
         makeAdmin(f)
         run(notFriendly(f))
-        assertEquals(run(row(f)).flatMap(_.isArchiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
         val download = run(archives.download(f.matchId, f.game.externalId))
         assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
@@ -303,7 +303,7 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture(friendly = false).flatMap(archived))
         makeAdmin(f)
         run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = true, f.player.externalId))
-        assertEquals(run(row(f)).flatMap(_.isArchiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
         // And it does not expire: past a friendly archive's 30 days, it is read without a check.
         run(age(f, 31))
@@ -341,7 +341,7 @@ class ArchiveServiceSpec extends FunSuite {
         })
         assert(refusal(notFriendly(f)).isInstanceOf[ConflictError])
         val stored = run(row(f)).get
-        assertEquals((stored.isFriendly, stored.isArchiveFriendly), (true, Some(true)))
+        assertEquals((stored.isFriendly, stored.isInFriendlyBucket), (true, Some(true)))
         // The copy is left in the permanent bucket, unrecorded; the original is untouched and still read.
         assertEquals(where(f), (true, true))
         val download = run(archives.download(f.matchId, f.game.externalId))
@@ -370,7 +370,7 @@ class ArchiveServiceSpec extends FunSuite {
           )
         )
         run(notFriendly(f))
-        assertEquals(run(row(f)).flatMap(_.isArchiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         val UploadAnswer.Upload(signed) = run(
           archives.requestUpload(
             f.matchId,

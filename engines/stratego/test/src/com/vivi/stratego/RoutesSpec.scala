@@ -63,14 +63,14 @@ class RoutesSpec extends FunSuite {
 
     test("a concession posted by a player ends the match, and answers with the state it left") {
         val (routes, store) = fixture()
-        val answer = post(routes, "sub-bob", """{"concede":true}""")
+        val answer = post(routes, "sub-bob", """{"isConcession":true}""")
         assertEquals(answer.status, 200)
         val state = read[Protocol.StateResponse](answer.body)
         assertEquals(state.phase, "over")
         assertEquals(state.winner, Some("Red"))
         assertEquals(store.get("m-9").get.conceded, Some(Side.Blue))
         // A concession with anything else in the body is neither shape.
-        assertEquals(post(routes, "sub-alice", """{"concede":true,"from":30,"to":40}""").status, 400)
+        assertEquals(post(routes, "sub-alice", """{"isConcession":true,"from":30,"to":40}""").status, 400)
     }
 
     test("a refused move answers with the reason, and a body that is none of the shapes is a 400") {

@@ -24,8 +24,8 @@ object Schedule {
     def matchCount(n: Int, game: TournamentGame, rotateRoles: Boolean): Long = {
         val r = game.poolSeats
         if (n < game.requiredSeats || n < 1) 0L
-        else if (n <= game.roles.size) (if (rotateRoles && game.isSignificantRoles) n.toLong else 1L)
-        else choose(n, r) * (if (rotateRoles && game.isSignificantRoles) r else 1)
+        else if (n <= game.roles.size) (if (rotateRoles && game.hasSignificantRoles) n.toLong else 1L)
+        else choose(n, r) * (if (rotateRoles && game.hasSignificantRoles) r else 1)
     }
 
     /** The matches of a round-robin pool, members in seed order, strongest first.
@@ -50,7 +50,7 @@ object Schedule {
         else {
             // Everyone in one match, if the game has a seat for each of them; otherwise every R-member subset.
             val size = if (n <= game.roles.size) n else math.min(n, r)
-            val rotate = rotateRoles && game.isSignificantRoles
+            val rotate = rotateRoles && game.hasSignificantRoles
             // Each subset's seats, members in seed order, with the roles of each pass.
             val subsets: List[List[Long]] =
                 if (size == 2 && concurrent == 1) circle(members) else members.combinations(size).toList
@@ -73,8 +73,8 @@ object Schedule {
       * Roles"). `subset` is in seed order. A match of one seat has nothing to choose between.
       */
     def roles(subset: List[Long], seating: List[TournamentRole], game: TournamentGame): List[SeatPlan] =
-        if (game.isChooseRoles && subset.sizeIs > 1) subset.zipWithIndex.map((e, i) => SeatPlan(e, None, Some(i)))
-        else if (!game.isSignificantRoles) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
+        if (game.hasRoleChoice && subset.sizeIs > 1) subset.zipWithIndex.map((e, i) => SeatPlan(e, None, Some(i)))
+        else if (!game.hasSignificantRoles) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
         else if (seating.exists(_.preferenceLevel.isDefined)) {
             val preferred = seating.zipWithIndex.sortBy((role, i) => (-role.preferenceLevel.getOrElse(Int.MinValue), i))
             subset.zip(preferred).map { case (e, (role, _)) => SeatPlan(e, Some(role.id)) }

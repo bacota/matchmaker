@@ -3,7 +3,6 @@ package com.vivi.matchmaker.api
 import upickle.default.{ReadWriter, readwriter, macroRW}
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
-import upickle.implicits.key
 
 /** Wire format for the API.
   *
@@ -145,7 +144,7 @@ object Json {
         hasApiKey: Boolean = false,
         // No role of the game has any advantage in winning it. Defaulted so that a client
         // written before it existed still parses, and keeps ratings by role.
-        isUnimportantRoles: Boolean = false,
+        hasUnimportantRoles: Boolean = false,
         // How players take turns, and how many a simultaneous game lasts. Defaulted as above.
         moveType: MoveType = MoveType.Sequential,
         maxTurns: Option[Int] = None
@@ -169,7 +168,7 @@ object Json {
             game.timeoutAction,
             game.characterUrl,
             game.hasApiKey,
-            game.isUnimportantRoles,
+            game.hasUnimportantRoles,
             game.moveType,
             game.maxTurns
           ),
@@ -188,7 +187,7 @@ object Json {
             dto.timeoutAction,
             dto.characterUrl,
             dto.hasApiKey,
-            dto.isUnimportantRoles,
+            dto.hasUnimportantRoles,
             dto.moveType,
             dto.maxTurns
           )
@@ -313,8 +312,8 @@ object Json {
       */
     case class PreferencesRequest(
         preferences: NotificationPreferences,
-        isApplyToGames: Boolean = false,
-        isApplyToMatches: Boolean = false
+        isAppliedToGames: Boolean = false,
+        isAppliedToMatches: Boolean = false
     )
 
     /** One participant's outcome. `scores` is an open map because what a game scores on is the game's business: it is
@@ -328,7 +327,7 @@ object Json {
         rank: Int,
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
-        @key("forfeit") isForfeit: Boolean = false
+        isForfeit: Boolean = false
     )
 
     /** `turns` is every turn the match had, from an engine that sends them: what lets matchmaker complete the match and

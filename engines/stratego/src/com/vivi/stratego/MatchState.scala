@@ -3,7 +3,6 @@ package com.vivi.stratego
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
-import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -33,7 +32,7 @@ case class MoveRecord(
     startedAt: Instant,
     step: Option[Step] = None,
     battle: Option[Battle] = None,
-    @key("concession") isConcession: Boolean = false,
+    isConcession: Boolean = false,
     setup: Option[List[Rank]] = None
 ) extends TurnLike {
     def isSetup: Boolean = step.isEmpty && !isConcession
@@ -58,9 +57,9 @@ enum Ending(val label: String) {
   * always stored: a match keeps the cap it was created with, whatever the default becomes later. `clock` is a live
   * match's turn clock, and `None` for every other match.
   *
-  * `isTiesAllowed` is false for a match that must not end in a draw. Then a match that would be drawn — the move cap,
-  * or neither side able to move — goes to whichever side took more points of the other's pieces ([[capturePoints]]),
-  * and is drawn only if they are level. Defaulted, so a match stored before it existed is the match it always was.
+  * `canTie` is false for a match that must not end in a draw. Then a match that would be drawn — the move cap, or
+  * neither side able to move — goes to whichever side took more points of the other's pieces ([[capturePoints]]), and
+  * is drawn only if they are level. Defaulted, so a match stored before it existed is the match it always was.
   */
 case class StrategoMatch(
     matchId: String,
@@ -68,7 +67,7 @@ case class StrategoMatch(
     board: Board,
     turns: List[MoveRecord],
     isPublic: Boolean,
-    @key("completed") isCompleted: Boolean,
+    isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -78,7 +77,7 @@ case class StrategoMatch(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    @key("tiesAllowed") isTiesAllowed: Boolean = true
+    canTie: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -136,7 +135,7 @@ case class StrategoMatch(
             case Some(Ending.Conceded)                        => conceded.map(_.other)
             case Some(Ending.FlagTaken)                       => Side.values.find(board.hasFlag)
             case Some(Ending.NoMoves) if !stuck(toMove.other) => Some(toMove.other)
-            case Some(_) if !isTiesAllowed                    => onPoints
+            case Some(_) if !canTie                           => onPoints
             case _                                            => None
         }
 
@@ -149,7 +148,7 @@ case class StrategoMatch(
     }
 
     /** Whether a match that would have been drawn went to the side ahead on points instead. */
-    def decidedOnPoints: Boolean = !isTiesAllowed && onPoints.isDefined && wouldBeDrawn
+    def decidedOnPoints: Boolean = !canTie && onPoints.isDefined && wouldBeDrawn
 
     /** Whether the way the match ended is a draw by the game's own rules: the move cap, or neither side able to move.
       */
@@ -157,7 +156,7 @@ case class StrategoMatch(
         ending.contains(Ending.MoveCap) || (ending.contains(Ending.NoMoves) && stuck(toMove.other))
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
-    def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
 
     /** How many enemy pieces `side` has taken: every battle it won, and every one where both pieces fell. */
     def captured(side: Side): Int = taken(side).size
@@ -305,7 +304,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
         m.clock
             .flatMap(_.outcomeOf(seat.participantId))
             .getOrElse(
-              if (m.winner.contains(seat.side)) Outcome.Win else if (m.isDraw) Outcome.Draw else Outcome.Loss
+              if (m.winner.contains(seat.side)) Outcome.Win else if (m.isDrawn) Outcome.Draw else Outcome.Loss
             )
 
     def clock(m: StrategoMatch): Option[TurnClock] = m.clock
@@ -362,7 +361,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           maxMoves = maxMoves,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          isTiesAllowed = Protocol.tiesAllowed(request)
+          canTie = Protocol.tiesAllowed(request)
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store
@@ -373,8 +372,8 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
         id: Int,
         side: Side,
         rank: Rank,
-        @key("revealed") isRevealed: Boolean,
-        @key("moved") isMoved: Boolean
+        isRevealed: Boolean,
+        isMoved: Boolean
     )
 
     // Stored as JSON, which is what both stores hold: the in-memory one keeps the object itself,

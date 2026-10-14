@@ -234,7 +234,7 @@ class EloRatingRepo(session: Session[IO]) {
                     .execute(on(b).selectByPrefix)((b, PlayerRepo.nicknamePrefixPattern(prefix), limit + 1))
                     .map(rows =>
                         Some(
-                          Leaderboard(rows.take(limit), isMore = rows.sizeIs > limit)
+                          Leaderboard(rows.take(limit), hasMore = rows.sizeIs > limit)
                         )
                     )
         }

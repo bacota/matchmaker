@@ -371,7 +371,10 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             _ <- tournaments.update(
               f.game.gameId,
               t.tournamentId,
-              request(f, settings = TournamentSettings(isLateEntries = true, roundDuration = Some(Duration.ofDays(2)))),
+              request(
+                f,
+                settings = TournamentSettings(hasLateEntries = true, roundDuration = Some(Duration.ofDays(2)))
+              ),
               f.owner.externalId
             )
             entry <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(2).externalId)

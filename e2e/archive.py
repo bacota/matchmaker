@@ -140,7 +140,7 @@ try:
     def new_match():
         # A challenge for the two of them: alice offers it, closed to all but bob, and it starts as bob enters.
         status, made = call("POST", f"{MM}/games/{game_id}/challenges",
-                            {"poolSize": 2, "isAutoStart": True, "isOpen": False, "invitations": [bob_id]},
+                            {"poolSize": 2, "isAutoStarted": True, "isOpen": False, "invitations": [bob_id]},
                             as_player(alice))
         assert status in (200, 201), (status, made)
         tournament = made["tournamentId"]

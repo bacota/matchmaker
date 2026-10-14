@@ -45,7 +45,7 @@ class GameEngineServiceSpec extends PropertySuite {
     private class StubEngine(
         response: CreateGameResponse = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None),
         var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil),
-        isFail: Boolean = false,
+        isFailing: Boolean = false,
         // Run in the middle of a status call, which is the only way a test can reach the window
         // between matchmaker's last read before the engine and its first write after one.
         beforeStatus: IO[Unit] = IO.unit
@@ -56,7 +56,7 @@ class GameEngineServiceSpec extends PropertySuite {
         @volatile var lastStatusKey: Option[String] = None
 
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            if (isFail) IO.raiseError(GameEngineError("engine is down"))
+            if (isFailing) IO.raiseError(GameEngineError("engine is down"))
             else IO { lastRequest = Some(request); lastUrl = Some(gameUrl); lastCreateKey = apiKey }.as(response)
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
@@ -426,7 +426,7 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 // Settled in the call, so that the failed attempt has been made and undone by the time the last role is
                 // chosen, rather than racing the reads below on a fiber of its own.
-                val failing = TestServices.servicesInline(new StubEngine(isFail = true))
+                val failing = TestServices.servicesInline(new StubEngine(isFailing = true))
                 val working = TestServices.servicesWith(StubEngine())
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)

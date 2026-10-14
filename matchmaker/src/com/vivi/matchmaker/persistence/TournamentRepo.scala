@@ -72,10 +72,10 @@ class TournamentRepo(session: Session[IO]) {
 
     private def columnsOf(t: String): Fragment[Void] =
         sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
-              #$t.is_automatic_rounds, #$t.is_friendly, #$t.is_invitational, #$t.is_late_entries, #$t.min_rating, #$t.max_rating,
+              #$t.has_automatic_rounds, #$t.is_friendly, #$t.is_invitational, #$t.has_late_entries, #$t.min_rating, #$t.max_rating,
               #$t.is_public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
-              #$t.is_concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.is_live, #$t.start,
-              #$t.is_choose_roles, #$t.max_entrants, #$t.is_auto_start,
+              #$t.has_concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.is_live, #$t.start,
+              #$t.has_role_choice, #$t.max_entrants, #$t.is_auto_started,
               (SELECT r.start_date FROM round r
                 WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
               (SELECT r.deadline FROM round r
@@ -91,26 +91,26 @@ class TournamentRepo(session: Session[IO]) {
           t.status,
           t.tournamentModelId,
           t.defaultPoolSize,
-          t.settings.isAutoRounds,
+          t.settings.hasAutomaticRounds,
           t.settings.isFriendly,
           t.settings.isInvitational,
-          t.settings.isLateEntries,
+          t.settings.hasLateEntries,
           t.settings.minRating,
           t.settings.maxRating,
           t.settings.isPublic,
           t.settings.entriesPerPlayer,
           seconds(t.settings.roundDuration),
           t.settings.maxTurns,
-          t.settings.isConcurrentRounds,
+          t.settings.hasConcurrentRounds,
           t.startedAt,
           t.endedAt,
           t.checkedAt,
           t.settings.gameSettings,
           t.settings.isLive,
           t.settings.start,
-          t.settings.isChooseRoles,
+          t.settings.hasRoleChoice,
           t.settings.maxEntrants,
-          t.settings.isAutoStart
+          t.settings.isAutoStarted
         )
 
     private def tournamentOf(game: GameId, id: TournamentId, r: Row): Tournament = {
@@ -183,10 +183,10 @@ class TournamentRepo(session: Session[IO]) {
     // reference each other, and the key between them is deferred.
     private val insert: Query[GameId *: Written, TournamentId] =
         sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
-                                      is_automatic_rounds, is_friendly, is_invitational, is_late_entries, min_rating, max_rating,
-                                      is_public, entries_per_player, round_duration, max_turns, is_concurrent_rounds,
-                                      started_at, ended_at, checked_at, settings, is_live, start, is_choose_roles,
-                                      max_entrants, is_auto_start, first_stage_id)
+                                      has_automatic_rounds, is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
+                                      is_public, entries_per_player, round_duration, max_turns, has_concurrent_rounds,
+                                      started_at, ended_at, checked_at, settings, is_live, start, has_role_choice,
+                                      max_entrants, is_auto_started, first_stage_id)
           VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
                   ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, 0)
@@ -212,12 +212,12 @@ class TournamentRepo(session: Session[IO]) {
 
     private val updateRow: Command[Tuple.Concat[Written, (GameId, TournamentId)]] =
         sql"""UPDATE tournament SET name = $text, description = $text, owner = $playerId, status = $status,
-                 tournament_model_id = $modelId, default_pool_size = $int4, is_automatic_rounds = $bool, is_friendly = $bool,
-                 is_invitational = $bool, is_late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
+                 tournament_model_id = $modelId, default_pool_size = $int4, has_automatic_rounds = $bool, is_friendly = $bool,
+                 is_invitational = $bool, has_late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
                  is_public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
-                 max_turns = ${int4.opt}, is_concurrent_rounds = $bool, started_at = ${instant.opt},
+                 max_turns = ${int4.opt}, has_concurrent_rounds = $bool, started_at = ${instant.opt},
                  ended_at = ${instant.opt}, checked_at = ${instant.opt}, settings = $settings, is_live = $bool,
-                 start = ${instant.opt}, is_choose_roles = $bool, max_entrants = ${int4.opt}, is_auto_start = $bool
+                 start = ${instant.opt}, has_role_choice = $bool, max_entrants = ${int4.opt}, is_auto_started = $bool
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
     /** Rewrites the tournament's own columns. Not the round being played, which is the round's to say. */

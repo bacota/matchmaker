@@ -169,7 +169,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
     // engine's game exists, and nothing about the queue can undo either.
     property("a queue that will not take the mail does not fail the start".tag(Quiet)) {
         forAll(genUniqueString) { seed =>
-            val notifier = new RecordingNotifier(isFail = true)
+            val notifier = new RecordingNotifier(isFailing = true)
             val result = startedMatch(
               seed,
               notifier,
@@ -264,7 +264,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
               notifier = notifier,
               mail = TestServices.mailSettings
             )
-            val muted = SeatNotifications.all(true).copy(isTurnTaken = false)
+            val muted = SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false)
 
             val result = for {
                 started <- startedMatch(
@@ -322,7 +322,9 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 // not the write going nowhere.
                 settings <- services.notifications.mine(accepterId)
             } yield seat == SeatNotifications.all(true) &&
-                settings.games.exists(g => g.gameId == started.gameId && g.preferences.isTurnTaken.contains(false))
+                settings.games.exists(g =>
+                    g.gameId == started.gameId && g.preferences.isNotifiedOfTurnTaken.contains(false)
+                )
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -356,7 +358,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 // one question they answered is the only one that moved.
                 challenger <- services.notifications
                     .forMatch(s"challenger-$seed", started.gameId, started.matchId)
-            } yield seat == SeatNotifications.all(true).copy(isTurnTaken = false) &&
+            } yield seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false) &&
                 challenger == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -401,8 +403,10 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
                 settings <- services.notifications.mine(accepterId)
-            } yield seat == SeatNotifications.all(true).copy(isTurnTaken = false) &&
-                settings.games.exists(g => g.gameId == started.gameId && g.preferences.isTurnTaken.contains(false))
+            } yield seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false) &&
+                settings.games.exists(g =>
+                    g.gameId == started.gameId && g.preferences.isNotifiedOfTurnTaken.contains(false)
+                )
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -435,7 +439,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   accepterId,
                   started.gameId,
                   started.matchId,
-                  SeatNotifications.all(true).copy(isMatchEnded = false)
+                  SeatNotifications.all(true).copy(isNotifiedOfMatchEnded = false)
                 )
                 _ <- services.notifications.updateForGame(
                   accepterId,
@@ -444,7 +448,9 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   applyToMatches = true
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
-            } yield seat == SeatNotifications.all(true).copy(isTurnTaken = false, isMatchEnded = false)
+            } yield seat == SeatNotifications
+                .all(true)
+                .copy(isNotifiedOfTurnTaken = false, isNotifiedOfMatchEnded = false)
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -487,10 +493,10 @@ class MatchStartedNotificationSpec extends PropertySuite {
             } yield
             // match-ended was never part of this save, so the game still says no to it and the seat,
             // stamped with that same no before the start, still holds it.
-            seat == SeatNotifications.all(true).copy(isTurnTaken = false, isMatchEnded = false) &&
+            seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false, isNotifiedOfMatchEnded = false) &&
                 settings.games.exists(g =>
-                    g.gameId == started.gameId && g.preferences.isMatchEnded.contains(false) &&
-                        g.preferences.isTurnTaken.contains(false)
+                    g.gameId == started.gameId && g.preferences.isNotifiedOfMatchEnded.contains(false) &&
+                        g.preferences.isNotifiedOfTurnTaken.contains(false)
                 )
             result.timeout(caseTimeout).unsafeRunSync()
         }
