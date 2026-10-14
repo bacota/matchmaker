@@ -512,7 +512,7 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(p.nickname),
-                      Views.characterInviteButtons(gameId = t.gameId, owner = p, exclude = invitedCharacters) {
+                      Players.characterInviteButtons(gameId = t.gameId, owner = p, exclude = invitedCharacters) {
                           (c, busy) =>
                               Store.run(
                                 ApiClient.inviteCharacterToTournament(
@@ -862,8 +862,8 @@ object Tournaments {
         val live = Var(s0.isLive)
         val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
         val autoStart = Var(s0.isAutoStarted)
-        val plannedStart = Var(s0.start.fold("")(Views.localInputOf))
-        val parameters = Var(Views.startingChoices(game, s0.gameSettings))
+        val plannedStart = Var(s0.start.fold("")(ChallengeForm.localInputOf))
+        val parameters = Var(ChallengeForm.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
         val chosen: Var[Option[TournamentModel]] = Var(None)
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
@@ -898,9 +898,9 @@ object Tournaments {
           maxTurns = int(maxTurns),
           hasConcurrentRounds = concurrentRounds.now(),
           isPublic = isPublic.now(),
-          gameSettings = Views.settingsOf(parameters.now()),
+          gameSettings = ChallengeForm.settingsOf(parameters.now()),
           isLive = live.now(),
-          start = Views.startOf(plannedStart.now()),
+          start = ChallengeForm.startOf(plannedStart.now()),
           hasRoleChoice = chooseRoles.now(),
           maxEntrants = int(maxEntrants),
           isAutoStarted = autoStart.now() && int(maxEntrants).isDefined
@@ -1062,7 +1062,7 @@ object Tournaments {
             )
           ),
           // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
-          Views.parameterFields(game, parameters),
+          ChallengeForm.parameterFields(game, parameters),
           number(caption = "Minimum rating", v = minRating, tip = "Leave blank for no minimum."),
           number(caption = "Maximum rating", v = maxRating, tip = "Leave blank for no maximum."),
           number(caption = "Entries per player", v = entries, tip = "How many times one player may enter."),
