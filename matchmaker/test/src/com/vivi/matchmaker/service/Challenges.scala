@@ -5,12 +5,19 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.Duration
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.model.tournament.standard.Challenge
 import com.vivi.matchmaker.persistence.{GameAdminRepo, TestSession}
 
 /** Challenges for specs: one offered, entered and started as players would, through the services, up to its match being
   * created in the engine.
   */
 object Challenges {
+
+    /** Offers challenges in `game`, as a sync followed by the game's creation would: the challenge model stored if it
+      * is not, and offered. A game made straight into its table, as specs make them, offers no format of its own.
+      */
+    def offeredIn(game: Game): IO[Unit] =
+        TestSession.resource.use(TournamentFixtures.model(_, game, Challenge.modelId.value)).void
 
     /** A player in a challenge: who, the role they will choose, and the character they enter with in a character game.
       */
@@ -43,6 +50,7 @@ object Challenges {
                 } yield (t, started)
             case Some(host) =>
                 for {
+                    _ <- offeredIn(game)
                     _ <- TestSession.resource.use(session =>
                         new GameAdminRepo(session).grant(host.playerId, game.gameId, host.playerId).attempt.void
                     )
@@ -82,6 +90,7 @@ object Challenges {
     ): IO[TournamentId] = {
         val host = seats.head
         for {
+            _ <- offeredIn(game)
             _ <- IO.whenA(!friendly)(
               TestSession.resource.use(session =>
                   new GameAdminRepo(session).grant(host.player.playerId, game.gameId, host.player.playerId).attempt.void

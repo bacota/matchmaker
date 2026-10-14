@@ -3,11 +3,11 @@ package standard
 
 /** A challenge: the simplest tournament there is, one match of everyone who enters.
   *
-  * One atomic stage, played once, in one pool. Its pool size is the tournament's default, which must be between the
-  * game's required roles and all its roles (`TournamentService`), so the pool plays a single match of everyone
-  * ([[Schedule.roundRobin]]), and is also the most it takes: a challenge's `max_entrants`. Nobody is demoted, and its
-  * match may be drawn, whatever its size. Its seats choose their roles once it starts, the strongest seed first: a
-  * challenge's players no longer pick a role as they join.
+  * One atomic stage, played once. Its pool size is the tournament's default, which `createChallenge` also makes the
+  * most it takes (`max_entrants`); with no more of them than the game has roles, the one pool plays a single match of
+  * everyone ([[Schedule.roundRobin]]), and with more it plays a round robin. Nobody is demoted, and its matches may be
+  * drawn, whatever their size. Its seats choose their roles once it starts, the strongest seed first: a challenge's
+  * players no longer pick a role as they join.
   */
 object Challenge
     extends StandardModel(

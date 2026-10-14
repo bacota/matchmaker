@@ -93,6 +93,29 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(empty.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("pool")), empty)
     }
 
+    test("no pool may be smaller than the game's required roles; a challenge's may be larger than all its roles") {
+        val (tooSmall, tooSmallChallenge, larger) = run(for {
+            // A generated game has two roles, both required.
+            f <- fixture(0)
+            tooSmall <- tournaments
+                .create(f.game.gameId, request(f, "challenge").copy(defaultPoolSize = Some(1)), f.owner.externalId)
+                .attempt
+            tooSmallChallenge <- tournaments
+                .createChallenge(f.game.gameId, ChallengeRequest(poolSize = Some(1)), f.owner.externalId)
+                .attempt
+            // More than the game has roles: a round robin rather than one match, and it takes as many entries.
+            larger <- tournaments.createChallenge(
+              f.game.gameId,
+              ChallengeRequest(poolSize = Some(3)),
+              f.owner.externalId
+            )
+        } yield (tooSmall, tooSmallChallenge, larger))
+        assert(tooSmall.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("required roles")))
+        assert(tooSmallChallenge.left.exists(_.isInstanceOf[ValidationError]), tooSmallChallenge)
+        assertEquals(larger.defaultPoolSize, 3)
+        assertEquals(larger.settings.maxEntrants, Some(3))
+    }
+
     test("only the owner may edit, open, start or cancel a tournament") {
         val outcome = run(for {
             f <- fixture(1)

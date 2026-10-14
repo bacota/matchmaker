@@ -179,7 +179,6 @@ class TournamentService[T](
                     for {
                         caller <- requireCaller(session, callerExternalId)
                         game <- requireGame(session, gameId)
-                        _ <- TournamentModelService.ensure(session, Challenge)
                         model <- requireModel(session, gameId, Challenge.modelId)
                         _ <- IO.raiseWhen(!request.plays && !request.autoStart)(
                           ValidationError(
@@ -227,7 +226,10 @@ class TournamentService[T](
                               gameSettings = request.gameSettings,
                               live = request.live,
                               start = request.start,
-                              autoStart = request.autoStart
+                              autoStart = request.autoStart,
+                              // One match of everyone, so as many entries as its pool seats: what lets it start by
+                              // itself once full. The owner may change it afterwards, as any tournament's.
+                              maxEntrants = Some(poolSize)
                             )
                           ),
                           TournamentStatus.Open
@@ -277,7 +279,7 @@ class TournamentService[T](
         status: TournamentStatus
     ): IO[Tournament] = {
         val poolSize = defaultPoolSize(game, model, request)
-        val settings = TournamentService.settingsFor(model, poolSize, request.settings)
+        val settings = TournamentService.settingsFor(model, request.settings)
         for {
             _ <- checkSettings(game, model, request, settings, poolSize)
             made <- new TournamentRepo(session).create(
@@ -331,7 +333,7 @@ class TournamentService[T](
                                   kept = Some(t.tournamentModelId)
                                 )
                                 poolSize = defaultPoolSize(game, model, request)
-                                settings = TournamentService.settingsFor(model, poolSize, request.settings)
+                                settings = TournamentService.settingsFor(model, request.settings)
                                 _ <- checkSettings(game, model, request, settings, poolSize)
                                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                                 _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.withdrawn)))(
@@ -784,7 +786,7 @@ class TournamentService[T](
 
     /* The model a tournament is made from: one the game offers, with a classification and active -- or, if it is the
      * one the tournament being edited was `kept` from all along, whatever has become of it since. The challenge model
-     * is every game's, offered or not: a game's challenges are made from it. Held FOR SHARE, the
+     * is no exception: a game offers challenges as it offers any format. Held FOR SHARE, the
      * middle course (CLAUDE.md): a sync removing the model looks at the tournaments made from it, and deletes it if
      * nobody has entered one, so the row is held against that until this tournament is written; two tournaments being
      * made from it do not wait on each other. The game's choice of it is read plainly, as the game is. */
@@ -801,7 +803,6 @@ class TournamentService[T](
             offered <- repo.offeredIn(gameId, id)
             found <- model match {
                 case Some(m) if kept.contains(id)                                 => IO.pure(m)
-                case Some(m) if id == Challenge.modelId && m.active               => IO.pure(m)
                 case Some(m) if m.classification.isDefined && m.active && offered => IO.pure(m)
                 case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
             }
@@ -829,8 +830,6 @@ class TournamentService[T](
         poolSize: Int
     ): IO[Unit] = {
         val s = settings
-        val challenge = model.tournamentModelId == Challenge.modelId
-        val least = math.max(2, game.requiredSeats)
         val problems =
             List(
               Option.when(request.name.trim.isEmpty)("a tournament needs a name"),
@@ -852,13 +851,7 @@ class TournamentService[T](
               ),
               // Held to the values the game allows here, where the owner can be told, rather than found out when a
               // match starts and the engine is sent something it cannot play.
-              ChallengeSettings.problem(s.gameSettings, parameterValues(game)),
-              // A challenge is one match of everyone in it: no more of them than the game has roles, and enough to
-              // fill the ones it requires.
-              Option.when(challenge && (poolSize < least || poolSize > game.roles.size))(
-                if (game.roles.sizeIs < least) s"${game.displayName} cannot be played as a challenge"
-                else s"a challenge seats between $least and ${game.roles.size} players"
-              )
+              ChallengeSettings.problem(s.gameSettings, parameterValues(game))
             ).flatten ++
                 Validation
                     .validate(model.design, TournamentGame.of(game), s.maxTurns, Some(poolSize))
@@ -1013,14 +1006,10 @@ class TournamentService[T](
 object TournamentService {
 
     /** A request's settings as its model makes them: a model whose seats choose their roles makes every tournament of
-      * it choose them, and a challenge takes as many entries as its pool seats, and no late ones.
+      * it choose them.
       */
-    def settingsFor(model: TournamentModel, poolSize: Int, settings: TournamentSettings): TournamentSettings = {
-        val chosen = settings.copy(chooseRoles = settings.chooseRoles || model.chooseRoles)
-        if (model.tournamentModelId == Challenge.modelId)
-            chosen.copy(maxEntrants = Some(poolSize), lateEntries = false, entriesPerPlayer = 1)
-        else chosen
-    }
+    def settingsFor(model: TournamentModel, settings: TournamentSettings): TournamentSettings =
+        settings.copy(chooseRoles = settings.chooseRoles || model.chooseRoles)
 
     /** Whether a tournament is a challenge still taking entries. */
     def isOpenChallenge(s: TournamentSummary): Boolean =

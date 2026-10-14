@@ -1,7 +1,7 @@
 # Plan: a challenge is a tournament
 
 A challenge becomes the simplest kind of tournament: one atomic stage, played once, with one pool, whose pool
-size is between the game's required roles and its total roles. The `challenge`, `acceptance` and `invitation`
+size is at least the game's required roles (as every tournament's must be). The `challenge`, `acceptance` and `invitation`
 tables go, along with their character counterparts. Every match is a tournament's.
 
 The one thing a challenge loses is choosing a role on accepting. A challenge always has its players choose roles
@@ -19,8 +19,8 @@ Every database is rebuilt from `V1__init.sql`, so the schema changes are made in
 | Message | Dropped. |
 | Start | `tournament.start`, optional: when it is meant to be played, shown and nothing more, as a challenge's was. |
 | Starting | `tournament.auto_start`: started by itself as soon as entries reach `max_entrants`. Otherwise the owner starts it once there are enough entries to fill the required roles. |
-| Capacity | `tournament.max_entrants`, NULL for no limit. A challenge's is its pool size, so entry closes when the pool is full. |
-| Pool size | The challenge's `default_pool_size`, which must be between the game's required roles and its total roles. |
+| Capacity | `tournament.max_entrants`, NULL for no limit. A challenge is made with its pool size, so entry closes when the pool is full; its owner may change it, as any tournament's. |
+| Pool size | The challenge's `default_pool_size`. No tournament's pool may be smaller than the game's required roles; a challenge's may be larger than its total roles, and then plays a round robin rather than one match. |
 | Choosing roles | `tournament_model.choose_roles` and `tournament.choose_roles`: every match's seats choose, in seed order, whatever the game's preference levels and whether its roles matter. |
 | Draws | `stage_model.ties_allowed` / `stage.ties_allowed`, NULL for today's rule (no draw in a pool of two). The challenge model's stage allows them. |
 | Mail | The challenge kinds are sent for every tournament: entering, withdrawing, filling up, and invitations sent, taken up and turned down. The columns keep their names. |

@@ -179,19 +179,6 @@ object TournamentModelService {
         }
     }
 
-    /** Makes the stored `m` what the code defines, as a sync would, within the caller's transaction -- for a model that
-      * is used whether or not a site admin has synced the models yet, as every game's challenges use the challenge
-      * model. Only takes the sync lock when there is something to write.
-      */
-    def ensure(session: Session[IO], m: StandardModel): IO[Unit] = {
-        val repo = new TournamentModelRepo(session)
-        // Read plainly to see whether there is anything to do: when there is, it is decided again under the locks.
-        repo.read(TournamentModelId(m.id)).flatMap {
-            case Some(s) if s.active && s.version >= m.version => IO.unit
-            case _                                             => lockSync(session) *> write(repo, m).void
-        }
-    }
-
     /** Offers in `game` every active model it can play -- whose design has no problem for it but warnings: what a new
       * game is given as it is created, for its admins to change. The models offered.
       *

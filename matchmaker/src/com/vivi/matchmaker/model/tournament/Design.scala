@@ -260,7 +260,9 @@ object Validation {
               )
           } else None,
           Option.when(stage.design.isEmpty && n < game.requiredSeats)(
-            w(s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it would play nothing")
+            p(
+              s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it could never play a match"
+            )
           ),
           Option.when(stage.design.isDefined && (stage.pointsBonus || stage.rotateRoles || stage.concurrentRounds))(
             w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")

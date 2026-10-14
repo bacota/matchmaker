@@ -129,6 +129,14 @@ try:
     bob_id = call("GET", MM + "/me", headers=as_player(bob))[1]["playerId"]
     alice_id = call("GET", MM + "/me", headers=as_player(alice))[1]["playerId"]
 
+    # Challenges are a tournament format the game has to offer: the models synced, as a site admin does, and the
+    # challenge model offered in the game, which was made straight into its table.
+    psql(f"UPDATE player SET is_admin = true WHERE player_id = {alice_id}")
+    status, synced = call("POST", MM + "/tournament-models/sync", {}, as_player(alice))
+    assert status == 200, (status, synced)
+    status, offered = call("PUT", f"{MM}/games/{game_id}/tournament-models/challenge", {}, as_player(alice))
+    assert status == 200, (status, offered)
+
     def new_match():
         # A challenge for the two of them: alice offers it, closed to all but bob, and it starts as bob enters.
         status, made = call("POST", f"{MM}/games/{game_id}/challenges",
