@@ -52,7 +52,7 @@ class PlayerServiceSpec extends PropertySuite {
                 found <- playerService.search(externalId, nickname.dropRight(1))
             } yield found.players.map(_.playerId) == List(registered.playerId) &&
                 found.players.map(_.nickname) == List(nickname) &&
-                !found.more
+                !found.isMore
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
@@ -178,7 +178,7 @@ class PlayerServiceSpec extends PropertySuite {
                     forBase <- playerService.search(callerId, base)
                 } yield forPercent.players.map(_.playerId) == List(withPercent.playerId) &&
                     forUnderscore.players.map(_.playerId) == List(withUnderscore.playerId) &&
-                    forBase.players.length == 3 && !forBase.more
+                    forBase.players.length == 3 && !forBase.isMore
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -210,12 +210,12 @@ class PlayerServiceSpec extends PropertySuite {
                 .traverse(n => registrationService.register(f"$base-$n%03d", genUniqueString.sample.get))
             full <- playerService.search(caller, base)
             // A prefix that matches exactly one of them says the opposite, which is the half of this
-            // that would still pass if `more` were hard-coded true.
+            // that would still pass if `isMore` were hard-coded true.
             one <- playerService.search(caller, registered.head.nickname)
-        } yield full.players.length == PlayerService.searchLimit && full.more &&
+        } yield full.players.length == PlayerService.searchLimit && full.isMore &&
             // Nickname order, and the limit applied after it: the first page is the first names.
             full.players.map(_.nickname) == registered.map(_.nickname).sorted.take(PlayerService.searchLimit) &&
-            one.players.length == 1 && !one.more
+            one.players.length == 1 && !one.isMore
 
         assert(result.timeout(60.seconds).unsafeRunSync())
     }

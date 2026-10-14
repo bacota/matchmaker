@@ -92,8 +92,8 @@ class EngineSpec extends FunSuite with QuietTests {
 
         assertEquals(m.pending.map(_.participantId), List(11L, 22L))
         val opening = engine.status("m-1").toOption.get
-        assertEquals(opening.participants.filter(_.pending).map(_.participantId), List(11L, 22L))
-        assertEquals(opening.completed, false)
+        assertEquals(opening.participants.filter(_.isPending).map(_.participantId), List(11L, 22L))
+        assertEquals(opening.isCompleted, false)
         // Both clocks start when the match was created, and neither waits on the other's move.
         assert(opening.participants.forall(_.prevMoveAt.contains(created)))
     }
@@ -108,9 +108,9 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(half.pending.map(_.participantId), List(11L))
 
         val applied = engine.move("m-1", alice, Shape.Scissors).toOption.get
-        assert(applied.finished)
+        assert(applied.isFinished)
         assertEquals(applied.state.winner.map(_.participantId), Some(11L))
-        assert(store.get("m-1").get.completed)
+        assert(store.get("m-1").get.isCompleted)
     }
 
     test("a player may not throw twice, and may not throw once the match is over") {
@@ -146,7 +146,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val bobSeat = waiting.seatFor(bob).get
         val bobsView = engine.stateOf(waiting, Some(bobSeat))
         // Alice has thrown, and that is the whole of what Bob is told about it.
-        assertEquals(bobsView.players.find(_.participantId == 11L).get.thrown, true)
+        assertEquals(bobsView.players.find(_.participantId == 11L).get.isThrown, true)
         assertEquals(bobsView.players.find(_.participantId == 11L).get.shape, None)
         assertEquals(bobsView.yourThrow, None)
         assertEquals(bobsView.waitingFor, List("Two"))
@@ -278,13 +278,13 @@ class EngineSpec extends FunSuite with QuietTests {
         engine.move("m-1", alice, Shape.Rock)
 
         val half = engine.status("m-1").toOption.get
-        assertEquals(half.completed, false)
-        assertEquals(half.participants.filter(_.pending).map(_.participantId), List(22L))
+        assertEquals(half.isCompleted, false)
+        assertEquals(half.participants.filter(_.isPending).map(_.participantId), List(22L))
 
         engine.move("m-1", bob, Shape.Paper)
         val over = engine.status("m-1").toOption.get
-        assert(over.completed)
-        assert(over.participants.forall(p => p.completed && !p.pending))
+        assert(over.isCompleted)
+        assert(over.participants.forall(p => p.isCompleted && !p.isPending))
     }
 
     test("an unknown match is a 404 to matchmaker and to a player alike") {
@@ -301,7 +301,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         assert(engine.move("m-1", alice, Shape.Rock).isRight)
         assert(engine.move("m-1", bob, Shape.Paper).isRight)
-        assert(store.get("m-1").get.completed)
+        assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves, Nil)
         assertEquals(recorder.results, Nil)
     }
@@ -316,7 +316,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         val finished = store.get("m-1").get
         assertEquals(finished.throws.map(_.participantId).sorted, List(11L, 22L))
-        assert(finished.completed)
+        assert(finished.isCompleted)
         assertEquals(recorder.moves.size, 2)
         // Exactly one of the two throws was the second one, so exactly one result was reported.
         assertEquals(recorder.results.size, 1)
@@ -343,12 +343,12 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a callback that fails does not fail the throw, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, _) = fixture()
-        recorder.failCallbacks = true
+        recorder.isFailCallbacks = true
 
         assert(engine.move("m-1", alice, Shape.Rock).isRight)
         val resolving = engine.move("m-1", bob, Shape.Scissors)
         assert(resolving.isRight, s"the throw was committed, so it must not be reported as failing: $resolving")
-        assert(store.get("m-1").get.completed)
+        assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves.size, 2)
         assertEquals(recorder.results.size, 1)
     }
@@ -368,7 +368,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val recorder = RecordingMatchmaker()
         var at = created
         val engine = Engine(store, recorder, "http://engine.test", () => at)
-        engine.createGame(createRequest().copy(tiesAllowed = Some(false)))
+        engine.createGame(createRequest().copy(isTiesAllowed = Some(false)))
         (engine, recorder, store, (seconds: Long) => at = at.plusSeconds(seconds))
     }
 
@@ -417,6 +417,6 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(store.get("m-1").get.isDraw)
         val stored = write(store.get("m-1").get)
         assert(!stored.contains("tiesAllowed"), "a match that allows ties is stored as it always was")
-        assert(read[RpsMatch](stored).tiesAllowed)
+        assert(read[RpsMatch](stored).isTiesAllowed)
     }
 }

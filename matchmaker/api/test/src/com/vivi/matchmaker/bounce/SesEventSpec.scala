@@ -101,14 +101,14 @@ class SesEventSpec extends FunSuite {
         val events = read(permanentBounce)
         assertEquals(events.map(_.email), Seq("player@example.invalid"))
         assertEquals(events.map(_.reason), Seq(SuppressionReason.Bounce))
-        assertEquals(events.map(_.permanent), Seq(true))
+        assertEquals(events.map(_.isPermanent), Seq(true))
         assertEquals(events.head.diagnostic, Some("smtp; 550 5.1.1 user unknown"))
     }
 
     test("a transient bounce is not permanent") {
         val events = read(transientBounce)
         assertEquals(events.map(_.reason), Seq(SuppressionReason.Bounce))
-        assertEquals(events.map(_.permanent), Seq(false))
+        assertEquals(events.map(_.isPermanent), Seq(false))
     }
 
     /* Undetermined is SES saying the remote server said something it could not classify, which is at
@@ -117,21 +117,21 @@ class SesEventSpec extends FunSuite {
      * guessing wrong the other way silently cuts off a playing player. */
     test("an undetermined bounce is treated as transient") {
         val events = read(permanentBounce.replace(""""bounceType": "Permanent"""", """"bounceType": "Undetermined""""))
-        assertEquals(events.map(_.permanent), Seq(false))
+        assertEquals(events.map(_.isPermanent), Seq(false))
     }
 
     test("a complaint is permanent, and carries the feedback type") {
         val events = read(complaint)
         assertEquals(events.map(_.email), Seq("player@example.invalid"))
         assertEquals(events.map(_.reason), Seq(SuppressionReason.Complaint))
-        assertEquals(events.map(_.permanent), Seq(true))
+        assertEquals(events.map(_.isPermanent), Seq(true))
         assertEquals(events.head.diagnostic, Some("abuse"))
     }
 
     test("a delivery delay is recorded, transient, with the delay type") {
         val events = read(delay)
         assertEquals(events.map(_.reason), Seq(SuppressionReason.Delay))
-        assertEquals(events.map(_.permanent), Seq(false))
+        assertEquals(events.map(_.isPermanent), Seq(false))
         assertEquals(events.head.diagnostic, Some("TransientCommunicationFailure"))
     }
 

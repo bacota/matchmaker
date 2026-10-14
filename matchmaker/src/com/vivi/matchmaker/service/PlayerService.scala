@@ -37,12 +37,12 @@ class PlayerService(sessionPool: SessionPool) {
       * spelling in the result. Two players may be registered as "Ash" and "ash", and a search offers both rather than
       * treating them as one.
       *
-      * At most [[PlayerService.searchLimit]] players, with `more` saying there were others. A prefix of one letter can
-      * match most of the register, and a page of everybody is not an answer -- so the reply says plainly that it is a
-      * page, and the remedy is the one the searcher already has: type more of the name. No offset paging: the next page
-      * of a name search is not what anybody wants, the narrower prefix is.
+      * At most [[PlayerService.searchLimit]] players, with `isMore` saying there were others. A prefix of one letter
+      * can match most of the register, and a page of everybody is not an answer -- so the reply says plainly that it is
+      * a page, and the remedy is the one the searcher already has: type more of the name. No offset paging: the next
+      * page of a name search is not what anybody wants, the narrower prefix is.
       *
-      * Asks for one row more than it shows, which is how `more` is known. Counting the matches instead would be a
+      * Asks for one row more than it shows, which is how `isMore` is known. Counting the matches instead would be a
       * second query over the same predicate to answer a question with only two useful values.
       *
       * A blank prefix is refused rather than answered with the first 25 players in the register: it is what an empty
@@ -60,7 +60,7 @@ class PlayerService(sessionPool: SessionPool) {
                     found <- repo.searchByNicknamePrefix(trimmed, PlayerService.searchLimit + 1)
                 } yield PlayerSearchResult(
                   found.take(PlayerService.searchLimit),
-                  more = found.sizeIs > PlayerService.searchLimit
+                  isMore = found.sizeIs > PlayerService.searchLimit
                 )
             }
     }
@@ -165,8 +165,8 @@ class PlayerService(sessionPool: SessionPool) {
 
 object PlayerService {
 
-    /** How many players a nickname search answers with at most. A screenful, with `more` on the reply to say when it is
-      * not all of them; the cure for hitting it is a longer prefix, not another page.
+    /** How many players a nickname search answers with at most. A screenful, with `isMore` on the reply to say when it
+      * is not all of them; the cure for hitting it is a longer prefix, not another page.
       */
     val searchLimit: Int = 25
 }

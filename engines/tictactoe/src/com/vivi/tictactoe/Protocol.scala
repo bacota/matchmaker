@@ -2,6 +2,7 @@ package com.vivi.tictactoe
 
 import upickle.default.{ReadWriter, macroRW}
 import com.vivi.engine.ClockView
+import upickle.implicits.key
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -30,9 +31,9 @@ object Protocol {
         board: String,
         turn: Option[String],
         you: Option[String],
-        completed: Boolean,
+        @key("completed") isCompleted: Boolean,
         winner: Option[String],
-        draw: Boolean,
+        @key("draw") isDraw: Boolean,
         winningLine: Option[Seq[Int]],
         players: List[SeatView],
         clock: Option[ClockView] = None

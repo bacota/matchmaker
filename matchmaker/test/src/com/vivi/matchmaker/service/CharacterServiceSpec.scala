@@ -31,7 +31,7 @@ class CharacterServiceSpec extends PropertySuite {
                 "game",
                 "description",
                 "url",
-                active = true,
+                isActive = true,
                 Seq.empty,
                 Seq.empty,
                 gameExternalId
@@ -49,7 +49,7 @@ class CharacterServiceSpec extends PropertySuite {
                 "game",
                 "description",
                 "url",
-                active = true,
+                isActive = true,
                 Seq.empty,
                 Seq.empty,
                 gameExternalId

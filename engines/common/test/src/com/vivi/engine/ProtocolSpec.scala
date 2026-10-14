@@ -74,13 +74,13 @@ class ProtocolSpec extends FunSuite {
           players = Nil,
           moveCallbackUrl = None,
           resultsCallbackUrl = None,
-          tiesAllowed = Some(false)
+          isTiesAllowed = Some(false)
         )
         val asEngine = read[Protocol.CreateGameRequest](write(fromMatchmaker))
         assert(!Protocol.tiesAllowed(asEngine))
         // Absent rather than true: a match that allows ties is sent nothing new.
-        assert(!write(fromMatchmaker.copy(tiesAllowed = None)).contains("tiesAllowed"))
-        assert(Protocol.tiesAllowed(read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(tiesAllowed = None)))))
+        assert(!write(fromMatchmaker.copy(isTiesAllowed = None)).contains("tiesAllowed"))
+        assert(Protocol.tiesAllowed(read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(isTiesAllowed = None)))))
     }
 
     test("the engine's create response reads as matchmaker's") {
@@ -156,7 +156,7 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("a status answer's move number reads as matchmaker's") {
-        val status = Protocol.GameStatusResponse(completed = false, participants = Nil, sequence = Some(4L))
+        val status = Protocol.GameStatusResponse(isCompleted = false, participants = Nil, sequence = Some(4L))
         assertEquals(read[MmGameStatusResponse](write(status)).sequence, Some(4L))
     }
 
@@ -206,13 +206,13 @@ class ProtocolSpec extends FunSuite {
     test("results ending a live match by forfeit read as matchmaker's, forfeit and all") {
         val results = Protocol.MatchResults(
           List(
-            Protocol.ResultEntry(11L, 2, Map("outcome" -> ujson.Str("loss")), isWinner = false, forfeit = true),
-            Protocol.ResultEntry(22L, 1, Map("outcome" -> ujson.Str("win")), isWinner = true, forfeit = true)
+            Protocol.ResultEntry(11L, 2, Map("outcome" -> ujson.Str("loss")), isWinner = false, isForfeit = true),
+            Protocol.ResultEntry(22L, 1, Map("outcome" -> ujson.Str("win")), isWinner = true, isForfeit = true)
           )
         )
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
         assertEquals(
-          asMatchmaker.results.map(r => (r.participantId, r.isWinner, r.forfeit)),
+          asMatchmaker.results.map(r => (r.participantId, r.isWinner, r.isForfeit)),
           List(
             (ParticipantId(11L), false, true),
             (ParticipantId(22L), true, true)

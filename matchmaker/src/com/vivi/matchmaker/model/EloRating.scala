@@ -51,7 +51,7 @@ object MatchRecord {
 /** One page of a game's leaderboard — everybody placed in its range of places, best first — and whether anybody is
   * placed after it.
   */
-case class Leaderboard(ratings: List[EloRating], more: Boolean)
+case class Leaderboard(ratings: List[EloRating], isMore: Boolean)
 
 object Leaderboard {
 

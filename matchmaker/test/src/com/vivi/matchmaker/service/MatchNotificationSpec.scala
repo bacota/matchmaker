@@ -49,7 +49,7 @@ class MatchNotificationSpec extends PropertySuite {
                 "Tic-Tac-Toe",
                 "description",
                 "https://engine.example.com/games",
-                active = true,
+                isActive = true,
                 Seq(
                   GameRole(
                     GameRoleId(0),
@@ -210,7 +210,7 @@ class MatchNotificationSpec extends PropertySuite {
                       f.accepter.externalId,
                       f.game.gameId,
                       f.played.matchId,
-                      SeatNotifications.all(true).copy(yourTurn = false, turnTaken = false)
+                      SeatNotifications.all(true).copy(isYourTurn = false, isTurnTaken = false)
                     )
                     _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
                 } yield f.notifier.messages.isEmpty

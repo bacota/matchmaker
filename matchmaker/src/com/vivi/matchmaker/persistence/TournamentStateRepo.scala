@@ -44,7 +44,7 @@ class TournamentStateRepo(session: Session[IO]) {
 
     private type ProgressRow = (Option[Int], Boolean, Boolean, Boolean, String)
     private val selectProgress: Query[(GameId, TournamentId), ProgressRow] =
-        sql"""SELECT t.current_round, t.stop_requested, t.friendly, t.public, g.game_type::text
+        sql"""SELECT t.current_round, t.is_stop_requested, t.is_friendly, t.is_public, g.game_type::text
           FROM tournament t JOIN game g ON g.game_id = t.game_id
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId"""
             .query(int4.opt *: bool *: bool *: bool *: text)
@@ -74,7 +74,7 @@ class TournamentStateRepo(session: Session[IO]) {
             .to[SeedRow]
 
     private val selectMatches: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT match_id, pool_id, round, status, ties_allowed, rubber, cancelled FROM match
+        sql"""SELECT match_id, pool_id, round, status, is_ties_allowed, is_rubber, is_cancelled FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId"""
             .query(int8 *: int8 *: int4 *: text *: bool *: bool *: bool)
             .to[MatchRow]
@@ -183,8 +183,8 @@ class TournamentStateRepo(session: Session[IO]) {
     private val insertMatch: Command[
       (GameId, Long, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
     ] =
-        sql"""INSERT INTO match (game_id, match_id, description, settings, public, friendly, status,
-                                 tournament_id, pool_id, round, stage_id, ties_allowed, rubber)
+        sql"""INSERT INTO match (game_id, match_id, description, settings, is_public, is_friendly, status,
+                                 tournament_id, pool_id, round, stage_id, is_ties_allowed, is_rubber)
           VALUES ($gameId, $int8, '', '{}', $bool, $bool, 'S',
                   $tournamentId, $int8, $int4, $int8, $bool, $bool)""".command
 
@@ -198,14 +198,14 @@ class TournamentStateRepo(session: Session[IO]) {
       (GameId, Long, String, Option[Long], Option[Int], TournamentId, Long, Option[Int], GameId, Option[Long]),
       Long
     ] =
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, due, game_role_id,
-              tournament_id, entrant_id, choose_order, notify_match_started, notify_turn_taken, notify_your_turn,
-              notify_match_ended)
+        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, due, game_role_id,
+              tournament_id, entrant_id, choose_order, is_notify_match_started, is_notify_turn_taken, is_notify_your_turn,
+              is_notify_match_ended)
           SELECT $gameId, $int8, $text, ${int8.opt}, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
-                 COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
-                 COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
-                 COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
-                 COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE)
+                 COALESCE(pg.is_notify_match_started, pl.is_notify_match_started, TRUE),
+                 COALESCE(pg.is_notify_turn_taken, pl.is_notify_turn_taken, TRUE),
+                 COALESCE(pg.is_notify_your_turn, pl.is_notify_your_turn, TRUE),
+                 COALESCE(pg.is_notify_match_ended, pl.is_notify_match_ended, TRUE)
           FROM (SELECT 1) one
               LEFT JOIN player pl ON pl.player_id = ${int8.opt}
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
@@ -224,7 +224,7 @@ class TournamentStateRepo(session: Session[IO]) {
           VALUES ($gameId, $int8, $int8, $tournamentId, $int8)""".command
 
     private val updateProgress: Command[(Option[Int], Boolean, GameId, TournamentId)] =
-        sql"""UPDATE tournament SET current_round = ${int4.opt}, stop_requested = $bool
+        sql"""UPDATE tournament SET current_round = ${int4.opt}, is_stop_requested = $bool
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
     private val setFinalRank: Command[(Int, GameId, TournamentId, Long)] =
@@ -252,14 +252,14 @@ class TournamentStateRepo(session: Session[IO]) {
         // The stage a round is played in: the atomic stage of a pool playing in it, new or still open.
         val roundStage: Option[Long] =
             walked.pools
-                .filter(w => w.pool.sub.isEmpty && w.pool.matches.nonEmpty && !w.pool.completed)
+                .filter(w => w.pool.sub.isEmpty && w.pool.matches.nonEmpty && !w.pool.isCompleted)
                 .sortBy(w => if (w.pool.id < 0) 0 else 1)
                 .headOption
                 .map(stageOf)
 
         // Failing those, the stage of the last atomic pool there is: a round with nothing to play in it, the one after
         // a tournament finishes, still has to name one.
-        val lastStage: Option[Long] = walked.pools.filterNot(_.nesting).lastOption.map(stageOf)
+        val lastStage: Option[Long] = walked.pools.filterNot(_.isNesting).lastOption.map(stageOf)
 
         def ensureRound(r: Int, stage: Option[Long]): IO[Unit] =
             stage
@@ -271,13 +271,13 @@ class TournamentStateRepo(session: Session[IO]) {
             // ---- new pools, parents first ----
             ids <- walked.pools.filter(_.pool.id < 0).foldLeftM(Map.empty[Int, Long]) { (ids, w) =>
                 val parent = if (w.scope < 0) ids(w.scope.toInt) else w.scope
-                val kind = if (w.nesting) "G" else "A"
+                val kind = if (w.isNesting) "G" else "A"
                 val stage = stageOf(w)
                 for {
-                    _ <- ensureRound(effective, if (w.nesting) None else Some(stage))
+                    _ <- ensureRound(effective, if (w.isNesting) None else Some(stage))
                     id <- session.unique(insertPool)((game, tournament, kind, parent, effective, w.pool.stratum))
                     _ <- session
-                        .execute(if (w.nesting) insertGroup else insertAtomicPool)((game, tournament, id, stage))
+                        .execute(if (w.isNesting) insertGroup else insertAtomicPool)((game, tournament, id, stage))
                     _ <- w.pool.members.traverse_(m => session.execute(insertMember)((game, tournament, id, m.entrant)))
                 } yield ids + (w.pool.id -> id)
             }
@@ -301,7 +301,7 @@ class TournamentStateRepo(session: Session[IO]) {
                         m.entrant
                       )
                     )
-                ) *> IO.whenA(w.pool.completed && !was.exists(_.completed))(
+                ) *> IO.whenA(w.pool.isCompleted && !was.exists(_.isCompleted))(
                   session.execute(completePool)((game, tournament, id)).void
                 )
             }
@@ -316,7 +316,7 @@ class TournamentStateRepo(session: Session[IO]) {
                 val was = beforeNodes.get(n.scope).map(_.members.map(m => m.entrant -> m).toMap).getOrElse(Map.empty)
                 val changed = n.node.members.filterNot(m => was.get(m.entrant).contains(m))
                 val eliminatedAt = (m: Member) =>
-                    Option.when(m.eliminated)(
+                    Option.when(m.isEliminated)(
                       before.eliminatedRound.getOrElse((scope, m.entrant), seedRound)
                     )
                 IO.whenA(changed.nonEmpty)(
@@ -359,13 +359,13 @@ class TournamentStateRepo(session: Session[IO]) {
                                     game,
                                     id,
                                     ctx.isPublic,
-                                    ctx.friendly,
+                                    ctx.isFriendly,
                                     tournament,
                                     poolId,
                                     planned,
                                     stage,
-                                    m.tiesAllowed,
-                                    m.planned.rubber
+                                    m.isTiesAllowed,
+                                    m.planned.isRubber
                                   )
                                 )
                                 _ <- m.planned.seats.traverse_(seat => writeSeat(game, tournament, ctx, id, seat))
@@ -378,7 +378,7 @@ class TournamentStateRepo(session: Session[IO]) {
             // ---- the round being played, and whether a stage is to stop ----
             _ <- IO.whenA(after.round > before.state.round)(ensureRound(after.round, None))
             _ <- session.execute(updateProgress)(
-              (Option.when(after.round > 0)(after.round), after.stopRequested, game, tournament)
+              (Option.when(after.round > 0)(after.round), after.isStopRequested, game, tournament)
             )
 
             // ---- a finished tournament's ranking ----
@@ -430,8 +430,8 @@ class TournamentStateRepo(session: Session[IO]) {
         session.execute(startRound)((at, deadline, game, tournament, round)).void
 
     private val completeRound: Query[(GameId, TournamentId, Int), Int] =
-        sql"""UPDATE round SET complete = true
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND NOT complete
+        sql"""UPDATE round SET is_complete = true
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND NOT is_complete
           RETURNING round""".query(int4)
 
     /** Marks round `round` complete, answering whether this is what did: so that an ending delivered twice tells the
@@ -461,7 +461,7 @@ object TournamentStateRepo {
       * player and character.
       */
     case class Context(
-        friendly: Boolean,
+        isFriendly: Boolean,
         isPublic: Boolean,
         gameType: String,
         entrants: Map[Long, (Option[Long], Option[Long])]
@@ -487,7 +487,7 @@ object TournamentStateRepo {
         parent: Option[Long],
         round: Option[Int],
         stratum: Int,
-        completed: Boolean,
+        isCompleted: Boolean,
         stage: Option[Long]
     )
     case class MemberRow(
@@ -504,9 +504,9 @@ object TournamentStateRepo {
         pool: Long,
         round: Int,
         status: String,
-        tiesAllowed: Boolean,
-        rubber: Boolean,
-        cancelled: Boolean
+        isTiesAllowed: Boolean,
+        isRubber: Boolean,
+        isCancelled: Boolean
     )
     case class SeatRow(
         matchId: Long,
@@ -530,7 +530,7 @@ object TournamentStateRepo {
     /** A pool of a state, with the node it is in: the pool that scopes that node's seeds (negative while new), the
       * stage it belongs to, keyed as the rules name it, and whether that stage is a nesting one.
       */
-    case class WalkedPool(pool: Pool, scope: Long, stageKey: List[Int], nesting: Boolean)
+    case class WalkedPool(pool: Pool, scope: Long, stageKey: List[Int], isNesting: Boolean)
 
     /** A node of a state, with the pool that scopes its seeds. */
     case class WalkedNode(node: Node, scope: Long)
@@ -615,7 +615,7 @@ object TournamentStateRepo {
             val built = grouped.zipWithIndex.map { case (((round, stage), ps), i) =>
                 val repetition = grouped.take(i).count(_._1._2 == stage)
                 val nextRound = runRounds.lift(i + 1).getOrElse(Int.MaxValue)
-                val completed = ps.forall(_.completed)
+                val completed = ps.forall(_.isCompleted)
                 val made = ps.sortBy(_.id).map(p => pool(p, scope, path :+ stage, completed, nextRound))
                 val pooled = made.flatMap(_._1.members.map(_.entrant)).toSet
                 val withdrawn = entrants.collect { case (e, _, true, _, _) => e }.toSet
@@ -631,10 +631,10 @@ object TournamentStateRepo {
             val runs = built.map(_._1)
             val stagesHere = designAt(path).stages.size
             val (stage, repetition) = runs.lastOption match {
-                case _ if ranking.isDefined        => (stagesHere, 0)
-                case Some(open) if !open.completed => (open.stage, open.repetition)
-                case Some(done)                    => (done.stage + 1, 0)
-                case None                          => (0, 0)
+                case _ if ranking.isDefined          => (stagesHere, 0)
+                case Some(open) if !open.isCompleted => (open.stage, open.repetition)
+                case Some(done)                      => (done.stage + 1, 0)
+                case None                            => (0, 0)
             }
             (Node(path, members, stage, repetition, runs, ranking), built.flatMap(_._2).toMap)
         }
@@ -668,11 +668,11 @@ object TournamentStateRepo {
                 .sortBy(m => (m.seedIn, m.entrant))
             if (p.kind == "G") {
                 // A sub-tournament once one was seeded in it: a nesting stage's pool too small to play has none.
-                if (!seedsIn.contains(p.id)) (Pool(p.id.toInt, p.stratum, ms, completed = p.completed), Map.empty)
+                if (!seedsIn.contains(p.id)) (Pool(p.id.toInt, p.stratum, ms, isCompleted = p.isCompleted), Map.empty)
                 else {
-                    val ranking = Option.when(p.completed)(ms.flatMap(m => m.rank.map(m.entrant -> _)).toMap)
+                    val ranking = Option.when(p.isCompleted)(ms.flatMap(m => m.rank.map(m.entrant -> _)).toMap)
                     val (sub, ids) = node(p.id, stageKey, ranking)
-                    (Pool(p.id.toInt, p.stratum, ms, sub = Some(sub), completed = p.completed), ids)
+                    (Pool(p.id.toInt, p.stratum, ms, sub = Some(sub), isCompleted = p.isCompleted), ids)
                 }
             } else {
                 val rows = matchesOf.getOrElse(p.id, Nil).map { m =>
@@ -687,7 +687,7 @@ object TournamentStateRepo {
                     // Over with a result for every seat, or called off: a cancelled match nobody ranked is over
                     // with every seat unranked.
                     val outcome = Option.when(
-                      m.status == "F" && seats.nonEmpty && (m.cancelled || seats.forall(_.rank.isDefined))
+                      m.status == "F" && seats.nonEmpty && (m.isCancelled || seats.forall(_.rank.isDefined))
                     )(
                       seats.map(s => Placing(s.entrant, s.rank, scoreOf(s.scores)))
                     )
@@ -695,15 +695,15 @@ object TournamentStateRepo {
                       i + 1,
                       m.round,
                       seats.map(s => SeatPlan(s.entrant, s.role, s.chooseOrder)),
-                      m.rubber
+                      m.isRubber
                     )
                     (
-                      PoolMatch(planned, m.tiesAllowed, Option.unless(m.status == "S")(m.round), outcome),
+                      PoolMatch(planned, m.isTiesAllowed, Option.unless(m.status == "S")(m.round), outcome),
                       (p.id.toInt, i + 1) -> MatchId(m.id)
                     )
                 }
                 (
-                  Pool(p.id.toInt, p.stratum, ms, matches = numbered.map(_._1), completed = p.completed),
+                  Pool(p.id.toInt, p.stratum, ms, matches = numbered.map(_._1), isCompleted = p.isCompleted),
                   numbered.map(_._2).toMap
                 )
             }

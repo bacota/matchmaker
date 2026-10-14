@@ -120,7 +120,7 @@ class Engine(
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             Either.cond(
               !current.isOver, {
-                  val record = MoveRecord(seat.participantId, seat.side, at, at, concession = true)
+                  val record = MoveRecord(seat.participantId, seat.side, at, at, isConcession = true)
                   (current.copy(turns = current.turns :+ record), record)
               },
               Refusal.Invalid("this match is already over")
@@ -148,9 +148,9 @@ class Engine(
                       PieceView(
                         square,
                         p.side.toString,
-                        Option.when(own || p.revealed)(p.rank.toString),
-                        p.revealed,
-                        p.moved
+                        Option.when(own || p.isRevealed)(p.rank.toString),
+                        p.isRevealed,
+                        p.isMoved
                       )
                     )
                 }
@@ -169,9 +169,9 @@ class Engine(
               .map((from, to) => List(from, to)),
           lastMove = m.moves.lastOption.flatMap(moveView),
           lost = Side.values.toList.map(s => LostView(s.toString, m.lost(s).map(_.toString))),
-          completed = over,
+          isCompleted = over,
           winner = m.winner.map(_.toString),
-          draw = m.isDraw,
+          isDraw = m.isDraw,
           ending = m.ending.map(_.label),
           moveCount = m.moves.size,
           maxMoves = m.maxMoves,
@@ -204,7 +204,7 @@ class Engine(
       * unseen by `viewer` now, whether or not the match is over.
       */
     private def replayOf(m: StrategoMatch, viewer: Option[Side]): Option[Protocol.ReplayView] = {
-        val unseen = m.board.cells.flatten.filter(p => !p.revealed && !viewer.contains(p.side)).map(_.id).toSet
+        val unseen = m.board.cells.flatten.filter(p => !p.isRevealed && !viewer.contains(p.side)).map(_.id).toSet
         m.opening.map(opening =>
             Protocol.ReplayView(
               opening.cells.indices.toList.flatMap(square =>

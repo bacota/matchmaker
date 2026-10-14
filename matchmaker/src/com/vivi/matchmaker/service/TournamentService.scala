@@ -107,7 +107,7 @@ class TournamentService[T](
               round.map { m =>
                   val by = TournamentRounds.chooseBy(summary.tournament, game, m)
                   val v = TournamentService.view(m)
-                  v.copy(seats = v.seats.map(s => if (s.choosing) s.copy(chooseBy = by) else s))
+                  v.copy(seats = v.seats.map(s => if (s.isChoosing) s.copy(chooseBy = by) else s))
               },
               invitedCharacters
             )
@@ -125,7 +125,7 @@ class TournamentService[T](
                 all <- new TournamentRepo(session).summariesForGame(gameId, caller.playerId)
                 visible = all.filter(s =>
                     TournamentService.isOpenChallenge(s) &&
-                        (!s.tournament.settings.invitational || s.isOwner || s.entered || s.invited)
+                        (!s.tournament.settings.isInvitational || s.isOwner || s.isEntered || s.isInvited)
                 )
                 summaries <- withEntries(session, visible)
             } yield summaries
@@ -166,8 +166,8 @@ class TournamentService[T](
       * plain game, characters in a character game, whoever owns them when they answer.
       *
       * Its pool size is how many it seats and the most entries it takes; it starts itself when they are reached if
-      * `autoStart`, and is otherwise started by its owner like any tournament. Its rounds are automatic, so starting it
-      * begins its one round, and its players then choose their roles.
+      * `isAutoStart`, and is otherwise started by its owner like any tournament. Its rounds are automatic, so starting
+      * it begins its one round, and its players then choose their roles.
       *
       * Offering a match one will not play in, or one that is rated, is a game's admin's to do; and one whose owner does
       * not play has to start by itself, since nobody would be watching for it to fill.
@@ -180,21 +180,21 @@ class TournamentService[T](
                         caller <- requireCaller(session, callerExternalId)
                         game <- requireGame(session, gameId)
                         model <- requireModel(session, gameId, Challenge.modelId)
-                        _ <- IO.raiseWhen(!request.plays && !request.autoStart)(
+                        _ <- IO.raiseWhen(!request.isPlays && !request.isAutoStart)(
                           ValidationError(
                             "a challenge whose challenger will not play in it has to start when it is full"
                           )
                         )
-                        _ <- IO.whenA(!request.plays || !request.friendly)(requireGameAdmin(session, caller, game))
+                        _ <- IO.whenA(!request.isPlays || !request.isFriendly)(requireGameAdmin(session, caller, game))
                         invited = request.invitations.distinct
                         invitedCharacters = request.characterInvitations.distinct
                         _ <- requireInvitationKind(game, invited.size, invitedCharacters.size)
-                        _ <- IO.raiseWhen(!request.open && invited.isEmpty && invitedCharacters.isEmpty)(
+                        _ <- IO.raiseWhen(!request.isOpen && invited.isEmpty && invitedCharacters.isEmpty)(
                           ValidationError(
                             s"a challenge that is not open must invite at least one ${inviteeNoun(game)}"
                           )
                         )
-                        _ <- IO.raiseWhen(request.plays && invited.contains(caller.playerId))(
+                        _ <- IO.raiseWhen(request.isPlays && invited.contains(caller.playerId))(
                           ValidationError("a challenger cannot be invited to their own challenge")
                         )
                         invitees <- invited.traverse(id =>
@@ -204,7 +204,7 @@ class TournamentService[T](
                             }
                         )
                         owners <- invitedCharacters.traverse(id => invitableOwner(session, game, id))
-                        _ <- IO.raiseWhen(request.plays && owners.exists(_.playerId == caller.playerId))(
+                        _ <- IO.raiseWhen(request.isPlays && owners.exists(_.playerId == caller.playerId))(
                           ValidationError("a challenger cannot invite their own characters to their own challenge")
                         )
                         poolSize = request.poolSize.getOrElse(game.poolSeats)
@@ -218,15 +218,15 @@ class TournamentService[T](
                             tournamentModelId = model.tournamentModelId,
                             defaultPoolSize = Some(poolSize),
                             settings = TournamentSettings(
-                              autoRounds = true,
-                              friendly = request.friendly,
-                              invitational = !request.open,
+                              isAutoRounds = true,
+                              isFriendly = request.isFriendly,
+                              isInvitational = !request.isOpen,
                               roundDuration = request.roundDuration,
                               isPublic = request.isPublic,
                               gameSettings = request.gameSettings,
-                              live = request.live,
+                              isLive = request.isLive,
                               start = request.start,
-                              autoStart = request.autoStart,
+                              isAutoStart = request.isAutoStart,
                               // One match of everyone, so as many entries as its pool seats: what lets it start by
                               // itself once full. The owner may change it afterwards, as any tournament's.
                               maxEntrants = Some(poolSize)
@@ -241,7 +241,7 @@ class TournamentService[T](
                             new CharacterInvitationRepo(session).invite(gameId, made.tournamentId, c)
                         )
                         entered <-
-                            if (request.plays) enterIn(session, made, game, caller, request.characterId).map(_._2)
+                            if (request.isPlays) enterIn(session, made, game, caller, request.characterId).map(_._2)
                             else IO.pure(None)
                     } yield (entered.getOrElse(made), invitees ++ owners)
                 }
@@ -361,15 +361,15 @@ class TournamentService[T](
                                   ValidationError("a round duration must be positive")
                                 )
                                 roundDuration = s.roundDuration.orElse(t.settings.roundDuration)
-                                _ <- IO.raiseWhen(t.settings.live && !roundDuration.exists(_.getSeconds >= 1))(
+                                _ <- IO.raiseWhen(t.settings.isLive && !roundDuration.exists(_.getSeconds >= 1))(
                                   ValidationError("a live tournament needs a round duration of at least a second")
                                 )
                             } yield t.copy(
                               name = request.name.trim,
                               description = request.description.trim,
                               settings = t.settings.copy(
-                                autoRounds = s.autoRounds,
-                                lateEntries = s.lateEntries,
+                                isAutoRounds = s.isAutoRounds,
+                                isLateEntries = s.isLateEntries,
                                 roundDuration = roundDuration
                               )
                             )
@@ -553,7 +553,7 @@ class TournamentService[T](
                 .flatMap { (t, caller, entrant, wasInvited, startedNow) =>
                     notifications.entered(session, t, caller, wasInvited) *>
                         startedNow.traverse_(running =>
-                            IO.whenA(running.settings.autoRounds)(started(running.gameId, running.tournamentId))
+                            IO.whenA(running.settings.isAutoRounds)(started(running.gameId, running.tournamentId))
                         ) *>
                         IO.pure(entrant)
                 }
@@ -573,7 +573,7 @@ class TournamentService[T](
         val gameId = t.gameId
         val late = t.status == TournamentStatus.Running
         for {
-            _ <- IO.raiseUnless(t.status == TournamentStatus.Open || (late && t.settings.lateEntries))(
+            _ <- IO.raiseUnless(t.status == TournamentStatus.Open || (late && t.settings.isLateEntries))(
               ConflictError(
                 if (late) "this tournament has started, and takes no late entries"
                 else s"this tournament is not open for entries; it is ${t.status.label.toLowerCase}"
@@ -581,7 +581,7 @@ class TournamentService[T](
             )
             _ <- checkCharacter(session, game, characterId, caller)
             invited <- isInvitedAs(session, game, tournamentId, caller, characterId)
-            _ <- IO.raiseUnless(!t.settings.invitational || invited || t.owner == caller.playerId)(
+            _ <- IO.raiseUnless(!t.settings.isInvitational || invited || t.owner == caller.playerId)(
               UnauthorizedError(
                 if (game.gameType == GameType.Character)
                     "this tournament is by invitation, and that character has not been invited"
@@ -653,7 +653,7 @@ class TournamentService[T](
             // Full now, and offered as starting itself: this entry is what starts it.
             full = t.settings.maxEntrants.contains(active + 1)
             startedNow <-
-                if (t.status == TournamentStatus.Open && t.settings.autoStart && full)
+                if (t.status == TournamentStatus.Open && t.settings.isAutoStart && full)
                     startIn(session, t, game).map(Some(_))
                 else IO.pure(None)
         } yield (entrant, startedNow)
@@ -720,7 +720,7 @@ class TournamentService[T](
                     } yield running
                 }
             }
-            .flatTap(t => IO.whenA(t.settings.autoRounds)(started(t.gameId, t.tournamentId)))
+            .flatTap(t => IO.whenA(t.settings.isAutoRounds)(started(t.gameId, t.tournamentId)))
 
     /* A start, under the tournament's lock, which the caller holds: by its owner, or by the entry that filled one that
      * starts itself. */
@@ -737,7 +737,7 @@ class TournamentService[T](
             design <- requireDesign(session, t)
             problems = Validation
                 .validate(design, TournamentGame.of(game), t.settings.maxTurns, Some(t.defaultPoolSize))
-                .filterNot(_.warning)
+                .filterNot(_.isWarning)
             _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
             ratings <- currentRatings(session, t.gameId, entries)
             state = Progress.start(
@@ -778,10 +778,10 @@ class TournamentService[T](
     private def env(t: Tournament, design: TournamentDesign, game: Game, ratings: Map[Long, Int]): Env =
         Env(
           design,
-          TournamentGame.of(game).copy(chooseRoles = t.settings.chooseRoles),
+          TournamentGame.of(game).copy(isChooseRoles = t.settings.isChooseRoles),
           ratings,
           Some(t.defaultPoolSize),
-          t.settings.concurrentRounds
+          t.settings.isConcurrentRounds
         )
 
     /* The model a tournament is made from: one the game offers, with a classification and active -- or, if it is the
@@ -802,8 +802,8 @@ class TournamentService[T](
             model <- repo.read(id)
             offered <- repo.offeredIn(gameId, id)
             found <- model match {
-                case Some(m) if kept.contains(id)                                 => IO.pure(m)
-                case Some(m) if m.classification.isDefined && m.active && offered => IO.pure(m)
+                case Some(m) if kept.contains(id)                                   => IO.pure(m)
+                case Some(m) if m.classification.isDefined && m.isActive && offered => IO.pure(m)
                 case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
             }
         } yield found
@@ -841,11 +841,11 @@ class TournamentService[T](
               ),
               Option.when(s.maxTurns.exists(_ < 1))("the maximum number of turns must be at least 1"),
               Option.when(s.maxEntrants.exists(_ < 1))("it must take at least one entry"),
-              Option.when(s.autoStart && s.maxEntrants.isEmpty)(
+              Option.when(s.isAutoStart && s.maxEntrants.isEmpty)(
                 "only a tournament that takes a limited number of entries can start itself when it is full"
               ),
               // The engine plays a live match against the clock it is given, which is the round's.
-              Option.when(s.live && !s.roundDuration.exists(_.getSeconds >= 1))(
+              Option.when(s.isLive && !s.roundDuration.exists(_.getSeconds >= 1))(
                 "a live tournament needs a round duration of at least a second: it is the clock the game engine " +
                     "plays each match against"
               ),
@@ -855,7 +855,7 @@ class TournamentService[T](
             ).flatten ++
                 Validation
                     .validate(model.design, TournamentGame.of(game), s.maxTurns, Some(poolSize))
-                    .filterNot(_.warning)
+                    .filterNot(_.isWarning)
                     .map(_.describe)
         IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.mkString("; ")))
     }
@@ -1009,7 +1009,7 @@ object TournamentService {
       * it choose them.
       */
     def settingsFor(model: TournamentModel, settings: TournamentSettings): TournamentSettings =
-        settings.copy(chooseRoles = settings.chooseRoles || model.chooseRoles)
+        settings.copy(isChooseRoles = settings.isChooseRoles || model.isChooseRoles)
 
     /** Whether a tournament is a challenge still taking entries. */
     def isOpenChallenge(s: TournamentSummary): Boolean =
@@ -1020,7 +1020,7 @@ object TournamentService {
 
     /** A round's match as the tournament's page shows it. */
     def view(m: TournamentMatch): TournamentMatchView = {
-        val next = m.seats.filter(s => s.gameRoleId.isEmpty && !s.forfeit).flatMap(_.chooseOrder).minOption
+        val next = m.seats.filter(s => s.gameRoleId.isEmpty && !s.isForfeit).flatMap(_.chooseOrder).minOption
         TournamentMatchView(
           m.poolId,
           m.matchId,
@@ -1029,7 +1029,7 @@ object TournamentService {
               TournamentSeatView(
                 s.entrantId,
                 s.gameRoleId,
-                choosing =
+                isChoosing =
                     m.status == TournamentMatchStatus.Choosing && s.gameRoleId.isEmpty && s.chooseOrder == next &&
                         next.isDefined,
                 chooseBy = None

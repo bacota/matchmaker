@@ -83,7 +83,7 @@ object Account {
     /** What one form has to say for itself: nothing yet, a failure, or a confirmation. Kept per form so that renaming
       * successfully does not wipe the message the email form just produced.
       */
-    private case class Outcome(failed: Boolean, message: String)
+    private case class Outcome(isFailed: Boolean, message: String)
 
     private val nicknameOutcome: Var[Option[Outcome]] = Var(None)
     private val emailOutcome: Var[Option[Outcome]] = Var(None)

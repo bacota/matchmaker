@@ -46,7 +46,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                     found <- repo.lockForShare(id)
                     model <- if (found) repo.read(id) else IO.pure(None)
                     _ <- model match {
-                        case Some(m) if m.active && m.classification.isDefined => repo.offer(gameId, id)
+                        case Some(m) if m.isActive && m.classification.isDefined => repo.offer(gameId, id)
                         case _ => IO.raiseError(NotFoundError(s"there is no tournament model $id to offer"))
                     }
                     offered <- repo.listOffered(gameId)
@@ -150,7 +150,7 @@ object TournamentModelService {
                     entered <- tournaments.anyEntrantMadeFrom(id)
                     outcome <-
                         if (entered)
-                            if (s.active) repo.deactivate(id).as(Some(Left(id))) else IO.pure(None)
+                            if (s.isActive) repo.deactivate(id).as(Some(Left(id))) else IO.pure(None)
                         else
                             madeFrom.traverse_((g, t) => tournaments.delete(g, t)) *>
                                 repo.delete(id).as(Some(Right(id)))
@@ -173,9 +173,9 @@ object TournamentModelService {
     ): IO[Option[Either[TournamentModelId, TournamentModelId]]] = {
         val id = TournamentModelId(m.id)
         repo.lockForUpdate(id) *> repo.read(id).flatMap {
-            case None                                          => repo.create(m.model).as(Some(Left(id)))
-            case Some(s) if !s.active || s.version < m.version => repo.replace(m.model).as(Some(Right(id)))
-            case Some(_)                                       => IO.pure(None)
+            case None                                            => repo.create(m.model).as(Some(Left(id)))
+            case Some(s) if !s.isActive || s.version < m.version => repo.replace(m.model).as(Some(Right(id)))
+            case Some(_)                                         => IO.pure(None)
         }
     }
 
@@ -195,7 +195,7 @@ object TournamentModelService {
                 if (tg.requiredSeats == 0) Nil
                 else
                     models
-                        .filter(m => Validation.designProblems(m.design, tg, m.poolSize).forall(_.warning))
+                        .filter(m => Validation.designProblems(m.design, tg, m.poolSize).forall(_.isWarning))
                         .map(_.tournamentModelId)
             playable.traverse_(id => repo.offer(game.gameId, id)).as(playable)
         }

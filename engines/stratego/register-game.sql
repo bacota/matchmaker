@@ -28,7 +28,7 @@ SELECT :'HOST' LIKE '/%' OR :'HOST' IN ('localhost', '127.0.0.1', '::1') AS is_l
 \endif
 
 WITH game AS (
-  INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
+  INSERT INTO game (game_type, name, display_name, description, url, is_active, external_id)
   VALUES (
     -- 'P' — plain: a seat in Stratego is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.

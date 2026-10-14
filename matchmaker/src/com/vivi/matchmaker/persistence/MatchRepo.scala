@@ -55,9 +55,9 @@ class MatchRepo(session: Session[IO]) {
             text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *: matchStatus
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT tournament_id, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, description, completed_at, is_cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
+                 is_public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, is_live, is_friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
@@ -67,9 +67,9 @@ class MatchRepo(session: Session[IO]) {
      * callbacks, which read a match, decide from it, and write it back — a concurrent callback for
      * the same match would otherwise be able to interleave between the two. */
     private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT tournament_id, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, description, completed_at, is_cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
+                 is_public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, is_live, is_friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
@@ -96,17 +96,17 @@ class MatchRepo(session: Session[IO]) {
           MatchId
       )
     ] =
-        sql"""UPDATE match SET description = $text, completed_at = ${instant.opt}, cancelled = $bool, start = ${instant.opt},
+        sql"""UPDATE match SET description = $text, completed_at = ${instant.opt}, is_cancelled = $bool, start = ${instant.opt},
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
-          public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
-          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool, status = $matchStatus
+          is_public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
+          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, is_friendly = $bool, status = $matchStatus
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /* What is written as a match's status: whatever it says, unless it is over, which completedAt and
      * cancelled already say -- and the table holds the three in step, so a caller that cancels a match
      * by copying it with cancelled = true need not also remember its status. */
     private def statusOf(m: Match): MatchStatus =
-        if (m.completedAt.isDefined || m.cancelled) MatchStatus.Finished else m.status
+        if (m.completedAt.isDefined || m.isCancelled) MatchStatus.Finished else m.status
 
     private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
         val (
@@ -171,7 +171,7 @@ class MatchRepo(session: Session[IO]) {
               (
                 m.description,
                 m.completedAt,
-                m.cancelled,
+                m.isCancelled,
                 m.start,
                 toSeconds(m.timeLimit),
                 m.settings,
@@ -181,7 +181,7 @@ class MatchRepo(session: Session[IO]) {
                 m.publicUrl,
                 m.timeLimitKind,
                 m.timeLimitUnit,
-                m.friendly,
+                m.isFriendly,
                 statusOf(m),
                 m.gameId,
                 m.matchId
@@ -376,16 +376,16 @@ class MatchRepo(session: Session[IO]) {
      * one cancelled in that time is over without ever having begun. None of those is a match a
      * player can open, and none is listed. */
     private val selectActiveForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 -- Where anyone may watch, for a match created is_public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM participant p
@@ -408,7 +408,7 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.completed_at IS NULL AND NOT m.cancelled
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.completed_at IS NULL AND NOT m.is_cancelled
           -- Ordered by the caller's own deadline, most urgent first, with NULLS LAST so matches
           -- with no deadline do not crowd out ones that have one; then by seat, so a match's
           -- rows arrive together and in a stable order.
@@ -425,16 +425,16 @@ class MatchRepo(session: Session[IO]) {
      *
      * Most recently finished first -- a history read from the top. */
     private val selectOverForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 -- Where anyone may watch, for a match created is_public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM participant p
@@ -452,7 +452,7 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
             AND p.completed_at >= $instant AND p.completed_at < $instant
-            AND NOT m.cancelled
+            AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
@@ -470,19 +470,19 @@ class MatchRepo(session: Session[IO]) {
      * and a caller that passes the wrong one has a leak rather than a wrong list. Two queries cannot
      * be called with the wrong argument.
      *
-     * The caller-relative columns are still relative to the player being asked about: `p.pending` is
+     * The caller-relative columns are still relative to the player being asked about: `p.is_pending` is
      * whether it is their turn, and `tn.owner = p.player_id` whether the match is theirs. */
     private val selectPublicActiveForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 -- Where anyone may watch, for a match created is_public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM participant p
@@ -506,26 +506,26 @@ class MatchRepo(session: Session[IO]) {
           -- Nothing about the match is consulted, so a seat is in at most one of these two lists and
           -- `completed_at` alone decides which. That puts the weight on it being kept: a match ending
           -- retires its seats through the engine's status (`applyEngineStatus`) and a cancel retires
-          -- them outright, which is what makes it the whole answer -- and keeps a cancelled match
+          -- them outright, which is what makes it the whole answer -- and keeps a is_cancelled match
           -- out of this list, as the next one leaves it out on purpose.
           -- Supported by the index on participant(player_id, completed_at).
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.public AND p.completed_at IS NULL
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.completed_at IS NULL
           -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
           -- most recently started first, which is the order a stranger reads a list of games in.
           ORDER BY m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     private val selectPublicOverForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 -- Where anyone may watch, for a match created is_public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM participant p
@@ -543,23 +543,23 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           -- The other half of that: their seat is done, whatever the match is doing -- in one window
           -- of time, as the caller's own list above, and never a match called off.
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
             AND p.completed_at >= $instant AND p.completed_at < $instant
-            AND NOT m.cancelled
+            AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     private val selectDueForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 -- Where anyone may watch, for a match created is_public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM participant p
@@ -575,7 +575,7 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.pending = true AND m.completed_at IS NULL AND m.cancelled = false
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.is_pending = true AND m.completed_at IS NULL AND m.is_cancelled = false
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
@@ -613,15 +613,15 @@ class MatchRepo(session: Session[IO]) {
             SELECT 1 FROM participant p
             JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
             WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
-              AND p.completed_at < $instant AND NOT m.cancelled
+              AND p.completed_at < $instant AND NOT m.is_cancelled
           )""".query(bool)
 
     private val selectPublicCompletedBefore: Query[(PlayerId, Option[GameId], Instant), Boolean] =
         sql"""SELECT EXISTS (
             SELECT 1 FROM participant p
             JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
-              AND p.completed_at < $instant AND NOT m.cancelled
+            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+              AND p.completed_at < $instant AND NOT m.is_cancelled
           )""".query(bool)
 
     /** Whether the player finished anything before `before`, in the one game where there is one, that their own
@@ -643,12 +643,12 @@ class MatchRepo(session: Session[IO]) {
      *
      * From `character_participant`, by its index on (game_id, character_id). */
     private val selectPublicActiveForCharacter =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM character_participant cp
@@ -665,17 +665,17 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           WHERE m.start IS NOT NULL AND cp.game_id = $gameId AND cp.character_id = $characterIdOf
-            AND m.public AND p.completed_at IS NULL
+            AND m.is_public AND p.completed_at IS NULL
           ORDER BY m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     private val selectPublicOverForCharacter =
-        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.is_cancelled,
                  (tn.owner = p.player_id) IS TRUE, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
-                 p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
-                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.is_live,
+                 p.participant_id, cp.character_id, p.is_pending, p.due,
+                 seat_player.nickname, seat.is_pending, seat.completed_at IS NOT NULL, seat.due,
+                 m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
                  seat_cp.character_id, seat_char.name
           FROM character_participant cp
@@ -691,9 +691,9 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.public
+          WHERE m.start IS NOT NULL AND cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.is_public
             AND p.completed_at >= $instant AND p.completed_at < $instant
-            AND NOT m.cancelled
+            AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
@@ -702,8 +702,8 @@ class MatchRepo(session: Session[IO]) {
             SELECT 1 FROM character_participant cp
             JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
             JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-            WHERE m.start IS NOT NULL AND cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.public
-              AND p.completed_at < $instant AND NOT m.cancelled
+            WHERE m.start IS NOT NULL AND cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.is_public
+              AND p.completed_at < $instant AND NOT m.is_cancelled
           )""".query(bool)
 
     /** The public matches a character is in that are still running, one row per seat. */
@@ -754,7 +754,7 @@ class MatchRepo(session: Session[IO]) {
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN player pl ON pl.player_id = p.player_id
           LEFT JOIN turn t ON t.game_id = p.game_id AND t.participant_id = p.participant_id
-          WHERE m.start IS NOT NULL AND m.completed_at IS NULL AND NOT m.cancelled
+          WHERE m.start IS NOT NULL AND m.completed_at IS NULL AND NOT m.is_cancelled
             AND m.time_limit IS NOT NULL AND m.time_limit_kind = 'TOTAL'
             AND EXISTS (SELECT 1 FROM participant mine
                          WHERE mine.game_id = p.game_id AND mine.match_id = p.match_id
@@ -804,7 +804,7 @@ class MatchRepo(session: Session[IO]) {
       (GameId, Option[PlayerId], Option[PlayerId], Int),
       (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])
     ] =
-        sql"""SELECT m.match_id, m.description, m.start, m.completed_at, m.cancelled, m.friendly,
+        sql"""SELECT m.match_id, m.description, m.start, m.completed_at, m.is_cancelled, m.is_friendly,
                  coalesce(array_agg(pl.nickname ORDER BY p.participant_id) FILTER (WHERE m.start IS NOT NULL AND pl.nickname IS NOT NULL),
                           '{}')
           FROM match m
@@ -816,7 +816,7 @@ class MatchRepo(session: Session[IO]) {
               WHERE s.game_id = m.game_id AND s.match_id = m.match_id AND s.player_id = ${playerIdOf.opt}
             ))
           GROUP BY m.game_id, m.match_id
-          ORDER BY (m.completed_at IS NULL AND NOT m.cancelled) DESC, m.start DESC, m.match_id
+          ORDER BY (m.completed_at IS NULL AND NOT m.is_cancelled) DESC, m.start DESC, m.match_id
           LIMIT $int4""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
 
     /** At most `limit` of the game's matches, running ones first, each with its players' nicknames: every one, or only
@@ -868,31 +868,31 @@ object MatchRepo {
         gameName: String,
         description: String,
         completedAt: Option[Instant],
-        cancelled: Boolean,
+        isCancelled: Boolean,
         isOwner: Boolean,
         start: Instant,
         timeLimit: Option[Duration],
         timeLimitKind: TimeLimitKind,
         timeLimitUnit: TimeLimitUnit,
-        live: Boolean,
+        isLive: Boolean,
         // The caller's own seat, repeated on every row of the match.
         callerParticipantId: ParticipantId,
         callerCharacterId: Option[CharacterId],
-        callerPending: Boolean,
+        isCallerPending: Boolean,
         callerDue: Option[Instant],
         // The seat this row is about, which may be the caller's own or anyone else's: `None` for nobody's.
         seatNickname: Option[String],
-        seatPending: Boolean,
-        seatCompleted: Boolean,
+        isSeatPending: Boolean,
+        isSeatCompleted: Boolean,
         seatDue: Option[Instant],
         // Where anyone may watch this match, and `None` for one that is not public. A fact about the
         // match rather than about this seat, and so the same on every row of it.
         publicUrl: Option[String],
         // Whether the match is friendly, likewise the match's.
-        friendly: Boolean,
+        isFriendly: Boolean,
         // The match's archive: when it was confirmed, and whether a friendly one has expired.
         archivedAt: Option[Instant] = None,
-        archiveExpired: Boolean = false,
+        isArchiveExpired: Boolean = false,
         // The match's settings, which hold its tournament's choice for each of the game's
         // parameters (see `ChallengeSettings`); likewise the match's.
         settings: String = "{}",

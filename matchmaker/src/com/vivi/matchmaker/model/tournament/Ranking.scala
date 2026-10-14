@@ -82,14 +82,14 @@ object Ranking {
             val mine = matches.filter(_.exists(_.entrant == e))
             e -> Standing(
               e,
-              mine.map(m => points(m, stage.points, stage.pointsForDraw, stage.pointsBonus).getOrElse(e, 0.0)).sum,
+              mine.map(m => points(m, stage.points, stage.pointsForDraw, stage.isPointsBonus).getOrElse(e, 0.0)).sum,
               mine.map(scoreDiff(_, e)).sum,
               mine.flatMap(_.find(_.entrant == e).flatMap(_.score)).sum
             )
         }.toMap
 
-        val useRubber = stage.rubberMatch && game.rubberApplies
-        val tiesAllowed = Ties.allowed(members.size, stage = stage.tiesAllowed)
+        val useRubber = stage.isRubberMatch && game.rubberApplies
+        val tiesAllowed = Ties.allowed(members.size, stage = stage.isTiesAllowed)
         var wanted = List.empty[(Long, Long)]
 
         // Members in groups that are still level, best group first; each group's order within it is decided below.
@@ -157,9 +157,9 @@ object Ranking {
         // Lower sorts first: still in the run before eliminated from it, then the higher stratum, then the better rank.
         def key(run: CompletedRun, e: Long): List[Int] =
             run.placed.get(e) match {
-                case None                    => List(Int.MaxValue, Int.MaxValue, Int.MaxValue)
-                case Some(p) if p.eliminated => List(1, -p.poolStratum, p.rank)
-                case Some(p)                 => List(0, -p.stratumOut, p.rank)
+                case None                      => List(Int.MaxValue, Int.MaxValue, Int.MaxValue)
+                case Some(p) if p.isEliminated => List(1, -p.poolStratum, p.rank)
+                case Some(p)                   => List(0, -p.stratumOut, p.rank)
             }
         // The tie-breaker runs, most recent first: where a participant placed in each settles a tie, in that order.
         val tieBreakers = indexed.filter((_, i) => tieBreakerRuns(i)).map(_._1).reverse
@@ -182,7 +182,7 @@ object Ranking {
   * pool they played in, their rank in it, the stratum the run left them in, and whether it eliminated them (or they had
   * withdrawn).
   */
-case class RunPlacing(poolStratum: Int, rank: Int, stratumOut: Int, eliminated: Boolean)
+case class RunPlacing(poolStratum: Int, rank: Int, stratumOut: Int, isEliminated: Boolean)
 
 /** A completed stage run as [[Ranking.rankNode]] reads it. */
 case class CompletedRun(placed: Map[Long, RunPlacing])

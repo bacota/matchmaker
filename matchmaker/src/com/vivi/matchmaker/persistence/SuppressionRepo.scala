@@ -53,7 +53,7 @@ class SuppressionRepo(session: Session[IO]) {
      * heard, and an SES event carries a timestamp from a clock we do not own. */
     private val upsert: Command[(String, SuppressionReason, Boolean, Option[String], Double)] =
         sql"""INSERT INTO email_suppression
-                  (email, reason, permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at)
+                  (email, reason, is_permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at)
               VALUES (lower($text), $reason, $bool, ${text.opt}, now(), now(), 1, NULL)
               ON CONFLICT (email) DO UPDATE SET
                   reason = CASE
@@ -65,8 +65,8 @@ class SuppressionRepo(session: Session[IO]) {
                           THEN email_suppression.reason
                       ELSE EXCLUDED.reason
                   END,
-                  permanent = EXCLUDED.permanent
-                      OR (email_suppression.permanent AND email_suppression.released_at IS NULL),
+                  is_permanent = EXCLUDED.is_permanent
+                      OR (email_suppression.is_permanent AND email_suppression.released_at IS NULL),
                   diagnostic = COALESCE(EXCLUDED.diagnostic, email_suppression.diagnostic),
                   last_seen_at = now(),
                   occurrences = CASE
@@ -78,7 +78,7 @@ class SuppressionRepo(session: Session[IO]) {
                   released_at = NULL""".command
 
     private val selectByEmail: Query[String, EmailSuppression] =
-        sql"""SELECT email, reason, permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at
+        sql"""SELECT email, reason, is_permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at
               FROM email_suppression WHERE email = lower($text)""".query(suppressionRow)
 
     /* The predicate in `EmailSuppression.active`, in SQL, asked of many addresses at once.
@@ -94,7 +94,7 @@ class SuppressionRepo(session: Session[IO]) {
         sql"""SELECT email FROM email_suppression
               WHERE email IN (${text.list(count)})
                 AND released_at IS NULL
-                AND (permanent OR (occurrences >= $int4 AND last_seen_at > now() - make_interval(secs => $float8)))"""
+                AND (is_permanent OR (occurrences >= $int4 AND last_seen_at > now() - make_interval(secs => $float8)))"""
             .query(text)
 
     /* Read in order to decide whether to write, so the read takes the row's lock and the decision is
@@ -153,7 +153,7 @@ class SuppressionRepo(session: Session[IO]) {
                           (
                             event.email.trim,
                             event.reason,
-                            event.permanent,
+                            event.isPermanent,
                             event.diagnostic.map(_.trim).filter(_.nonEmpty),
                             EmailSuppression.windowSeconds
                           )

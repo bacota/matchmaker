@@ -47,7 +47,7 @@ object SuppressionReason {
 case class EmailSuppression(
     email: String,
     reason: SuppressionReason,
-    permanent: Boolean,
+    isPermanent: Boolean,
     diagnostic: Option[String],
     firstSeenAt: Instant,
     lastSeenAt: Instant,
@@ -63,7 +63,7 @@ case class EmailSuppression(
       * `SuppressionRepoSpec`'s to keep honest, and that spec asserts the two agree rather than trusting that they do.
       */
     def active(now: Instant): Boolean =
-        releasedAt.isEmpty && (permanent || (
+        releasedAt.isEmpty && (isPermanent || (
           occurrences >= EmailSuppression.transientThreshold &&
               lastSeenAt.isAfter(now.minus(EmailSuppression.transientWindow))
         ))
@@ -105,8 +105,8 @@ object EmailSuppression {
             Notice(row.email, row.reason, row.lastSeenAt, canRetry = row.reason != SuppressionReason.Complaint)
     }
 
-    /** What one SES event says, as the bounce handler hands it over. `permanent` is the handler's reading of the event,
-      * not a property of the reason: a bounce is permanent or transient depending on what SES called it.
+    /** What one SES event says, as the bounce handler hands it over. `isPermanent` is the handler's reading of the
+      * event, not a property of the reason: a bounce is permanent or transient depending on what SES called it.
       *
       * `eventId` is what makes the count safe against the queue. SQS is at-least-once — a visibility timeout that
       * expires mid-write, a function that times out, a batch that fails partway — so the same notification arrives more
@@ -123,7 +123,7 @@ object EmailSuppression {
         eventId: String,
         email: String,
         reason: SuppressionReason,
-        permanent: Boolean,
+        isPermanent: Boolean,
         diagnostic: Option[String]
     )
 }

@@ -5,7 +5,7 @@ import com.raquo.laminar.api.L.*
 import munit.FunSuite
 
 /** A list's outcome, read out of the map that holds every list's — `Outcomes.of`, behind `Store.loading`, `known` and
-  * `failed`.
+  * `isFailed`.
   *
   * What matters is what it does *not* do: say its answer again when another list's changes. Each saying redraws what is
   * drawn from it, and on a player's page a redraw fetched a game's challenges, whose answer was another list's change —

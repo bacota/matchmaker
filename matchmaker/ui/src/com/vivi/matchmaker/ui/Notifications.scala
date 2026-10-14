@@ -149,7 +149,7 @@ object Notifications {
     /** What one form has to say for itself. As `Account.Outcome`, and for the same reason: these forms live inside
       * other screens, and a failure saving one belongs beside it rather than in the banner at the top of the page.
       */
-    private case class Outcome(failed: Boolean, message: String)
+    private case class Outcome(isFailed: Boolean, message: String)
 
     /* Says how a save went, out loud as well as on screen. The live region is on the container, not
      * on the message: a region added to the document with its text already in it has not changed and

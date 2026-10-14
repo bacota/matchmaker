@@ -129,7 +129,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       */
     protected def currentMatch(matchId: String, archived: Boolean = false): Either[Refusal, M] =
         engine.current(matchId, archived).map { settled =>
-            if (settled.changed) live.foreach(_.changed(matchId))
+            if (settled.isChanged) live.foreach(_.changed(matchId))
             settled.state
         }
 
@@ -138,7 +138,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       */
     private def openedBy(m: M, seat: S): Either[Refusal, M] =
         engine.opened(m.matchId, seat).map { settled =>
-            if (settled.changed) live.foreach(_.changed(m.matchId))
+            if (settled.isChanged) live.foreach(_.changed(m.matchId))
             settled.state
         }
 

@@ -148,7 +148,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                   name = "Autumn open",
                   status = TournamentStatus.Running,
                   defaultPoolSize = 4,
-                  settings = created.settings.copy(autoRounds = true, roundDuration = None, maxRating = Some(2000)),
+                  settings = created.settings.copy(isAutoRounds = true, roundDuration = None, maxRating = Some(2000)),
                   startedAt = Some(Instant.parse("2026-10-10T10:00:00Z"))
                 )
                 _ <- repo.update(changed)

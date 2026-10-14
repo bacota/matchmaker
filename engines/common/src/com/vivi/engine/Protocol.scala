@@ -2,6 +2,7 @@ package com.vivi.engine
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
+import upickle.implicits.key
 
 /** The wire format between matchmaker and a game engine, restated from the engines' side.
   *
@@ -56,7 +57,7 @@ object Protocol {
         // False when the match must not end in a draw — a tournament's elimination match. Sent only then,
         // so absent means ties are allowed, as from a matchmaker that predates it. What an engine does about
         // it is the game's business, and a game may do nothing: see `Protocol.tiesAllowed`.
-        tiesAllowed: Option[Boolean] = None
+        @key("tiesAllowed") isTiesAllowed: Option[Boolean] = None
     )
 
     /** Whether a create request allows the match to end in a draw: true unless matchmaker said otherwise. An engine
@@ -64,7 +65,7 @@ object Protocol {
       * round, stratego counts captures, rock-paper-scissors throws again. One that cannot, plays the match as it always
       * would.
       */
-    def tiesAllowed(request: CreateGameRequest): Boolean = request.tiesAllowed.getOrElse(true)
+    def tiesAllowed(request: CreateGameRequest): Boolean = request.isTiesAllowed.getOrElse(true)
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.
       *
@@ -90,8 +91,8 @@ object Protocol {
 
     case class EngineParticipantStatus(
         participantId: Long,
-        pending: Boolean,
-        completed: Boolean,
+        @key("pending") isPending: Boolean,
+        @key("completed") isCompleted: Boolean,
         prevMoveAt: Option[Instant]
     )
 
@@ -102,7 +103,7 @@ object Protocol {
 
     /** `turns` are the moves made after the `since` the status call asked from, oldest first. */
     case class GameStatusResponse(
-        completed: Boolean,
+        @key("completed") isCompleted: Boolean,
         participants: List[EngineParticipantStatus],
         turns: List[EngineTurn] = Nil,
         /** The number of moves this answer reflects: the same numbering as a move callback's `state.sequence`, so that
@@ -147,8 +148,8 @@ object Protocol {
 
     /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there.
       *
-      * `forfeit` says the match was ended by a turn's clock rather than by play, which only happens in a live match: it
-      * is on every seat's entry, as matchmaker's own forfeits are, and `isWinner` tells "won by forfeit" from
+      * `isForfeit` says the match was ended by a turn's clock rather than by play, which only happens in a live match:
+      * it is on every seat's entry, as matchmaker's own forfeits are, and `isWinner` tells "won by forfeit" from
       * "forfeited".
       */
     case class ResultEntry(
@@ -156,7 +157,7 @@ object Protocol {
         rank: Int,
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
-        forfeit: Boolean = false
+        @key("forfeit") isForfeit: Boolean = false
     )
 
     /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the

@@ -31,11 +31,11 @@ case class MatchSummary(
     gameName: String,
     description: String,
     completedAt: Option[Instant],
-    cancelled: Boolean,
+    isCancelled: Boolean,
     isOwner: Boolean,
     start: Instant,
     due: Option[Instant],
-    pending: Boolean,
+    isPending: Boolean,
     participantId: ParticipantId,
     characterId: Option[CharacterId],
     // The clock this match is being played under, set from its tournament's round duration when
@@ -45,14 +45,14 @@ case class MatchSummary(
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     // Whether the match is played live: its turns and their clock are the game engine's, so for
-    // one of these `pending`, `due`, `whoseTurn` and `turnDue` are always empty — matchmaker is
+    // one of these `isPending`, `due`, `whoseTurn` and `turnDue` are always empty — matchmaker is
     // not told whose turn it is — and the list says so rather than leave them looking stalled.
-    live: Boolean = false,
+    isLive: Boolean = false,
     // Everyone whose turn it is, by nickname — usually one, but a game where several players
     // move at once has several, and an empty list means the match is waiting on nobody (it is
     // over, or matchmaker has not yet heard who moves first).
     //
-    // `pending` says whether the caller is among them, which is what the caller's own lists are
+    // `isPending` says whether the caller is among them, which is what the caller's own lists are
     // selected on; this says who the others are, which is what a match still being played is
     // waiting for.
     whoseTurn: Seq[String] = Nil,
@@ -71,12 +71,12 @@ case class MatchSummary(
     // needs one.
     publicUrl: Option[String] = None,
     // Whether the match is friendly. Every match is, unless a game's admin says otherwise.
-    friendly: Boolean = true,
+    isFriendly: Boolean = true,
     // When the match's archive was confirmed, as on `Match`.
     archivedAt: Option[Instant] = None,
     // Whether a friendly match's archive has expired: no Review or Watch link, and `publicUrl`
     // is cleared.
-    archiveExpired: Boolean = false,
+    isArchiveExpired: Boolean = false,
     // The value of each of the game's parameters this match is played under, in the order the
     // game defines them; empty for a game that has none.
     parameters: Seq[MatchParameter] = Nil,

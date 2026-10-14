@@ -97,7 +97,7 @@ class TournamentRounds[T](
             for {
                 due <- session.transaction.use { _ =>
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
-                        case Some(t) if t.status == TournamentStatus.Running && t.settings.autoRounds =>
+                        case Some(t) if t.status == TournamentStatus.Running && t.settings.isAutoRounds =>
                             requireLoaded(session, t).flatMap { loaded =>
                                 if (Progress.roundComplete(loaded.state)) begin(session, t, None).map(_._2)
                                 else IO.pure(Nil)
@@ -172,7 +172,7 @@ class TournamentRounds[T](
         })
         def forfeits(e: Long) = state.withdrawn(e) || doubled(e) || owners.exists((x, p) => x == e && p.isEmpty)
         val marked =
-            m.seats.map(s => if (forfeits(s.entrantId.value)) s.copy(forfeit = true, chooseOrder = None) else s)
+            m.seats.map(s => if (forfeits(s.entrantId.value)) s.copy(isForfeit = true, chooseOrder = None) else s)
         val settled = TournamentRounds.settleChoices(marked, allowedRoles(game, m.seats.size), at)
         val status = TournamentRounds.statusOf(settled, game.requiredSeats)
         val matches = new TournamentMatchRepo(session)
@@ -332,10 +332,10 @@ class TournamentRounds[T](
             game <- requireGame(session, t.gameId)
             players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
             active = tm.seats.filter(s =>
-                !s.forfeit && s.gameRoleId.isDefined && players.get(s.entrantId).flatten.isDefined
+                !s.isForfeit && s.gameRoleId.isDefined && players.get(s.entrantId).flatten.isDefined
             )
             prepared <-
-                if (active.sizeIs < math.max(game.requiredSeats, 2) || active.sizeIs < tm.seats.count(!_.forfeit)) {
+                if (active.sizeIs < math.max(game.requiredSeats, 2) || active.sizeIs < tm.seats.count(!_.isForfeit)) {
                     // Too few left to play: those still seated share first place, and everyone else is last.
                     val ranks =
                         tm.seats.map(s => s -> (if (active.exists(_.entrantId == s.entrantId)) 1 else active.size + 1))
@@ -370,13 +370,13 @@ class TournamentRounds[T](
               clock.map(_.limit),
               clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),
               TournamentRounds.unitFor(clock.map(_.limit)),
-              t.settings.friendly,
+              t.settings.isFriendly,
               t.settings.gameSettings,
               // Live only with a clock for the engine to run, which a live tournament always has.
-              t.settings.live && clock.isDefined
+              t.settings.isLive && clock.isDefined
             )
             seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId.get))
-            starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.unimportantRoles)
+            starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.isUnimportantRoles)
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get
                 matches.launchSeat(
@@ -418,7 +418,7 @@ class TournamentRounds[T](
                     case None => IO.raiseError(NotFoundError(s"no player ${participant.playerId}"))
                 }
             }
-        } yield Prepared.Launch(saved, game, enginePlayers, tm.tiesAllowed)
+        } yield Prepared.Launch(saved, game, enginePlayers, tm.isTiesAllowed)
     }
 
     /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed: the
@@ -501,8 +501,8 @@ class TournamentRounds[T](
     /* A tournament match over without being played to an end: called off, its seats finished with. */
     private def callOff(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
         new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
-            case Some(m) if !m.cancelled && !m.completed =>
-                new MatchRepo(session).update(m.copy(cancelled = true)) *>
+            case Some(m) if !m.isCancelled && !m.completed =>
+                new MatchRepo(session).update(m.copy(isCancelled = true)) *>
                     new ParticipantRepo(session).completeForMatch(gameId, matchId)
             case _ => IO.unit
         }
@@ -512,7 +512,7 @@ class TournamentRounds[T](
       */
     private def afterRecording(t: Tournament, roundDone: Option[Int]): IO[Unit] =
         roundDone.traverse_ { round =>
-            if (t.settings.autoRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
+            if (t.settings.isAutoRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
             else sessionPool.use(notifications.tournamentRoundDone(_, t, round))
         }
 
@@ -599,7 +599,7 @@ class TournamentRounds[T](
                             else {
                                 val out = TournamentRounds.nextChooser(tm.seats).map(_.entrantId)
                                 val forfeited = tm.seats.map(s =>
-                                    if (out.contains(s.entrantId)) s.copy(forfeit = true, chooseOrder = None) else s
+                                    if (out.contains(s.entrantId)) s.copy(isForfeit = true, chooseOrder = None) else s
                                 )
                                 val settled =
                                     TournamentRounds.settleChoices(forfeited, allowedRoles(game, tm.seats.size), at)
@@ -668,7 +668,7 @@ class TournamentRounds[T](
                           ConflictError("this match was played to an end; its result stands")
                         )
                         recorded <- tm.seats.traverse(s => new ResultRepo(session).read(gameId, s.participantId))
-                        _ <- IO.raiseWhen(m.exists(_.cancelled) && recorded.forall(_.isDefined))(
+                        _ <- IO.raiseWhen(m.exists(_.isCancelled) && recorded.forall(_.isDefined))(
                           ConflictError("this match's result is in, and stands")
                         )
                         best = ranks.values.min
@@ -715,10 +715,10 @@ class TournamentRounds[T](
             }
         } yield Env(
           design,
-          TournamentGame.of(game).copy(chooseRoles = t.settings.chooseRoles),
+          TournamentGame.of(game).copy(isChooseRoles = t.settings.isChooseRoles),
           ratings.toMap,
           Some(t.defaultPoolSize),
-          t.settings.concurrentRounds
+          t.settings.isConcurrentRounds
         )
 
     private def requireLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
@@ -759,13 +759,13 @@ object TournamentRounds {
     /** The seat whose turn it is to choose: the earliest in the order of choosing that has not, and has not forfeited.
       */
     def nextChooser(seats: List[TournamentSeat]): Option[TournamentSeat] =
-        seats.filter(s => s.gameRoleId.isEmpty && !s.forfeit && s.chooseOrder.isDefined).minByOption(_.chooseOrder)
+        seats.filter(s => s.gameRoleId.isEmpty && !s.isForfeit && s.chooseOrder.isDefined).minByOption(_.chooseOrder)
 
     /** Seats after a choice: when one seat is left to choose and one role is left, it is given that role; otherwise the
       * next seat to choose has its clock started now.
       */
     def settleChoices(seats: List[TournamentSeat], allowed: List[GameRoleId], at: Instant): List[TournamentSeat] = {
-        val left = seats.filter(s => s.gameRoleId.isEmpty && !s.forfeit && s.chooseOrder.isDefined)
+        val left = seats.filter(s => s.gameRoleId.isEmpty && !s.isForfeit && s.chooseOrder.isDefined)
         val free = allowed.filterNot(seats.flatMap(_.gameRoleId).toSet)
         if (left.sizeIs == 1 && free.sizeIs == 1)
             seats.map(s =>
@@ -789,7 +789,7 @@ object TournamentRounds {
       * roles, when there is nothing left to choose for and the match is decided as it is created. Choosing until then.
       */
     def statusOf(seats: List[TournamentSeat], required: Int): TournamentMatchStatus =
-        if (nextChooser(seats).isEmpty || seats.count(!_.forfeit) < math.max(required, 2)) TournamentMatchStatus.Due
+        if (nextChooser(seats).isEmpty || seats.count(!_.isForfeit) < math.max(required, 2)) TournamentMatchStatus.Due
         else TournamentMatchStatus.Choosing
 
     /** A match's clock: the tournament's round duration, spent as the game spends time (`Clock.forMatch`). `None` for a
@@ -800,8 +800,8 @@ object TournamentRounds {
             Clock.forMatch(
               TournamentGame.of(game),
               d,
-              tm.seats.count(!_.forfeit),
-              tm.tiesAllowed,
+              tm.seats.count(!_.isForfeit),
+              tm.isTiesAllowed,
               choosing = tm.seats.exists(_.chooseOrder.isDefined),
               t.settings.maxTurns
             )

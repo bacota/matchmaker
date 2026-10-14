@@ -108,14 +108,17 @@ class EngineSpec extends FunSuite with QuietTests {
     test("both seats are pending for setup, and either may deploy first") {
         val f = Fixture()
         assertEquals(
-          f.engine.status("m-1").toOption.get.participants.filter(_.pending).map(_.participantId),
+          f.engine.status("m-1").toOption.get.participants.filter(_.isPending).map(_.participantId),
           List(11L, 22L)
         )
 
         assert(f.engine.deploy("m-1", bob, names(setup(Side.Blue))).isRight)
         // Nobody named: Red was already waiting, on a clock that has not restarted.
         assertEquals(f.recorder.moves.map(_._2.next), List(Nil))
-        assertEquals(f.engine.status("m-1").toOption.get.participants.filter(_.pending).map(_.participantId), List(11L))
+        assertEquals(
+          f.engine.status("m-1").toOption.get.participants.filter(_.isPending).map(_.participantId),
+          List(11L)
+        )
 
         f.advance(30)
         assert(f.engine.deploy("m-1", alice, names(setup(Side.Red))).isRight)
@@ -278,7 +281,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(f.engine.move("m-1", alice, 30, 60).isRight)
 
         val m = f.m
-        assert(m.completed)
+        assert(m.isCompleted)
         assertEquals(m.winner, Some(Side.Red))
         assertEquals(m.ending, Some(Ending.FlagTaken))
         assertEquals(f.recorder.moves.last._2.next, Nil)
@@ -304,7 +307,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(f.engine.concede("m-1", bob).isRight)
 
         val m = f.m
-        assert(m.completed)
+        assert(m.isCompleted)
         assertEquals(m.ending, Some(Ending.Conceded))
         assertEquals(m.conceded, Some(Side.Blue))
         assertEquals(m.winner, Some(Side.Red))
@@ -325,7 +328,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!byParticipant(22L).isWinner)
         assertEquals(byParticipant(22L).scores("ending").str, "conceded")
         // Not the clock's forfeit, which is matchmaker's word for a turn that ran out.
-        assert(results.results.forall(!_.forfeit))
+        assert(results.results.forall(!_.isForfeit))
         // The concession is the conceding player's last turn.
         assertEquals(results.turns.get.map(_.participantId), List(11L, 22L, 22L))
         assertEquals(results.summary, Some("<strong>Blue</strong> surrendered to <strong>Red</strong>."))
@@ -337,7 +340,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a player may concede during setup, before either army is down") {
         val f = Fixture()
         assert(f.engine.concede("m-1", alice).isRight)
-        assert(f.m.completed)
+        assert(f.m.isCompleted)
         assertEquals(f.m.winner, Some(Side.Blue))
         assertEquals(f.state(Some(bob)).phase, "over")
         assertEquals(
@@ -349,7 +352,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test("only a player in the match may concede it") {
         val f = Fixture()
         assert(f.engine.concede("m-1", "sub-mallory").isLeft)
-        assert(!f.m.completed)
+        assert(!f.m.isCompleted)
     }
 
     test(
@@ -389,7 +392,7 @@ class EngineSpec extends FunSuite with QuietTests {
         f.engine.move("m-1", alice, 30, 40)
         val status = f.engine.status("m-1").toOption.get
         assertEquals(status.sequence, Some(3L))
-        assertEquals(status.participants.filter(_.pending).map(_.participantId), List(22L))
+        assertEquals(status.participants.filter(_.isPending).map(_.participantId), List(22L))
         assertEquals(status.turns.map(_.participantId), List(11L, 22L, 11L))
     }
 
@@ -401,9 +404,9 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a callback that fails does not fail the move, which stands, and the results are still sent".tag(Quiet)) {
         val f = deployed(blueOnA7 = Rank.Flag)
-        f.recorder.failCallbacks = true
+        f.recorder.isFailCallbacks = true
         assert(f.engine.move("m-1", alice, 30, 60).isRight)
-        assert(f.m.completed)
+        assert(f.m.isCompleted)
         assertEquals(f.recorder.results.size, 1)
     }
 

@@ -83,7 +83,7 @@ class StageRepo(session: Session[IO]) {
           RETURNING stage_id""".query(int8)
 
     private val insertAtomic: Command[(GameId, TournamentId, Long, Boolean)] =
-        sql"""INSERT INTO atomic_stage (game_id, tournament_id, stage_id, rotate_roles)
+        sql"""INSERT INTO atomic_stage (game_id, tournament_id, stage_id, is_rotate_roles)
           VALUES ($gameId, $tournamentId, $int8, $bool)""".command
 
     private val insertNesting: Command[(GameId, TournamentId, Long, Long)] =
@@ -114,7 +114,7 @@ class StageRepo(session: Session[IO]) {
                     case None =>
                         for {
                             id <- session.unique(insertStage)((game, tournament, (stage, next)))
-                            _ <- session.execute(insertAtomic)((game, tournament, id, stage.rotateRoles))
+                            _ <- session.execute(insertAtomic)((game, tournament, id, stage.isRotateRoles))
                         } yield Some(id)
                 }
             }

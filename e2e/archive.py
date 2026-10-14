@@ -116,7 +116,7 @@ try:
     # The game, as register-game.sql makes it, under a name of its own for this run.
     game_name = f"e2e-tictactoe-{RUN}"
     game_id = psql(f"""WITH game AS (
-        INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
+        INSERT INTO game (game_type, name, display_name, description, url, is_active, external_id)
         VALUES ('P', '{game_name}', 'E2E', 'e2e', '{ENGINE}/games', true, '{EXTERNAL_ID}') RETURNING game_id)
       INSERT INTO game_role (game_id, name, display_name)
       SELECT game_id, role, role FROM game, (VALUES ('X'), ('O')) AS roles(role) RETURNING game_id""").splitlines()[0]
@@ -140,7 +140,7 @@ try:
     def new_match():
         # A challenge for the two of them: alice offers it, closed to all but bob, and it starts as bob enters.
         status, made = call("POST", f"{MM}/games/{game_id}/challenges",
-                            {"poolSize": 2, "autoStart": True, "open": False, "invitations": [bob_id]},
+                            {"poolSize": 2, "isAutoStart": True, "isOpen": False, "invitations": [bob_id]},
                             as_player(alice))
         assert status in (200, 201), (status, made)
         tournament = made["tournamentId"]
@@ -206,10 +206,10 @@ try:
     s3.delete_object(Bucket=FRIENDLY, Key=key2)
     completed_list = call("GET", MM + "/me/matches/completed", headers=as_player(alice))[1]["matches"]
     row = next(m for m in completed_list if m["matchId"] == m2)
-    check(row["archiveExpired"] is True and row.get("publicUrl") is None, "the finished list says it has expired")
+    check(row["isArchiveExpired"] is True and row.get("publicUrl") is None, "the finished list says it has expired")
     check(archive_row(m2)[2] == "t", "matchmaker recorded the expiry")
     still = next(m for m in completed_list if m["matchId"] == m1)
-    check(still.get("archiveExpired", False) is False, "the younger archive is untouched")
+    check(still.get("isArchiveExpired", False) is False, "the younger archive is untouched")
     status, page = call("GET", f"{ENGINE}/matches/{m2}/play?archived=1&as={alice}")
     check(status == 410 and "kept for 30 days" in page, f"the engine says so: {status}")
 
@@ -228,7 +228,7 @@ try:
     status, _ = call("GET", f"{ENGINE}/matches/{m4}/status")
     check(status == 200, "the engine has the running match")
     status, cancelled = call("POST", f"{MM}/games/{game_id}/matches/{m4}/cancel", {}, as_player(alice))
-    check(status == 200 and cancelled["cancelled"], "matchmaker cancelled it")
+    check(status == 200 and cancelled["isCancelled"], "matchmaker cancelled it")
     # The engine is told after the cancel has answered, by the match's ending.
     gone = eventually(lambda: True if call("GET", f"{ENGINE}/matches/{m4}/status")[0] == 404 else None,
                       "the engine dropping the cancelled match", tries=40)
@@ -238,7 +238,7 @@ try:
 
     print("6. a match that is not friendly goes to the permanent bucket")
     m5 = new_match()
-    psql(f"UPDATE match SET friendly = false WHERE match_id = '{m5}'")
+    psql(f"UPDATE match SET is_friendly = false WHERE match_id = '{m5}'")
     play_to_the_end(m5)
     key5 = archive_row(m5)[0]
     check(key5 in [o["Key"] for o in s3.list_objects_v2(Bucket=PERMANENT).get("Contents", [])],

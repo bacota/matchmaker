@@ -49,11 +49,11 @@ class ProtocolSpec extends FunSuite {
         val status = played().status("m-1").toOption.get
 
         val asMatchmaker = read[MmGameStatusResponse](write(status))
-        assertEquals(asMatchmaker.completed, false)
+        assertEquals(asMatchmaker.isCompleted, false)
         assertEquals(asMatchmaker.participants.map(_.participantId), List(11L, 22L))
         // Two seats on the clock at once, which matchmaker records as two participants pending and
         // summarises as a `whoseTurn` of two names.
-        assertEquals(asMatchmaker.participants.map(_.pending), List(true, true))
+        assertEquals(asMatchmaker.participants.map(_.isPending), List(true, true))
         assert(asMatchmaker.participants.forall(_.prevMoveAt.isDefined))
         // No throws yet, so nothing to report — and matchmaker reads the absence the same way.
         assertEquals(asMatchmaker.turns, Nil)

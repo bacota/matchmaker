@@ -26,7 +26,7 @@ class WireFormatSpec extends FunSuite {
           tournamentId = TournamentId(3),
           description = "a friendly game",
           completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
-          cancelled = false,
+          isCancelled = false,
           start = Some(Instant.parse("2030-01-01T10:00:00Z")),
           timeLimit = Some(Duration.ofMinutes(30)),
           settings = "{}",
@@ -68,7 +68,7 @@ class WireFormatSpec extends FunSuite {
           displayName = "Chess",
           description = "the usual",
           url = "https://example.com/chess",
-          active = true,
+          isActive = true,
           roles = Seq(GameRole(GameRoleId(1), GameId(7), "white", roleType = RoleType.Required, displayName = "white")),
           parameters = Seq(
             GameParameter(
@@ -102,7 +102,7 @@ class WireFormatSpec extends FunSuite {
           displayName = "Go",
           description = "19x19",
           url = "https://example.com/go",
-          active = true,
+          isActive = true,
           roles = Seq.empty,
           parameters = Seq.empty,
           externalId = "generated-secret"
@@ -133,11 +133,11 @@ class WireFormatSpec extends FunSuite {
           gameName = "Chess",
           description = "d",
           completedAt = Some(Instant.parse("2026-08-09T09:30:00Z")),
-          cancelled = false,
+          isCancelled = false,
           isOwner = true,
           start = Instant.parse("2026-08-07T12:00:00Z"),
           due = Some(Instant.parse("2026-08-08T12:00:00Z")),
-          pending = true,
+          isPending = true,
           participantId = ParticipantId(3),
           characterId = Some(CharacterId(4))
         )
@@ -159,7 +159,7 @@ class WireFormatSpec extends FunSuite {
           roundDuration = Some(Duration.ofMinutes(30)),
           gameSettings = """{"rounds":"5"}""",
           start = Some(Instant.parse("2030-01-01T10:00:00Z")),
-          open = false,
+          isOpen = false,
           invitations = List(PlayerId(4))
         )
         assertEquals(read[ChallengeRequest](write(request)), request)
@@ -179,15 +179,19 @@ class WireFormatSpec extends FunSuite {
               PlayerId(3),
               TournamentModelId("challenge"),
               2,
-              TournamentSettings(roundDuration = Some(Duration.ofHours(1)), maxEntrants = Some(2), chooseRoles = true),
+              TournamentSettings(
+                roundDuration = Some(Duration.ofHours(1)),
+                maxEntrants = Some(2),
+                isChooseRoles = true
+              ),
               TournamentStatus.Open
             ),
             "Chess",
             "ada",
             1,
             isOwner = true,
-            entered = true,
-            invited = false
+            isEntered = true,
+            isInvited = false
           ),
           List(
             Entrant(GameId(1), TournamentId(2), EntrantId(4), Some(PlayerId(3)), None, 1500, Instant.ofEpochSecond(100))

@@ -30,7 +30,7 @@ class ParticipantRepo(session: Session[IO]) {
       (GameId, ParticipantId),
       (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
     ] =
-        sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed_at IS NOT NULL, p.due, p.game_role_id,
+        sql"""SELECT p.game_type, p.match_id, p.player_id, p.is_pending, p.completed_at IS NOT NULL, p.due, p.game_role_id,
                  cp.character_id
           FROM participant p
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
@@ -43,7 +43,7 @@ class ParticipantRepo(session: Session[IO]) {
       (GameId, MatchId),
       (ParticipantId, GameType, PlayerId, String, Boolean, Boolean, Option[Instant], GameRoleId, String, Option[Long])
     ] =
-        sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.pending,
+        sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.is_pending,
                  p.completed_at IS NOT NULL, p.due, p.game_role_id, r.name, cp.character_id
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
@@ -62,19 +62,19 @@ class ParticipantRepo(session: Session[IO]) {
      * and the API runs in lambdas whose clocks are not the database's and need not agree with each
      * other — a player's turn must not end early or late because of which instance they reached.
      *
-     * `pending` on a seat not yet completed is what "it is still their turn" means; `due` is only set while
+     * `is_pending` on a seat not yet completed is what "it is still their turn" means; `due` is only set while
      * that is true and the match has a time limit, so a row with a past `due` is exactly a run-out
      * turn. */
     private val selectOverdueForMatch: Query[
       (GameId, MatchId),
       (ParticipantId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
     ] =
-        sql"""SELECT p.participant_id, p.game_type, p.player_id, p.pending, p.completed_at IS NOT NULL,
+        sql"""SELECT p.participant_id, p.game_type, p.player_id, p.is_pending, p.completed_at IS NOT NULL,
                  p.due, p.game_role_id, cp.character_id
           FROM participant p
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
-            AND p.pending AND p.completed_at IS NULL AND p.due < now()
+            AND p.is_pending AND p.completed_at IS NULL AND p.due < now()
           ORDER BY p.participant_id"""
             .query(participantId *: gameType *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt)
 
@@ -92,7 +92,7 @@ class ParticipantRepo(session: Session[IO]) {
         // A seat finished keeps the time it was first finished at: completing is sticky, and a
         // later write to a finished seat -- a re-stamp of its settings, a repeated callback -- is not
         // a second ending. One not finished has none.
-        sql"""UPDATE participant SET player_id = $playerId, pending = $bool,
+        sql"""UPDATE participant SET player_id = $playerId, is_pending = $bool,
           completed_at = CASE WHEN $bool THEN COALESCE(completed_at, now()) END,
           due = ${instant.opt}, game_role_id = $gameRoleId
           WHERE game_id = $gameId AND participant_id = $participantId""".command
@@ -122,7 +122,7 @@ class ParticipantRepo(session: Session[IO]) {
     def update(p: Participant): IO[Unit] =
         session
             .execute(updateParticipant)(
-              (p.playerId, p.pending, p.completed, p.due, p.gameRoleId, p.gameId, p.participantId)
+              (p.playerId, p.isPending, p.isCompleted, p.due, p.gameRoleId, p.gameId, p.participantId)
             )
             .void
 
@@ -138,7 +138,7 @@ class ParticipantRepo(session: Session[IO]) {
      *
      * update_date is left to `trg_participant_update_date`, as in `updateParticipant` above. */
     private val completeParticipantsForMatch: Command[(GameId, MatchId)] =
-        sql"""UPDATE participant SET pending = false, completed_at = now(), due = NULL
+        sql"""UPDATE participant SET is_pending = false, completed_at = now(), due = NULL
           WHERE game_id = $gameId AND match_id = $matchId AND completed_at IS NULL""".command
 
     /** Retires every seat in a match: nobody's turn, no deadline, finished.
@@ -146,7 +146,7 @@ class ParticipantRepo(session: Session[IO]) {
       * For cancelling, which ends a match without a result. Completion marks its seats seat by seat as it records what
       * each of them scored; a cancellation has nothing to record, so it says the one thing that is true of all of them.
       *
-      * Matters beyond tidiness: a seat that still reads `pending` in a called-off match is a seat that other queries
+      * Matters beyond tidiness: a seat that still reads `is_pending` in a called-off match is a seat that other queries
       * have to remember to exclude by joining `match`, and `NotificationRepo.restampParticipants` is the one that
       * stopped being able to.
       */
@@ -175,7 +175,7 @@ class ParticipantRepo(session: Session[IO]) {
     private val selectEloSeats: Query[(GameId, MatchId), ParticipantRepo.EloSeatRow] =
         // Not a tournament seat that forfeited before play: it played nothing, and is rated for nothing.
         sql"""SELECT participant_id, player_id, elo_start, game_role_id, elo_role_start FROM participant
-          WHERE game_id = $gameId AND match_id = $matchId AND NOT forfeit
+          WHERE game_id = $gameId AND match_id = $matchId AND NOT is_forfeit
           ORDER BY participant_id"""
             .query(participantId *: playerId *: int4 *: gameRoleId *: int4.opt)
             .to[ParticipantRepo.EloSeatRow]
@@ -218,7 +218,7 @@ class ParticipantRepo(session: Session[IO]) {
           JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
           WHERE p.game_id = $gameId AND p.match_id <> $matchId
             AND p.player_id IN (${playerId.list(players)})
-            AND m.completed_at IS NULL AND NOT m.cancelled
+            AND m.completed_at IS NULL AND NOT m.is_cancelled
             AND m.create_date > t.create_date
           ORDER BY p.participant_id
           FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}"""
@@ -281,6 +281,6 @@ object ParticipantRepo {
         participantId: ParticipantId,
         playerId: PlayerId,
         gameRoleId: GameRoleId,
-        afterCompletion: Boolean
+        isAfterCompletion: Boolean
     )
 }

@@ -65,8 +65,8 @@ class RoutesSpec extends FunSuite {
     test("GET /matches/:id/status answers matchmaker's status call, with both corners pending") {
         val (routes, _, _, _) = fixture()
         val status = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
-        assertEquals(status.completed, false)
-        assertEquals(status.participants.filter(_.pending).map(_.participantId), List(1L, 2L))
+        assertEquals(status.isCompleted, false)
+        assertEquals(status.participants.filter(_.isPending).map(_.participantId), List(1L, 2L))
     }
 
     test("the play page tells a corner whose fighter is built which round to plan") {
@@ -142,7 +142,7 @@ class RoutesSpec extends FunSuite {
 
         val watching = read[Protocol.StateResponse](get(routes, "/matches/m-9/board/state").body)
         assertEquals(watching.you, None)
-        assertEquals(watching.corners.map(_.planned), List(true, false))
+        assertEquals(watching.corners.map(_.isPlanned), List(true, false))
         assertEquals(watching.yourPlan, None)
         assert(!get(routes, "/matches/m-9/board").body.contains("\"offense\":4"))
         assertEquals(get(routes, "/matches/m-9/board").status, 200)

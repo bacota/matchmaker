@@ -46,8 +46,8 @@ class ProtocolSpec extends FunSuite {
     test("during setup both seats read as pending to matchmaker") {
         val (engine, _) = this.engine()
         val asMatchmaker = read[MmGameStatusResponse](write(engine.status("m-1").toOption.get))
-        assertEquals(asMatchmaker.completed, false)
-        assertEquals(asMatchmaker.participants.map(_.pending), List(true, true))
+        assertEquals(asMatchmaker.isCompleted, false)
+        assertEquals(asMatchmaker.participants.map(_.isPending), List(true, true))
         assertEquals(asMatchmaker.turns, Nil)
     }
 
@@ -61,7 +61,7 @@ class ProtocolSpec extends FunSuite {
         val asMatchmaker = read[MmGameStatusResponse](write(status))
         assertEquals(asMatchmaker.turns.map(_.participantId), List(11L, 22L, 11L))
         assertEquals(asMatchmaker.turns.map(_.startedAt), status.turns.map(_.startedAt))
-        assertEquals(asMatchmaker.participants.map(_.pending), List(false, true))
+        assertEquals(asMatchmaker.participants.map(_.isPending), List(false, true))
     }
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {

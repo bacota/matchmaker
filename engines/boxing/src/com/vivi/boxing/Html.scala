@@ -1124,11 +1124,11 @@ ${signIn.signInScript}
     /* The heading as first served, before any script runs; `describe()` in the page says the same thing. */
     private def heading(state: Option[Protocol.StateResponse]): String =
         state match {
-            case None                                                   => "sign in to fight"
-            case Some(s) if s.completed && s.method.contains("forfeit") => "time ran out"
-            case Some(s) if s.completed =>
+            case None                                                     => "sign in to fight"
+            case Some(s) if s.isCompleted && s.method.contains("forfeit") => "time ran out"
+            case Some(s) if s.isCompleted =>
                 val how = if (s.method.contains("knockout")) " by knockout" else " on points"
-                if (s.draw) "a draw on points"
+                if (s.isDraw) "a draw on points"
                 else
                     s.winner.fold("over") { w =>
                         s.you.fold(s"$w wins$how")(you => (if (you == w) "you win" else "you lose") + how)

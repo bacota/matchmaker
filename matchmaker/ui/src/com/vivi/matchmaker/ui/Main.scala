@@ -535,12 +535,12 @@ object Views {
     private def reloadAfterMatchRefresh(refreshed: Match): Unit = {
         refresh(refreshingDue, () => Store.reloadDue())
         refresh(refreshingActive, () => Store.reloadActive())
-        if (refreshed.completed || refreshed.cancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
+        if (refreshed.completed || refreshed.isCancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
     }
 
     /* What the caller is to a challenge, which decides the section it is listed in. */
     private def invitedTo(c: ChallengeSummary): Boolean =
-        c.summary.invited && !c.summary.entered && !c.summary.isOwner
+        c.summary.isInvited && !c.summary.isEntered && !c.summary.isOwner
 
     /* The fewest entries a challenge can start with: enough to fill the game's required roles, and never fewer than
      * two. `None` when the game is not one this player has listed, which is a game whose roles nobody here knows. */
@@ -704,7 +704,7 @@ object Views {
               .combineWith(Store.games.signal)
               .map { (challenges, games) =>
                   val mine = challengesIn(game)(challenges).filter { c =>
-                      c.summary.isOwner && !c.summary.tournament.settings.autoStart &&
+                      c.summary.isOwner && !c.summary.tournament.settings.isAutoStart &&
                       leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
                   }
                   if (mine.isEmpty) emptyNode
@@ -757,9 +757,9 @@ object Views {
         List(
           Some(s"$entered of $seats entered"),
           t.settings.roundDuration.map(d => s"${Format.duration(d, TimeLimitUnit.bestFor(d))} to play"),
-          Option.when(t.settings.autoStart)("starts when full"),
-          Option.when(t.settings.live)("live"),
-          Option.when(!t.settings.friendly)("rated"),
+          Option.when(t.settings.isAutoStart)("starts when full"),
+          Option.when(t.settings.isLive)("live"),
+          Option.when(!t.settings.isFriendly)("rated"),
           t.settings.start.map(at => s"for ${Format.instant(at)}")
         ).flatten.mkString(" · ")
     }
@@ -831,9 +831,9 @@ object Views {
           child <-- Store.myChallenges.signal.combineWith(Store.games.signal, currentPlayer).map {
               (challenges, games, player) =>
                   val waiting = challengesIn(game)(challenges).filter { c =>
-                      val ready = c.summary.isOwner && !c.summary.tournament.settings.autoStart &&
+                      val ready = c.summary.isOwner && !c.summary.tournament.settings.isAutoStart &&
                           leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
-                      (c.summary.entered || c.summary.isOwner) && !ready
+                      (c.summary.isEntered || c.summary.isOwner) && !ready
                   }
                   if (waiting.isEmpty) emptyNode
                   else
@@ -1125,7 +1125,7 @@ object Views {
               // Said only when there are others, and said as the remedy rather than as a limit: the
               // searcher cannot ask for page two, and would not want it — the next page of a name
               // search is a longer prefix, which is the one thing they can do from here.
-              if (result.more)
+              if (result.isMore)
                   div(
                     cls := "detail",
                     s"Showing the first ${result.players.length}. Type more of the nickname to narrow it."
@@ -1631,14 +1631,14 @@ object Views {
       * button once a friendly match's archive has expired.
       */
     private def reviewControl(summary: MatchSummary): HtmlElement =
-        if (summary.completed && summary.archiveExpired) archiveExpiredNote
+        if (summary.completed && summary.isArchiveExpired) archiveExpiredNote
         else if (summary.completed)
             busyButton("Review game", classes = Some("link")) { busy =>
                 Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
                         case Some(url) => openSignedIn(url)
                         // Found expired by this very request: the list was read before it was.
-                        case None if m.archiveExpired =>
+                        case None if m.isArchiveExpired =>
                             Store.reportProblem(
                               "This match's archive has expired: friendly matches are kept for 30 days."
                             )
@@ -1653,7 +1653,7 @@ object Views {
       * once a friendly match's archive has expired.
       */
     private def watchControl(summary: MatchSummary): HtmlElement =
-        if (summary.archiveExpired) archiveExpiredNote
+        if (summary.isArchiveExpired) archiveExpiredNote
         else
             summary.publicUrl
                 .map(url => button(tpe := "button", cls := "link", "Watch", onClick --> (_ => openSignedIn(url))))
@@ -1730,7 +1730,7 @@ object Views {
                           htmlAttr("datetime", com.raquo.laminar.codecs.StringAsIsCodec) := when.toString,
                           Format.date(when)
                         )
-                    case None => if (summary.cancelled) "cancelled" else ""
+                    case None => if (summary.isCancelled) "cancelled" else ""
                 }
             val told = outcome(summary)
             Seq(
@@ -1769,8 +1769,8 @@ object Views {
                     td(
                       role := "cell",
                       cls := "friendly",
-                      if (summary.friendly) span(cls := "mark", aria.hidden := true, "✓") else emptyNode,
-                      span(cls := "sr-only", if (summary.friendly) "friendly" else "rated")
+                      if (summary.isFriendly) span(cls := "mark", aria.hidden := true, "✓") else emptyNode,
+                      span(cls := "sr-only", if (summary.isFriendly) "friendly" else "rated")
                     ),
                 // Named in the cell as well as the heading, for the narrow layout that has no heading row to show.
                 parameters.map(parameter =>
@@ -1791,7 +1791,7 @@ object Views {
                 td(
                   role := "cell",
                   colSpan := columns - 1,
-                  if (summary.cancelled) div(cls := "detail", "Cancelled by its creator.") else emptyNode,
+                  if (summary.isCancelled) div(cls := "detail", "Cancelled by its creator.") else emptyNode,
                   told
                 )
               )
@@ -1834,7 +1834,7 @@ object Views {
       * off, or finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
       */
     private def eloCell(summary: MatchSummary): HtmlElement =
-        if (summary.friendly)
+        if (summary.isFriendly)
             td(
               role := "cell",
               cls := "elo",
@@ -1915,10 +1915,10 @@ object Views {
           cls := "row",
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
-          if (summary.friendly) friendlyLabel() else emptyNode,
+          if (summary.isFriendly) friendlyLabel() else emptyNode,
           matchParameters(summary),
           summary.due.map(countdown).getOrElse(emptyNode),
-          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
+          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.isLive),
           playControls(summary),
           matchNotifications(summary)
         )
@@ -1928,11 +1928,11 @@ object Views {
       */
     private def playingStatus(summary: MatchSummary): Modifier[HtmlElement] =
         div(
-          // `pending` means it is this player's turn: it is the flag the "Your Turn" list selects on.
-          if (summary.pending) div(cls := "pending", "your turn")
+          // `isPending` means it is this player's turn: it is the flag the "Your Turn" list selects on.
+          if (summary.isPending) div(cls := "pending", "your turn")
           // Matchmaker is never told whose turn it is in a live match -- the game keeps that -- so
           // "waiting for the other players" would be a guess, and usually a wrong one.
-          else if (summary.live) div(cls := "detail", "being played live: open the game to see whose turn it is")
+          else if (summary.isLive) div(cls := "detail", "being played live: open the game to see whose turn it is")
           // Named, rather than "the other players": in a match of three it is the difference
           // between knowing who to chase and knowing only that it is not you.
           else waitingFor(summary),
@@ -1945,7 +1945,7 @@ object Views {
           // The rule behind that deadline, which the deadline itself does not give away: the same
           // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
           // opposite decisions.
-          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
+          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.isLive),
           matchNotifications(summary)
         )
 
@@ -2093,14 +2093,14 @@ object Views {
           )(
             p(
               cls := "empty",
-              if (summary.cancelled) "Called off before it finished." else "No result was reported."
+              if (summary.isCancelled) "Called off before it finished." else "No result was reported."
             )
           )(rows =>
               div(
                 // Said once above the table rather than on each line: a forfeit is how the match
                 // ended, which is one fact about the match, not a separate fact about each seat.
                 // The lines below still say which of the two things it meant for each player.
-                if (rows.exists(_.forfeit))
+                if (rows.exists(_.isForfeit))
                     p(cls := "detail", "Ended by forfeit: a player ran out of time on their turn.")
                 else emptyNode,
                 ul(
@@ -2118,7 +2118,7 @@ object Views {
                         span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),
                         // Which side of the forfeit this player was on. `isWinner` is what separates
                         // them, and without this a win by forfeit would read as a win on the board.
-                        if (!row.forfeit) emptyNode
+                        if (!row.isForfeit) emptyNode
                         else if (row.isWinner) span(cls := "detail", " — won by forfeit")
                         else span(cls := "detail", " — forfeited on time"),
                         // How long they spent over their turns, all told. Only when the match has
@@ -2394,7 +2394,7 @@ object Views {
           h3("Disabled Games"),
           onMountCallback { _ =>
               ApiClient.games(activeOnly = false).onComplete {
-                  case scala.util.Success(all) => found.set(Some(Right(all.filterNot(_.active))))
+                  case scala.util.Success(all) => found.set(Some(Right(all.filterNot(_.isActive))))
                   case scala.util.Failure(e)   => found.set(Some(Left(s"Could not load them: ${e.getMessage}")))
               }
           },
@@ -2693,10 +2693,10 @@ object Views {
       * `externalId` is asked for as the engine's identity: the name a callback carrying this game's API key is taken to
       * come from, and what game-authorized requests are matched against. The API key itself is asked for too — the
       * secret the engine was deployed with — and is write-only: required to create a game, left as it is by an edit
-      * that leaves the field blank, and never shown, since nothing sends it back. `active` is asked only of an edit, as
-      * "Disable Game": a new game is created active, and an edit may disable it, which takes it out of the menu and
+      * that leaves the field blank, and never shown, since nothing sends it back. `isActive` is asked only of an edit,
+      * as "Disable Game": a new game is created active, and an edit may disable it, which takes it out of the menu and
       * every game picker. It hides the game rather than closing it — its challenges, invitations and matches are left
-      * as they are, since `active` decides what is listed, not what may be played.
+      * as they are, since `isActive` decides what is listed, not what may be played.
       */
     private def gameForm(
         existing: Option[Game],
@@ -2708,9 +2708,9 @@ object Views {
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
-        val disabled = Var(existing.exists(!_.active))
+        val disabled = Var(existing.exists(!_.isActive))
         // No role has an advantage in winning: ratings are then kept overall only.
-        val unimportantRoles = Var(existing.exists(_.unimportantRoles))
+        val unimportantRoles = Var(existing.exists(_.isUnimportantRoles))
         // How players take turns, and how many a simultaneous game lasts; max turns as typed.
         val moveType: Var[MoveType] = Var(existing.map(_.moveType).getOrElse(MoveType.Sequential))
         val maxTurns = Var(existing.flatMap(_.maxTurns).fold("")(_.toString))
@@ -2936,14 +2936,14 @@ object Views {
                         // A game nobody can see is not what "create a game" means, and `refreshGames` only
                         // asks for active ones — creating it inactive would look like the button did nothing.
                         // An edit says whether it is disabled.
-                        active = existing.isEmpty || !disabled.now(),
+                        isActive = existing.isEmpty || !disabled.now(),
                         roles = roleModels,
                         parameters = parameterModels,
                         // Who the engine is: the name its API key is filed under, which is what a callback
                         // from it is matched against.
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
-                        unimportantRoles = unimportantRoles.now(),
+                        isUnimportantRoles = unimportantRoles.now(),
                         moveType = moveType.now(),
                         maxTurns = turns,
                         characterUrl = Option
@@ -3067,7 +3067,7 @@ object Views {
       * rebuild the list, which would take the keyboard's focus with it.
       */
     private def adminMatchRow(game: Game, m: GameMatch): HtmlElement = {
-        val friendly = Var(m.friendly)
+        val friendly = Var(m.isFriendly)
         val busy = Var(false)
         li(
           cls := "row",
@@ -3076,7 +3076,7 @@ object Views {
           div(
             cls := "detail",
             m.completedAt.map(when => s"completed ${Format.date(when)}").getOrElse {
-                if (m.cancelled) "cancelled" else s"started ${Format.date(m.start)}"
+                if (m.isCancelled) "cancelled" else s"started ${Format.date(m.start)}"
             }
           ),
           // A completed match can change too, and is re-rated when it does: said beside the box, and read
@@ -3097,7 +3097,7 @@ object Views {
                 onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
                     friendly.set(on)
                     Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
-                        friendly.set(saved.friendly)
+                        friendly.set(saved.isFriendly)
                     )
                 }
               )
@@ -3126,7 +3126,7 @@ object Views {
       * the overall ones again.
       */
     private def roleRankings(game: Game, player: Player): Node =
-        if (game.unimportantRoles || game.roles.sizeIs < 2) emptyNode
+        if (game.isUnimportantRoles || game.roles.sizeIs < 2) emptyNode
         else {
             val chosen = Var(Option.empty[GameRole])
             val id = s"role-rankings-${game.gameId.value}"
@@ -3404,7 +3404,7 @@ object Views {
                 "Next",
                 "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
                 "forward",
-                board.signal.map(_.exists(_.more)),
+                board.signal.map(_.exists(_.isMore)),
                 _ + 1
               )
             ),
@@ -3480,7 +3480,7 @@ object Views {
                     p(
                       cls := "detail",
                       s"$who found, shown at the foot of the rankings." +
-                          (if (some.more) " Type more of the nickname to narrow it." else "")
+                          (if (some.isMore) " Type more of the nickname to narrow it." else "")
                     )
             }
           )
@@ -3883,10 +3883,10 @@ object Views {
           entrantsDetail(c),
           parameterDetail(game, t.settings.gameSettings),
           if (t.settings.isPublic) div(cls := "detail", "public") else emptyNode,
-          if (t.settings.friendly) friendlyLabel() else emptyNode,
+          if (t.settings.isFriendly) friendlyLabel() else emptyNode,
           // A game's admin offering a match for others to play: said, because nothing else on the row
           // tells it from one they are seated in.
-          if (!c.summary.entered) div(cls := "detail", "you are not playing in it") else emptyNode,
+          if (!c.summary.isEntered) div(cls := "detail", "you are not playing in it") else emptyNode,
           // Starting is the owner's call, once enough have entered to fill the game's required roles: a
           // challenge that seats more may be worth starting without them. The players then choose their
           // roles, the strongest first.
@@ -4105,7 +4105,7 @@ object Views {
         val eligible = characters
             .filterNot(ch => c.entries.exists(_.characterId.contains(ch.characterId)))
             .filter(ch =>
-                !t.settings.invitational || c.invitedCharacters.exists(_.character.characterId == ch.characterId) ||
+                !t.settings.isInvitational || c.invitedCharacters.exists(_.character.characterId == ch.characterId) ||
                     !characterGame
             )
         val character = Var(eligible.headOption.map(_.characterId))
@@ -4117,8 +4117,8 @@ object Views {
           div(cls := "detail", challengeTerms(t, c.entries.size)),
           entrantsDetail(c),
           parameterDetail(game, t.settings.gameSettings),
-          if (t.settings.friendly) friendlyLabel() else emptyNode,
-          if (c.summary.invited && mine.isEmpty) div(cls := "detail", "you were invited") else emptyNode,
+          if (t.settings.isFriendly) friendlyLabel() else emptyNode,
+          if (c.summary.isInvited && mine.isEmpty) div(cls := "detail", "you were invited") else emptyNode,
           mine match {
               case Some(entry) =>
                   div(
@@ -4134,7 +4134,7 @@ object Views {
               case None if full => div(cls := "detail", "it is full")
               case None if characterGame && characters.isEmpty =>
                   div(cls := "detail", "you need a character in this game to enter")
-              case None if characterGame && eligible.isEmpty && t.settings.invitational =>
+              case None if characterGame && eligible.isEmpty && t.settings.isInvitational =>
                   div(cls := "detail", "none of your characters is invited")
               case None if characterGame && eligible.isEmpty =>
                   div(cls := "detail", "your characters in this game have all entered it")
@@ -4766,16 +4766,16 @@ object Views {
           ) { busy =>
               val request = ChallengeRequest(
                 characterId = if (characterGame && seatedNow) ownCharacter.now() else None,
-                plays = seatedNow,
+                isPlays = seatedNow,
                 poolSize = Some(seats.now()),
                 roundDuration = durationOf(timeLimit.now(), timeLimitUnit.now()),
                 gameSettings = settingsOf(parameters.now()),
-                live = live.now(),
-                friendly = !administers.now() || friendly.now(),
+                isLive = live.now(),
+                isFriendly = !administers.now() || friendly.now(),
                 isPublic = isPublic.now(),
                 start = startOf(plannedStart.now()),
-                autoStart = autoStart.now() || !seatedNow,
-                open = invitee.isEmpty,
+                isAutoStart = autoStart.now() || !seatedNow,
+                isOpen = invitee.isEmpty,
                 invitations = if (characterGame) Nil else invitee.map(_.playerId).toList,
                 characterInvitations = if (characterGame) inviteeCharacter.now().toList else Nil
               )

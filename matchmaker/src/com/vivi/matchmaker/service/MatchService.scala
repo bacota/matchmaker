@@ -224,7 +224,7 @@ class MatchService(
             .map { (first, seats) =>
                 // Whose turn it is: every seat still waited on. Usually one, but a game where several
                 // players move at once has several, and a match that is over has none.
-                val onTheClock = seats.filter(seat => seat.seatPending && !seat.seatCompleted)
+                val onTheClock = seats.filter(seat => seat.isSeatPending && !seat.isSeatCompleted)
                 // The caller's seat and everyone else's: who they played, and where each finished.
                 val (own, others) = seats.partition(_.seatParticipantId == first.callerParticipantId)
                 MatchSummary(
@@ -233,17 +233,17 @@ class MatchService(
                   gameName = first.gameName,
                   description = first.description,
                   completedAt = first.completedAt,
-                  cancelled = first.cancelled,
+                  isCancelled = first.isCancelled,
                   isOwner = first.isOwner,
                   start = first.start,
                   due = first.callerDue,
-                  pending = first.callerPending,
+                  isPending = first.isCallerPending,
                   participantId = first.callerParticipantId,
                   characterId = first.callerCharacterId,
                   timeLimit = first.timeLimit,
                   timeLimitKind = first.timeLimitKind,
                   timeLimitUnit = first.timeLimitUnit,
-                  live = first.live,
+                  isLive = first.isLive,
                   whoseTurn = onTheClock.flatMap(_.seatNickname),
                   // The earliest, so a game where several move at once counts down to the first clock to
                   // run out, which is the first one anything happens on.
@@ -251,9 +251,9 @@ class MatchService(
                   // A fact about the match, so it is the same on every row of it and comes off the
                   // first like the rest of them.
                   publicUrl = first.publicUrl,
-                  friendly = first.friendly,
+                  isFriendly = first.isFriendly,
                   archivedAt = first.archivedAt,
-                  archiveExpired = first.archiveExpired,
+                  isArchiveExpired = first.isArchiveExpired,
                   resultSummary = first.resultSummary,
                   opponents = others
                       .map { seat =>
@@ -262,9 +262,9 @@ class MatchService(
                       },
                   // Not for a match called off, whose results -- if any -- are not how it ended.
                   outcome =
-                      if (first.cancelled) None
+                      if (first.isCancelled) None
                       else MatchOutcome.of(own.headOption.flatMap(_.seatRank), seats.flatMap(_.seatRank)),
-                  eloDelta = if (first.cancelled) None else own.headOption.flatMap(_.seatEloDelta),
+                  eloDelta = if (first.isCancelled) None else own.headOption.flatMap(_.seatEloDelta),
                   character = own.headOption.flatMap(_.seatCharacter)
                 )
             }
@@ -304,7 +304,7 @@ class MatchService(
                       row.rank,
                       row.scores,
                       row.isWinner,
-                      row.forfeit,
+                      row.isForfeit,
                       // Absent means nothing was recorded against this seat, which reads as zero — both
                       // for a player who never moved and for a match played before turns were kept.
                       byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO),
@@ -364,10 +364,10 @@ class MatchService(
                             _ <- IO.raiseWhen(existing.completed)(
                               ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
                             )
-                            _ <- IO.raiseWhen(existing.cancelled)(
+                            _ <- IO.raiseWhen(existing.isCancelled)(
                               ConflictError(s"match ${matchId.value} is already cancelled")
                             )
-                            cancelled = existing.copy(cancelled = true)
+                            cancelled = existing.copy(isCancelled = true)
                             _ <- matchRepo.update(cancelled)
                             // And the seats, in the same lock: a cancelled match is over, so nobody's turn
                             // is pending in it and no clock is still running. Completion says this seat by
@@ -476,7 +476,7 @@ class MatchService(
                         _ <- IO.raiseUnless(existing.status.begun)(
                           ConflictError(s"match ${matchId.value} has not begun")
                         )
-                        changed = existing.friendly != friendly
+                        changed = existing.isFriendly != friendly
                         // A match that is not friendly is rated, and cannot rate a player against
                         // themselves. Its seats are written once, at its start, so read under the match's
                         // lock they are what they will be when it ends.
@@ -493,7 +493,7 @@ class MatchService(
                             if (changed && existing.completed && !friendly)
                                 archives.fold(IO.pure(false))(_.recordMove(session, prepared, gameId, matchId))
                             else IO.pure(false)
-                        classified = existing.copy(friendly = friendly)
+                        classified = existing.copy(isFriendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))
                     } yield (classified, moved, changed && existing.completed)
                 }
@@ -521,7 +521,7 @@ class MatchService(
                         if (caller.isAdmin) IO.pure(true)
                         else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
                     found <- new MatchRepo(session).read(gameId, matchId)
-                } yield allowed && found.exists(m => m.completed && m.friendly)
+                } yield allowed && found.exists(m => m.completed && m.isFriendly)
         }
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =

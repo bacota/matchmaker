@@ -51,8 +51,8 @@ class RoutesSpec extends FunSuite {
     test("GET /matches/:id/status answers matchmaker's status call, with both seats pending") {
         val (routes, _, _) = fixture()
         val status = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
-        assertEquals(status.completed, false)
-        assertEquals(status.participants.filter(_.pending).map(_.participantId), List(1L, 2L))
+        assertEquals(status.isCompleted, false)
+        assertEquals(status.participants.filter(_.isPending).map(_.participantId), List(1L, 2L))
     }
 
     test("a throw posted by a player is recorded and answered with the new state") {
@@ -64,7 +64,7 @@ class RoutesSpec extends FunSuite {
         assertEquals(state.you, Some("One"))
         assertEquals(state.yourThrow, Some("Rock"))
         assertEquals(state.waitingFor, List("Two"))
-        assertEquals(state.completed, false)
+        assertEquals(state.isCompleted, false)
         assertEquals(store.get("m-9").get.throws.map(_.shape), List(Shape.Rock))
     }
 
@@ -94,10 +94,10 @@ class RoutesSpec extends FunSuite {
         throwing(routes, "sub-alice", "paper")
 
         val state = read[Protocol.StateResponse](throwing(routes, "sub-bob", "rock").body)
-        assert(state.completed)
+        assert(state.isCompleted)
         assertEquals(state.winner, Some("One"))
         assertEquals(state.players.map(_.shape), List(Some("Paper"), Some("Rock")))
-        assert(store.get("m-9").get.completed)
+        assert(store.get("m-9").get.isCompleted)
     }
 
     /* The one thing a watcher must not be able to do is see a throw before the player facing it
@@ -107,7 +107,7 @@ class RoutesSpec extends FunSuite {
         throwing(routes, "sub-alice", "rock")
 
         val watching = read[Protocol.StateResponse](get(routes, "/matches/m-9/board/state").body)
-        assertEquals(watching.players.map(_.thrown), List(true, false))
+        assertEquals(watching.players.map(_.isThrown), List(true, false))
         assert(watching.players.forall(_.shape.isEmpty))
         // The page names the three shapes as buttons, so what must be absent from it is a *thrown*
         // one: the state inlined into the public board carries none.

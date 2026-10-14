@@ -455,7 +455,7 @@ object Store {
     /** What the last search answered, or `None` when nothing has been searched for in this session.
       *
       * `None` rather than an empty result, because "no search yet" and "no player by that name" are the two things the
-      * screen has to say differently, and an empty list cannot tell them apart. The `more` flag inside it is the
+      * screen has to say differently, and an empty list cannot tell them apart. The `isMore` flag inside it is the
       * server's word for "there were others" -- the list's own length cannot say so, since a full page may be the last
       * one.
       */
@@ -1212,21 +1212,21 @@ object Store {
       * game had *before* the save — and if it failed they showed them for the rest of the session, over a save that had
       * actually succeeded, with the form ready to submit the stale copy again.
       *
-      * Which copy it belongs in is what `active` decides, so a save that flips it moves the game between them: into
+      * Which copy it belongs in is what `isActive` decides, so a save that flips it moves the game between them: into
       * `games` and out of `unlistedGames` when it is active, and the other way when it is not. `refreshGames` reaches
       * neither case on its own — it fetches the active games, so it cannot say what became of one that is no longer
       * among them.
       */
     def gameSaved(saved: Game): Unit = {
         games.update { held =>
-            if (!saved.active) held.filterNot(_.gameId == saved.gameId)
+            if (!saved.isActive) held.filterNot(_.gameId == saved.gameId)
             else if (held.exists(_.gameId == saved.gameId))
                 held.map(game => if (game.gameId == saved.gameId) saved else game)
             // Appended rather than placed: a game just created is not in the list at all, and where the
             // server would sort it is exactly what the re-read below is for.
             else held :+ saved
         }
-        unlistedGames.update(held => if (saved.active) held - saved.gameId else held.updated(saved.gameId, saved))
+        unlistedGames.update(held => if (saved.isActive) held - saved.gameId else held.updated(saved.gameId, saved))
         refreshGames()
     }
 

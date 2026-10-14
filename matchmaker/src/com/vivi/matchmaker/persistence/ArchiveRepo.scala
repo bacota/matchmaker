@@ -74,26 +74,26 @@ class ArchiveRepo(session: Session[IO]) {
      * match id and who it is. Match ids are drawn from one sequence for every game, so the id alone picks one match; the external id
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.archive_friendly
+                 m.is_archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text""".query(row)
 
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.archive_friendly
+                 m.is_archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text
           FOR UPDATE OF m""".query(row)
 
     private val selectByIds: Query[(GameId, MatchId), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.is_cancelled, m.is_friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
-                 m.archive_friendly
+                 m.is_archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.game_id = $gameId AND m.match_id = $matchId""".query(row)
@@ -111,7 +111,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val updateRequest: Command[(String, String, Boolean, GameId, MatchId)] =
         sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now(),
-                 archive_friendly = $bool
+                 is_archive_friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the engine has been given a url to upload `sha256`'s content to under `key`, in the friendly bucket
@@ -121,7 +121,7 @@ class ArchiveRepo(session: Session[IO]) {
         session.execute(updateRequest)((key, sha256, friendly, game, id)).void
 
     private val updateBucket: Command[(Boolean, GameId, MatchId)] =
-        sql"""UPDATE match SET archive_friendly = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
+        sql"""UPDATE match SET is_archive_friendly = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the archive is now in the friendly bucket, or the permanent one: a move has copied it there, or an
       * upload not yet made is to go there instead.
@@ -142,7 +142,7 @@ class ArchiveRepo(session: Session[IO]) {
         sql"""UPDATE match SET archive_expired_at = now()
           WHERE game_id = $gameId AND match_id = $matchId
             AND archived_at IS NOT NULL AND archive_expired_at IS NULL
-            AND COALESCE(archive_friendly, friendly)""".command
+            AND COALESCE(is_archive_friendly, is_friendly)""".command
 
     /** Records a friendly archive as gone. The condition is in the update itself, so it needs no lock: two requests
       * that both found the object gone both write the same fact, and the second changes nothing.
@@ -160,7 +160,7 @@ class ArchiveRepo(session: Session[IO]) {
       (GameId, MatchId),
       (Option[Instant], Boolean, Option[Instant], Option[String], Option[String], Boolean)
     ] =
-        sql"""SELECT completed_at, cancelled, archived_at, status_url, cancel_url, engine_released IS NOT NULL
+        sql"""SELECT completed_at, is_cancelled, archived_at, status_url, cancel_url, engine_released IS NOT NULL
           FROM match WHERE game_id = $gameId AND match_id = $matchId"""
             .query(instant.opt *: bool *: instant.opt *: text.opt *: text.opt *: bool)
 
@@ -210,7 +210,7 @@ object ArchiveRepo {
       * names `match`.
       */
     def expiredAt(table: String): String =
-        s"CASE WHEN COALESCE($table.archive_friendly, $table.friendly) THEN $table.archive_expired_at END"
+        s"CASE WHEN COALESCE($table.is_archive_friendly, $table.is_friendly) THEN $table.archive_expired_at END"
 
     /** Whether the match's archive has expired, by the same rule as [[expiredAt]]. */
     def expired(table: String): String = s"(${expiredAt(table)}) IS NOT NULL"
@@ -225,16 +225,16 @@ object ArchiveRepo {
         matchId: MatchId,
         gameName: String,
         completedAt: Option[Instant],
-        cancelled: Boolean,
-        friendly: Boolean,
+        isCancelled: Boolean,
+        isFriendly: Boolean,
         key: Option[String],
         sha256: Option[String],
         requestedAt: Option[Instant],
         archivedAt: Option[Instant],
         expiredAt: Option[Instant],
         // Which bucket the archive is in, or is to be uploaded to: true for the friendly one. None until an
-        // upload has been asked for. Not `friendly`: a move to match a change of that takes time.
-        archiveFriendly: Option[Boolean]
+        // upload has been asked for. Not `isFriendly`: a move to match a change of that takes time.
+        isArchiveFriendly: Option[Boolean]
     )
 
     /** A match as its ending is settled: see [[ArchiveRepo.ending]]. */
@@ -242,10 +242,10 @@ object ArchiveRepo {
         gameId: GameId,
         matchId: MatchId,
         completedAt: Option[Instant],
-        cancelled: Boolean,
+        isCancelled: Boolean,
         archivedAt: Option[Instant],
         statusUrl: Option[String],
         cancelUrl: Option[String],
-        released: Boolean
+        isReleased: Boolean
     )
 }

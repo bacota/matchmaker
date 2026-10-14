@@ -202,30 +202,30 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     private var nextCharacterId = 1L
 
     /** While set, [[registerCharacter]] fails as an unreachable matchmaker would, and records nothing. */
-    @volatile var failRegistrations: Boolean = false
+    @volatile var isFailRegistrations: Boolean = false
 
     /** While set, [[saveCharacterState]] fails as an unreachable matchmaker would, and records nothing. */
-    @volatile var failStateSaves: Boolean = false
+    @volatile var isFailStateSaves: Boolean = false
 
     /** While set, [[recordMove]] and [[recordResults]] fail as an unreachable matchmaker would, after recording the
       * attempt — so a test can see that a call was made and that its failure went no further.
       */
-    @volatile var failCallbacks: Boolean = false
+    @volatile var isFailCallbacks: Boolean = false
 
     def recordMove(url: String, notification: Protocol.MoveNotification): Unit = synchronized {
         movesBuffer += (url -> notification)
         log(s"POST $url ${write(notification)}")
-        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
+        if (isFailCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def recordResults(url: String, results: Protocol.MatchResults): Unit = synchronized {
         resultsBuffer += (url -> results)
         log(s"POST $url ${write(results)}")
-        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
+        if (isFailCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def saveCharacterState(matchmakerUrl: String, characterId: Long, state: String): Unit = synchronized {
-        if (failStateSaves) throw AwsError(s"PUT $matchmakerUrl/characters/$characterId/state failed: unreachable")
+        if (isFailStateSaves) throw AwsError(s"PUT $matchmakerUrl/characters/$characterId/state failed: unreachable")
         statesBuffer += (characterId -> state)
         log(s"PUT $matchmakerUrl/characters/$characterId/state $state")
     }
@@ -236,7 +236,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
 
     def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
         synchronized {
-            if (failRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
+            if (isFailRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
             val id = nextCharacterId
             nextCharacterId += 1
             registrationsBuffer += (id -> request)
@@ -296,10 +296,10 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     @volatile var expiredArchives: Set[String] = Set.empty
 
     /** While set, archiving is refused as a matchmaker with no buckets refuses it: 503. */
-    @volatile var archivingUnavailable: Boolean = false
+    @volatile var isArchivingUnavailable: Boolean = false
 
     /** While set, an upload request is refused as one for a match matchmaker does not know is over: 409. */
-    @volatile var refuseArchiving: Boolean = false
+    @volatile var isRefuseArchiving: Boolean = false
 
     def requestArchiveUpload(
         matchmakerUrl: String,
@@ -307,8 +307,8 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
         request: Protocol.ArchiveUploadRequest
     ): Protocol.ArchiveUploadAnswer = synchronized {
         log(s"POST $matchmakerUrl/matches/$matchId/archive ${write(request)}")
-        if (archivingUnavailable) throw AwsError("archiving is not configured on this matchmaker (503)")
-        if (refuseArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
+        if (isArchivingUnavailable) throw AwsError("archiving is not configured on this matchmaker (503)")
+        if (isRefuseArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
         archivedAt.get(matchId) match {
             case Some(at) => Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
             case None =>

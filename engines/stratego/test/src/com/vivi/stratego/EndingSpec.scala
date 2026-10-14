@@ -20,7 +20,7 @@ class EndingSpec extends FunSuite {
           board = board,
           turns = List(MoveRecord(11L, Side.Red, at, at), MoveRecord(22L, Side.Blue, at, at)),
           isPublic = false,
-          completed = false,
+          isCompleted = false,
           createdAt = at,
           moveCallbackUrl = None,
           resultsCallbackUrl = None,
@@ -68,7 +68,7 @@ class EndingSpec extends FunSuite {
     /** Neither side can move — only the flags are left — after `battles`. Three of them leave Blue to move. */
     private def stuckAfter(battles: List[MoveRecord], tiesAllowed: Boolean): StrategoMatch =
         inPlay(0 -> (Side.Red, Rank.Flag), 99 -> (Side.Blue, Rank.Flag))
-            .copy(tiesAllowed = tiesAllowed)
+            .copy(isTiesAllowed = tiesAllowed)
             .pipe(m => m.copy(turns = m.turns ++ battles))
 
     extension [A](a: A) private def pipe[B](f: A => B): B = f(a)
@@ -113,7 +113,7 @@ class EndingSpec extends FunSuite {
           99 -> (Side.Blue, Rank.Flag),
           50 -> (Side.Blue, Rank.Scout)
         )
-            .copy(tiesAllowed = false, maxMoves = 1)
+            .copy(isTiesAllowed = false, maxMoves = 1)
         val ahead = capped.copy(turns = capped.turns :+ battles(2))
         assertEquals(ahead.ending, Some(Ending.MoveCap))
         assertEquals(ahead.winner, Some(Side.Blue))
@@ -130,7 +130,7 @@ class EndingSpec extends FunSuite {
           1 -> (Side.Red, Rank.Bomb),
           99 -> (Side.Blue, Rank.Flag),
           50 -> (Side.Blue, Rank.Scout)
-        ).copy(tiesAllowed = false)
+        ).copy(isTiesAllowed = false)
         assertEquals(m.winner, Some(Side.Blue))
         assert(!m.decidedOnPoints)
     }

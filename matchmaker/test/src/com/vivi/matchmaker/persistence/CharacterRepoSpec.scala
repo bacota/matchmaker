@@ -53,7 +53,7 @@ class CharacterRepoSpec extends PropertySuite {
                           roles = Seq.empty,
                           parameters = Seq.empty,
                           characterUrl = None,
-                          unimportantRoles = false
+                          isUnimportantRoles = false
                         )
                       )
                     )

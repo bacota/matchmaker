@@ -53,7 +53,7 @@ class RankingSpec extends FunSuite {
     test("a rubber is asked for to break a pair's tie in a two-role game, and settles it once played (Q7)") {
         val draw = List(List(Placing(1L, Some(1)), Placing(2L, Some(1))))
         val pair = Map(1L -> 1, 2L -> 2)
-        val rubber = StageDesign(rubberMatch = true)
+        val rubber = StageDesign(isRubberMatch = true)
         assertEquals(Ranking.rankPool(pair, draw, Map.empty, rubber, twoPlayer).rubbers, List((1L, 2L)))
         val played = Map(Set(1L, 2L) -> List(Placing(1L, Some(2)), Placing(2L, Some(1))))
         assertEquals(Ranking.rankPool(pair, draw, played, rubber, twoPlayer).ranks, Map(2L -> 1, 1L -> 2))
@@ -71,16 +71,16 @@ class RankingSpec extends FunSuite {
     test("a tournament ranks its final run first, by stratum then pool rank, and those eliminated earlier below") {
         val first = CompletedRun(
           Map(
-            1L -> RunPlacing(0, 1, 0, eliminated = false),
-            2L -> RunPlacing(0, 2, -1, eliminated = true),
-            3L -> RunPlacing(0, 1, 0, eliminated = false),
-            4L -> RunPlacing(0, 2, -1, eliminated = true)
+            1L -> RunPlacing(0, 1, 0, isEliminated = false),
+            2L -> RunPlacing(0, 2, -1, isEliminated = true),
+            3L -> RunPlacing(0, 1, 0, isEliminated = false),
+            4L -> RunPlacing(0, 2, -1, isEliminated = true)
           )
         )
         val last = CompletedRun(
           Map(
-            1L -> RunPlacing(0, 1, 0, eliminated = false),
-            3L -> RunPlacing(0, 2, -1, eliminated = true)
+            1L -> RunPlacing(0, 1, 0, isEliminated = false),
+            3L -> RunPlacing(0, 2, -1, isEliminated = true)
           )
         )
         assertEquals(Ranking.rankNode(List(first, last), Set.empty), Map(1L -> 1, 3L -> 2, 2L -> 3, 4L -> 3))

@@ -134,12 +134,12 @@ object SignIn {
             challenge.name match {
                 case name if codeResponseKeys.contains(name) =>
                     code.set("")
-                    focusNextStage = true
+                    isFocusNextStage = true
                     stage.set(Stage.Code(name, username, challenge.session, challenge.deliveredTo))
 
                 case "NEW_PASSWORD_REQUIRED" =>
                     newPassword.set("")
-                    focusNextStage = true
+                    isFocusNextStage = true
                     stage.set(Stage.NewPassword(username, challenge.session))
 
                 /* Cognito asking for the password separately rather than accepting the one already sent.
@@ -250,13 +250,13 @@ object SignIn {
      * button that was pressed with it, so the focus would otherwise fall to the top of the page -- and a
      * screen reader would not be told the page now wants a code. Set by a step the player took, not by
      * the first drawing of the page, which is no reason to move anybody's focus. */
-    private var focusNextStage = false
+    private var isFocusNextStage = false
 
     /* The first box of a form just shown, if a step of the player's showed it. */
     private def focusFirstField: Modifier[HtmlElement] =
         onMountCallback { context =>
-            if (focusNextStage) {
-                focusNextStage = false
+            if (isFocusNextStage) {
+                isFocusNextStage = false
                 context.thisNode.ref.querySelector("input") match {
                     case field: org.scalajs.dom.html.Element => field.focus()
                     case _                                   => ()
@@ -265,7 +265,7 @@ object SignIn {
         }
 
     private def startAgain(): Unit = {
-        focusNextStage = true
+        isFocusNextStage = true
         reset()
     }
 

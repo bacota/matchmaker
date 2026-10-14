@@ -4,6 +4,7 @@ import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
+import upickle.implicits.key
 
 /** One corner of a bout.
   *
@@ -52,7 +53,7 @@ case class Round(
   * Like rock-paper-scissors, and unlike tic-tac-toe, both corners move at once: each round, both players plan, neither
   * sees the other's plan, and the round resolves on whichever plan arrives second.
   *
-  * `tiesAllowed` is false for a bout that must not end in a draw. Then a bout level on points after its scheduled
+  * `isTiesAllowed` is false for a bout that must not end in a draw. Then a bout level on points after its scheduled
   * rounds fights one more, and if that round is level too, its winner is drawn by lot. Defaulted, so a bout stored
   * before it existed is the bout it always was.
   */
@@ -62,7 +63,7 @@ case class Bout(
     scheduledRounds: Int,
     plans: List[Plan],
     isPublic: Boolean,
-    completed: Boolean,
+    @key("completed") isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -74,7 +75,7 @@ case class Bout(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    tiesAllowed: Boolean = true
+    @key("tiesAllowed") isTiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -120,7 +121,7 @@ case class Bout(
     /** How many rounds this bout can last: its schedule, and one more when ties are not allowed and the schedule left
       * it level.
       */
-    def roundLimit: Int = if (!tiesAllowed && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
+    def roundLimit: Int = if (!isTiesAllowed && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
 
     /** Whether the bout went to an extra round because it may not be drawn. */
     def extraRound: Boolean = rounds.size > scheduledRounds
@@ -290,7 +291,7 @@ object Bout extends Game[Bout, Corner, Plan] {
 
     def isOver(m: Bout): Boolean = m.isOver
 
-    def markCompleted(m: Bout): Bout = m.copy(completed = true)
+    def markCompleted(m: Bout): Bout = m.copy(isCompleted = true)
 
     def pending(m: Bout): List[Corner] = m.pending
 
@@ -357,13 +358,13 @@ object Bout extends Game[Bout, Corner, Plan] {
           scheduledRounds = rounds,
           plans = Nil,
           isPublic = request.isPublic,
-          completed = false,
+          isCompleted = false,
           createdAt = now,
           moveCallbackUrl = request.moveCallbackUrl,
           resultsCallbackUrl = request.resultsCallbackUrl,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          tiesAllowed = Protocol.tiesAllowed(request)
+          isTiesAllowed = Protocol.tiesAllowed(request)
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

@@ -30,7 +30,7 @@ case class ChallengeNews(
     what: String,
     title: String,
     actor: String,
-    joined: Boolean,
+    isJoined: Boolean,
     challenger: String,
     room: Option[Int]
 )
@@ -69,7 +69,7 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
             // To the owner, about somebody else's decision. The roster line matters most here: they are the one
             // who can start it, so what they need to know is how far off that is.
             case NotificationType.ChallengeAccepted =>
-                val prefix = if (news.joined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
+                val prefix = if (news.isJoined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
                 Some(
                   (
                     MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name, "what" -> what),
@@ -103,12 +103,12 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
             // who they will be playing with and how far it is from full.
             case NotificationType.AcceptanceChanged =>
                 val event =
-                    if (news.joined)
+                    if (news.isJoined)
                         MailTemplates.render("mail.challenge.changed.accepted.event", "actor" -> news.actor)
                     else MailTemplates.render("mail.challenge.changed.withdrawn.event", "actor" -> news.actor)
 
                 val subject =
-                    if (news.joined) "mail.challenge.changed.accepted.subject"
+                    if (news.isJoined) "mail.challenge.changed.accepted.subject"
                     else "mail.challenge.changed.withdrawn.subject"
 
                 Some(

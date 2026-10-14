@@ -3,6 +3,7 @@ package com.vivi.stratego
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
+import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -14,11 +15,11 @@ import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnCloc
 case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
 
 /** One turn that was taken: a side's deployment when `step` is empty, a move of one piece otherwise — with the battle
-  * it caused, if it attacked — or, with `concession`, a side giving the match up.
+  * it caused, if it attacked — or, with `isConcession`, a side giving the match up.
   *
   * A setup is a turn like any other as far as matchmaker is concerned: it is what the player was pending on, and its
   * time is charged to them. So is a concession, which is the conceding player's last act in the match, and may be made
-  * whether or not it was their turn. `concession` defaults to false, so a match stored before there were any reads as
+  * whether or not it was their turn. `isConcession` defaults to false, so a match stored before there were any reads as
   * it was written.
   *
   * `setup` is the army a deployment put down — its ranks in the order of [[Side.homeSquares]], as it was submitted — so
@@ -32,10 +33,10 @@ case class MoveRecord(
     startedAt: Instant,
     step: Option[Step] = None,
     battle: Option[Battle] = None,
-    concession: Boolean = false,
+    @key("concession") isConcession: Boolean = false,
     setup: Option[List[Rank]] = None
 ) extends TurnLike {
-    def isSetup: Boolean = step.isEmpty && !concession
+    def isSetup: Boolean = step.isEmpty && !isConcession
 }
 
 /** How a finished match ended, as the scores and the page say it. */
@@ -57,9 +58,9 @@ enum Ending(val label: String) {
   * always stored: a match keeps the cap it was created with, whatever the default becomes later. `clock` is a live
   * match's turn clock, and `None` for every other match.
   *
-  * `tiesAllowed` is false for a match that must not end in a draw. Then a match that would be drawn — the move cap, or
-  * neither side able to move — goes to whichever side took more points of the other's pieces ([[capturePoints]]), and
-  * is drawn only if they are level. Defaulted, so a match stored before it existed is the match it always was.
+  * `isTiesAllowed` is false for a match that must not end in a draw. Then a match that would be drawn — the move cap,
+  * or neither side able to move — goes to whichever side took more points of the other's pieces ([[capturePoints]]),
+  * and is drawn only if they are level. Defaulted, so a match stored before it existed is the match it always was.
   */
 case class StrategoMatch(
     matchId: String,
@@ -67,7 +68,7 @@ case class StrategoMatch(
     board: Board,
     turns: List[MoveRecord],
     isPublic: Boolean,
-    completed: Boolean,
+    @key("completed") isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -77,7 +78,7 @@ case class StrategoMatch(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    tiesAllowed: Boolean = true
+    @key("tiesAllowed") isTiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -94,7 +95,7 @@ case class StrategoMatch(
     def moves: List[MoveRecord] = turns.filter(_.step.isDefined)
 
     /** The side that gave the match up, if one did. */
-    def conceded: Option[Side] = turns.find(_.concession).map(_.side)
+    def conceded: Option[Side] = turns.find(_.isConcession).map(_.side)
 
     /** Red moves first, and the sides alternate. */
     def toMove: Side = if (moves.size % 2 == 0) Side.Red else Side.Blue
@@ -135,7 +136,7 @@ case class StrategoMatch(
             case Some(Ending.Conceded)                        => conceded.map(_.other)
             case Some(Ending.FlagTaken)                       => Side.values.find(board.hasFlag)
             case Some(Ending.NoMoves) if !stuck(toMove.other) => Some(toMove.other)
-            case Some(_) if !tiesAllowed                      => onPoints
+            case Some(_) if !isTiesAllowed                    => onPoints
             case _                                            => None
         }
 
@@ -148,7 +149,7 @@ case class StrategoMatch(
     }
 
     /** Whether a match that would have been drawn went to the side ahead on points instead. */
-    def decidedOnPoints: Boolean = !tiesAllowed && onPoints.isDefined && wouldBeDrawn
+    def decidedOnPoints: Boolean = !isTiesAllowed && onPoints.isDefined && wouldBeDrawn
 
     /** Whether the way the match ended is a draw by the game's own rules: the move cap, or neither side able to move.
       */
@@ -285,7 +286,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
 
     def isOver(m: StrategoMatch): Boolean = m.isOver
 
-    def markCompleted(m: StrategoMatch): StrategoMatch = m.copy(completed = true)
+    def markCompleted(m: StrategoMatch): StrategoMatch = m.copy(isCompleted = true)
 
     def pending(m: StrategoMatch): List[Seat] =
         if (m.isOver) Nil
@@ -354,20 +355,27 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           board = Board.empty,
           turns = Nil,
           isPublic = request.isPublic,
-          completed = false,
+          isCompleted = false,
           createdAt = now,
           moveCallbackUrl = request.moveCallbackUrl,
           resultsCallbackUrl = request.resultsCallbackUrl,
           maxMoves = maxMoves,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          tiesAllowed = Protocol.tiesAllowed(request)
+          isTiesAllowed = Protocol.tiesAllowed(request)
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store
       * nothing.
       */
-    case class Placed(square: Int, id: Int, side: Side, rank: Rank, revealed: Boolean, moved: Boolean)
+    case class Placed(
+        square: Int,
+        id: Int,
+        side: Side,
+        rank: Rank,
+        @key("revealed") isRevealed: Boolean,
+        @key("moved") isMoved: Boolean
+    )
 
     // Stored as JSON, which is what both stores hold: the in-memory one keeps the object itself,
     // and DynamoDB keeps this string in one attribute rather than a modelled item — the engine
@@ -382,11 +390,11 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
         .bimap(
           board =>
               board.cells.indices.toList
-                  .flatMap(i => board(i).map(p => Placed(i, p.id, p.side, p.rank, p.revealed, p.moved))),
+                  .flatMap(i => board(i).map(p => Placed(i, p.id, p.side, p.rank, p.isRevealed, p.isMoved))),
           placed =>
               Board(
                 placed.foldLeft(Board.empty.cells)((cells, p) =>
-                    cells.updated(p.square, Some(Piece(p.id, p.side, p.rank, p.revealed, p.moved)))
+                    cells.updated(p.square, Some(Piece(p.id, p.side, p.rank, p.isRevealed, p.isMoved)))
                 )
               )
         )

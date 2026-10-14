@@ -2,6 +2,7 @@ package com.vivi.engine
 
 import java.time.{Duration, Instant}
 import upickle.default.{ReadWriter, macroRW}
+import upickle.implicits.key
 
 /** The clock of a live match, kept on the match itself.
   *
@@ -158,16 +159,16 @@ case class ClockView(limitSeconds: Long, kind: String, seats: List[SeatClock], t
 
 /** One seat's clock.
   *
-  * `waiting` is whether the match is waiting on this seat, and `running` whether its clock is counting down — a seat
-  * waited on whose player has not opened the board is not. `remainingMillis` is what it has left, measured by the
+  * `isWaiting` is whether the match is waiting on this seat, and `isRunning` whether its clock is counting down — a
+  * seat waited on whose player has not opened the board is not. `remainingMillis` is what it has left, measured by the
   * engine at the moment it answered: a duration rather than a deadline, so that a page whose own clock is wrong still
   * counts down the right amount. Under a per-turn clock it is absent until the clock runs. `startedAt` is when a
   * running clock started, which is how a page tells a new turn from the same one read again.
   */
 case class SeatClock(
     participantId: Long,
-    waiting: Boolean,
-    running: Boolean,
+    @key("waiting") isWaiting: Boolean,
+    @key("running") isRunning: Boolean,
     startedAt: Option[Instant],
     remainingMillis: Option[Long]
 )

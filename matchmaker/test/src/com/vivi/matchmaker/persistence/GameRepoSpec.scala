@@ -13,7 +13,7 @@ class GameRepoSpec extends PropertySuite {
       * that back down.
       */
     private def gameWithFanOut: Game = {
-        val base = Generators.genGame().sample.get.copy(active = true)
+        val base = Generators.genGame().sample.get.copy(isActive = true)
         val values = Seq("a", "b", "c").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
         base.copy(
           roles = Seq(
@@ -114,7 +114,7 @@ class GameRepoSpec extends PropertySuite {
                 val repo = new GameRepo[String](session)
                 for {
                     created <- repo.create(
-                      Generators.genGame().sample.get.copy(active = true, roles = Seq.empty, parameters = Seq.empty)
+                      Generators.genGame().sample.get.copy(isActive = true, roles = Seq.empty, parameters = Seq.empty)
                     )
                     listed <- repo.list(activeOnly = false)
                 } yield listed.find(_.gameId == created.gameId)

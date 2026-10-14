@@ -7,11 +7,11 @@ import cats.effect.IO
   * The queue is the one part of notification no test can stand up, so it is stubbed the way the game engine is: what
   * matters here is which mails were produced and what they say, not that SQS accepted them.
   */
-class RecordingNotifier(fail: Boolean = false) extends Notifier {
+class RecordingNotifier(isFail: Boolean = false) extends Notifier {
     @volatile private var sent: List[MailMessage] = Nil
 
     def enqueue(message: MailMessage): IO[Unit] =
-        if (fail) IO.raiseError(new RuntimeException("queue is down"))
+        if (isFail) IO.raiseError(new RuntimeException("queue is down"))
         else IO(synchronized { sent = sent :+ message })
 
     def messages: List[MailMessage] = synchronized(sent)

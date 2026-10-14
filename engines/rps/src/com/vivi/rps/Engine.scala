@@ -80,16 +80,16 @@ class Engine(
           waitingFor = m.pending.map(_.side.toString),
           you = seat.map(_.side.toString),
           yourThrow = seat.flatMap(m.throwOf).map(_.shape.toString),
-          completed = over,
+          isCompleted = over,
           winner = Option.when(over)(m.winner.map(_.side.toString)).flatten,
-          draw = m.isDraw,
+          isDraw = m.isDraw,
           tiedRounds = m.tiedRounds.map(_.toString),
           players = m.seats.map(s =>
               SeatView(
                 side = s.side.toString,
                 cognitoId = s.cognitoId,
                 participantId = s.participantId,
-                thrown = m.hasThrown(s),
+                isThrown = m.hasThrown(s),
                 shape = Option.when(over)(m.throwOf(s).map(_.shape.toString)).flatten
               )
           ),

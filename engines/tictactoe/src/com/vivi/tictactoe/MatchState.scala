@@ -3,6 +3,7 @@ package com.vivi.tictactoe
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
+import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -36,7 +37,7 @@ case class TicTacToeMatch(
     turn: Mark,
     seats: List[Seat],
     isPublic: Boolean,
-    completed: Boolean,
+    @key("completed") isCompleted: Boolean,
     createdAt: Instant,
     lastMoveAt: Option[Instant],
     moveCallbackUrl: Option[String],
@@ -112,7 +113,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
 
     def isOver(m: TicTacToeMatch): Boolean = m.isOver
 
-    def markCompleted(m: TicTacToeMatch): TicTacToeMatch = m.copy(completed = true)
+    def markCompleted(m: TicTacToeMatch): TicTacToeMatch = m.copy(isCompleted = true)
 
     def pending(m: TicTacToeMatch): List[Seat] = if (m.isOver) Nil else m.seatOf(m.turn).toList
 
@@ -164,7 +165,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
               turn = Mark.X,
               seats = seats,
               isPublic = request.isPublic,
-              completed = false,
+              isCompleted = false,
               createdAt = now,
               lastMoveAt = None,
               moveCallbackUrl = request.moveCallbackUrl,

@@ -51,7 +51,7 @@ class EndingService(
 
     def settle(gameId: GameId, matchId: MatchId): IO[Settlement] =
         sessionPool.use(session => new ArchiveRepo(session).ending(gameId, matchId)).flatMap {
-            case Some(row) if row.cancelled => (release(row), tournament(gameId, matchId)).mapN(EndingService.both)
+            case Some(row) if row.isCancelled => (release(row), tournament(gameId, matchId)).mapN(EndingService.both)
             // Placed first: it is the database's alone, and a player is waiting to see it, where the archive may be
             // waiting on its engine.
             case Some(row) if row.completedAt.isDefined =>
@@ -101,7 +101,7 @@ class EndingService(
      * matchmaker refuses its callbacks for the match either way. What is recorded afterwards is a single
      * conditional update, which needs no lock. */
     private def release(row: EndingRow): IO[Settlement] =
-        row.cancelUrl.filter(_ => !row.released) match {
+        row.cancelUrl.filter(_ => !row.isReleased) match {
             case None => IO.pure(Settlement.Settled)
             case Some(url) =>
                 sessionPool

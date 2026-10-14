@@ -57,7 +57,7 @@ class SuppressionRepoSpec extends FunSuite {
             } yield (row, active)
         }
         assertEquals(row.map(_.reason), Some(SuppressionReason.Bounce))
-        assertEquals(row.map(_.permanent), Some(true))
+        assertEquals(row.map(_.isPermanent), Some(true))
         assertEquals(row.map(_.occurrences), Some(1))
         assertEquals(row.flatMap(_.diagnostic), Some("smtp; 550 5.1.1 user unknown"))
         assertEquals(active, Set(email))
@@ -76,7 +76,7 @@ class SuppressionRepoSpec extends FunSuite {
             } yield (row, active)
         }
         assertEquals(row.map(_.reason), Some(SuppressionReason.Complaint))
-        assertEquals(row.map(_.permanent), Some(true))
+        assertEquals(row.map(_.isPermanent), Some(true))
         assertEquals(active, Set(email))
     }
 
@@ -163,7 +163,7 @@ class SuppressionRepoSpec extends FunSuite {
     test("a delivery delay leaves the row transient, so nothing is permanent until SES says so") {
         val email = address
         val row = withRepo(repo => repo.record(delay(email)) *> repo.read(email))
-        assertEquals(row.map(_.permanent), Some(false))
+        assertEquals(row.map(_.isPermanent), Some(false))
         assertEquals(row.map(_.reason), Some(SuppressionReason.Delay))
     }
 
@@ -197,7 +197,7 @@ class SuppressionRepoSpec extends FunSuite {
                 _ <- repo.record(delay(email))
                 row <- repo.read(email)
                 afterNextDelay <- repo.activeFor(Set(email))
-            } yield (released, afterRelease, (row.map(_.occurrences), row.map(_.permanent), afterNextDelay))
+            } yield (released, afterRelease, (row.map(_.occurrences), row.map(_.isPermanent), afterNextDelay))
         }
         assertEquals(released, SuppressionRepo.Release.Released)
         assertEquals(afterRelease, Set.empty[String])

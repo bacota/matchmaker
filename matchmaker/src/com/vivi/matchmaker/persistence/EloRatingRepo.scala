@@ -234,7 +234,7 @@ class EloRatingRepo(session: Session[IO]) {
                     .execute(on(b).selectByPrefix)((b, PlayerRepo.nicknamePrefixPattern(prefix), limit + 1))
                     .map(rows =>
                         Some(
-                          Leaderboard(rows.take(limit), more = rows.sizeIs > limit)
+                          Leaderboard(rows.take(limit), isMore = rows.sizeIs > limit)
                         )
                     )
         }
@@ -488,7 +488,7 @@ object EloRatingRepo {
     /** A player's row as placing them reads it: their standing, whether it is one the leaderboard shows, and their
       * place.
       */
-    case class Placing(standing: Standing, rated: Boolean, placed: Option[Placed])
+    case class Placing(standing: Standing, isRated: Boolean, placed: Option[Placed])
 
     private val standing: Codec[Standing] = (int4 *: int4).to[Standing]
     private val placed: Decoder[Placed] = (int4 *: standing).to[Placed]

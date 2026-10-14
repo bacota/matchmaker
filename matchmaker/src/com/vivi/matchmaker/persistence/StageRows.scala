@@ -19,8 +19,8 @@ private[persistence] object StageRows {
         poolSize: Option[Int],
         name: String,
         description: String,
-        concurrentRounds: Boolean,
-        bracketed: Boolean,
+        isConcurrentRounds: Boolean,
+        isBracketed: Boolean,
         repetitions: Option[Int],
         remaining: Option[Int],
         demote: Option[Int],
@@ -28,15 +28,15 @@ private[persistence] object StageRows {
         minStratum: Option[Int],
         pointsForWin: Int,
         pointsForDraw: Int,
-        pointsBonus: Boolean,
+        isPointsBonus: Boolean,
         promote: Option[Int],
-        rubberMatch: Boolean,
-        tiesAllowed: Option[Boolean],
-        strictStrata: Boolean,
-        tieBreakerStage: Boolean,
+        isRubberMatch: Boolean,
+        isTiesAllowed: Option[Boolean],
+        isStrictStrata: Boolean,
+        isTieBreakerStage: Boolean,
         seedPolicy: String,
         next: Option[I],
-        rotateRoles: Option[Boolean],
+        isRotateRoles: Option[Boolean],
         inner: Option[I]
     )
 
@@ -44,10 +44,10 @@ private[persistence] object StageRows {
       * table's column naming the inner design. Decoded by [[row]].
       */
     def columns(next: String, inner: String): String =
-        s"""s.kind::text, s.pool_size, s.name, s.description, s.concurrent_rounds, s.bracketed, s.repetitions,
+        s"""s.kind::text, s.pool_size, s.name, s.description, s.is_concurrent_rounds, s.is_bracketed, s.repetitions,
             s.remaining_participants, s.demote, s.max_stratum, s.min_stratum, s.points_for_win, s.points_for_draw,
-            s.points_bonus, s.promote, s.rubber_match, s.ties_allowed, s.strict_strata, s.tie_breaker_stage, s.seed_policy,
-            s.$next, a.rotate_roles, n.$inner"""
+            s.is_points_bonus, s.promote, s.is_rubber_match, s.is_ties_allowed, s.is_strict_strata, s.is_tie_breaker_stage, s.seed_policy,
+            s.$next, a.is_rotate_roles, n.$inner"""
 
     /** Decodes the stage's id, by `id`, followed by [[columns]]. */
     def row[I](id: Codec[I]): Decoder[Row[I]] =
@@ -70,8 +70,8 @@ private[persistence] object StageRows {
                   s.poolSize,
                   s.name,
                   s.description,
-                  s.concurrentRounds,
-                  s.brackets,
+                  s.isConcurrentRounds,
+                  s.isBrackets,
                   repetitions,
                   remaining,
                   s.demote,
@@ -79,12 +79,12 @@ private[persistence] object StageRows {
                   s.minStratum,
                   s.points,
                   s.pointsForDraw,
-                  s.pointsBonus,
+                  s.isPointsBonus,
                   s.promote,
-                  s.rubberMatch,
-                  s.tiesAllowed,
-                  s.strictStrata,
-                  s.tieBreakerStage,
+                  s.isRubberMatch,
+                  s.isTiesAllowed,
+                  s.isStrictStrata,
+                  s.isTieBreakerStage,
                   s.seedPolicy.code,
                   next
                 )
@@ -92,9 +92,9 @@ private[persistence] object StageRows {
 
     /** The columns [[fields]] writes, `next` being the table's own column for the stage played after. */
     def insertColumns(next: String): String =
-        s"""kind, pool_size, name, description, concurrent_rounds, bracketed, repetitions, remaining_participants,
-            demote, max_stratum, min_stratum, points_for_win, points_for_draw, points_bonus, promote, rubber_match,
-            ties_allowed, strict_strata, tie_breaker_stage, seed_policy, $next"""
+        s"""kind, pool_size, name, description, is_concurrent_rounds, is_bracketed, repetitions, remaining_participants,
+            demote, max_stratum, min_stratum, points_for_win, points_for_draw, is_points_bonus, promote, is_rubber_match,
+            is_ties_allowed, is_strict_strata, is_tie_breaker_stage, seed_policy, $next"""
 
     /** A stage from its row, with `inner` the design its pools play if it is a nesting stage. */
     def stageOf[I](r: Row[I], inner: Option[TournamentDesign]): StageDesign =
@@ -104,23 +104,23 @@ private[persistence] object StageRows {
               case (_, Some(c)) => Repetition.UntilRemaining(c)
               case _            => Repetition.UntilStopped
           },
-          brackets = r.bracketed,
+          isBrackets = r.isBracketed,
           demote = r.demote,
           promote = r.promote,
           maxStratum = r.maxStratum,
           minStratum = r.minStratum,
           points = r.pointsForWin,
           pointsForDraw = r.pointsForDraw,
-          pointsBonus = r.pointsBonus,
+          isPointsBonus = r.isPointsBonus,
           poolSize = r.poolSize,
-          concurrentRounds = r.concurrentRounds,
-          rotateRoles = r.rotateRoles.getOrElse(false),
-          strictStrata = r.strictStrata,
+          isConcurrentRounds = r.isConcurrentRounds,
+          isRotateRoles = r.isRotateRoles.getOrElse(false),
+          isStrictStrata = r.isStrictStrata,
           design = inner,
-          tieBreakerStage = r.tieBreakerStage,
+          isTieBreakerStage = r.isTieBreakerStage,
           seedPolicy = SeedPolicy.fromCode(r.seedPolicy),
-          rubberMatch = r.rubberMatch,
-          tiesAllowed = r.tiesAllowed,
+          isRubberMatch = r.isRubberMatch,
+          isTiesAllowed = r.isTiesAllowed,
           name = r.name,
           description = r.description
         )

@@ -99,7 +99,7 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
 
     test("a matchmaker that cannot be reached is a 502 the player can try again after".tag(Quiet)) {
         val recorder = RecordingMatchmaker()
-        recorder.failRegistrations = true
+        recorder.isFailRegistrations = true
         val (routes, _) = fixture(recorder)
         assertEquals(build(routes, slugger).status, 502)
     }

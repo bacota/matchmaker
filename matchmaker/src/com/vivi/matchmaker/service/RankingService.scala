@@ -122,8 +122,8 @@ object RankingService {
       */
     def place(repo: EloRatingRepo, game: Board, player: PlayerId): IO[Unit] =
         repo.lockForPlacing(game, player).flatMap {
-            case None                    => IO.unit
-            case Some(row) if !row.rated => row.placed.traverse_(takeOff(repo, game, player, _))
+            case None                      => IO.unit
+            case Some(row) if !row.isRated => row.placed.traverse_(takeOff(repo, game, player, _))
             case Some(row) =>
                 row.placed match {
                     case None                              => placeNew(repo, game, player, row.standing)

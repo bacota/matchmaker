@@ -44,8 +44,8 @@ class GameEngineServiceSpec extends PropertySuite {
     /** Records the last create request so the tests can assert on what the engine was told. */
     private class StubEngine(
         response: CreateGameResponse = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None),
-        var status: GameStatusResponse = GameStatusResponse(completed = false, participants = Nil),
-        fail: Boolean = false,
+        var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil),
+        isFail: Boolean = false,
         // Run in the middle of a status call, which is the only way a test can reach the window
         // between matchmaker's last read before the engine and its first write after one.
         beforeStatus: IO[Unit] = IO.unit
@@ -56,7 +56,7 @@ class GameEngineServiceSpec extends PropertySuite {
         @volatile var lastStatusKey: Option[String] = None
 
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            if (fail) IO.raiseError(GameEngineError("engine is down"))
+            if (isFail) IO.raiseError(GameEngineError("engine is down"))
             else IO { lastRequest = Some(request); lastUrl = Some(gameUrl); lastCreateKey = apiKey }.as(response)
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
@@ -78,9 +78,9 @@ class GameEngineServiceSpec extends PropertySuite {
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(
               GameStatusResponse(
-                completed = false,
+                isCompleted = false,
                 participants = firstSeat.toList.map(
-                  EngineParticipantStatus(_, pending = true, completed = false, prevMoveAt = None)
+                  EngineParticipantStatus(_, isPending = true, isCompleted = false, prevMoveAt = None)
                 )
               )
             )
@@ -110,7 +110,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     "game",
                     "description",
                     "https://engine.example.com/games",
-                    active = true,
+                    isActive = true,
                     // attacker is required, defender is not: a start waits for the first to be taken and
                     // never for the second, which is what lets these tests start a match with the
                     // challenger alone and still have a second role for a second player to accept as.
@@ -143,7 +143,7 @@ class GameEngineServiceSpec extends PropertySuite {
         timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
         start: Option[Instant] = None,
         settings: String = "{}",
-        live: Boolean = false
+        isLive: Boolean = false
     )
 
     private def challengeFor(
@@ -180,8 +180,8 @@ class GameEngineServiceSpec extends PropertySuite {
                     fixture.game.gameId,
                     matchId,
                     player.playerId,
-                    pending = false,
-                    completed = false,
+                    isPending = false,
+                    isCompleted = false,
                     due = None,
                     character.characterId,
                     role
@@ -207,7 +207,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     publicUrl = Option.when(terms.isPublic)("https://engine/public/1"),
                     timeLimitKind = terms.timeLimitKind,
                     timeLimitUnit = terms.timeLimitUnit,
-                    live = terms.live
+                    isLive = terms.isLive
                   ),
                   fixture.owner.playerId
                 )
@@ -426,7 +426,7 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 // Settled in the call, so that the failed attempt has been made and undone by the time the last role is
                 // chosen, rather than racing the reads below on a fiber of its own.
-                val failing = TestServices.servicesInline(new StubEngine(fail = true))
+                val failing = TestServices.servicesInline(new StubEngine(isFail = true))
                 val working = TestServices.servicesWith(StubEngine())
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
@@ -488,7 +488,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     )
                 after <- participantsOf(started)
             } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
-                after.head.pending &&
+                after.head.isPending &&
                 after.head.due.contains(due)
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -551,7 +551,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     _ <- callback(services, fixture, started, mine, firstPlan, roundOne, 1, List(theirs -> roundOne))
                     after <- participantsOf(started)
                     turns <- turnsOf(started)
-                } yield after.forall(_.pending) &&
+                } yield after.forall(_.isPending) &&
                     after.forall(_.due.contains(roundTwo.plusSeconds(300))) &&
                     // The late move's time was still spent, so its turn is kept.
                     turns.map(_.takenAt).toSet == Set(firstPlan, roundTwo)
@@ -582,9 +582,9 @@ class GameEngineServiceSpec extends PropertySuite {
                       List(mine -> roundTwo, theirs -> roundTwo)
                     )
                     after <- participantsOf(started)
-                } yield between.find(_.participantId == mine.participantId).exists(!_.pending) &&
-                    between.find(_.participantId == theirs.participantId).exists(_.pending) &&
-                    after.forall(_.pending)
+                } yield between.find(_.participantId == mine.participantId).exists(!_.isPending) &&
+                    between.find(_.participantId == theirs.participantId).exists(_.isPending) &&
+                    after.forall(_.isPending)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -611,7 +611,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       List(theirs -> created)
                     )
                     after <- participantsOf(started)
-                } yield after.forall(!_.pending)
+                } yield after.forall(!_.isPending)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -647,8 +647,8 @@ class GameEngineServiceSpec extends PropertySuite {
                     _ <- callback(services, fixture, started, theirs, created.plusSeconds(20), created, 2, Nil)
                     after <- participantsOf(started)
                     turns <- turnsOf(started)
-                } yield after.find(_.participantId == mine.participantId).exists(_.pending) &&
-                    after.find(_.participantId == theirs.participantId).exists(!_.pending) &&
+                } yield after.find(_.participantId == mine.participantId).exists(_.isPending) &&
+                    after.find(_.participantId == theirs.participantId).exists(!_.isPending) &&
                     turns.size == 2
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -676,13 +676,18 @@ class GameEngineServiceSpec extends PropertySuite {
                     // The engine answered before move 2: only theirs pending.
                     _ <- IO {
                         engine.status = GameStatusResponse(
-                          completed = false,
+                          isCompleted = false,
                           participants = List(
-                            EngineParticipantStatus(mine.participantId.value, pending = false, completed = false, None),
+                            EngineParticipantStatus(
+                              mine.participantId.value,
+                              isPending = false,
+                              isCompleted = false,
+                              None
+                            ),
                             EngineParticipantStatus(
                               theirs.participantId.value,
-                              pending = true,
-                              completed = false,
+                              isPending = true,
+                              isCompleted = false,
                               Some(created)
                             )
                           ),
@@ -695,9 +700,9 @@ class GameEngineServiceSpec extends PropertySuite {
                     _ <- IO { engine.status = engine.status.copy(sequence = Some(3)) }
                     _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                     fresh <- participantsOf(started)
-                } yield stale.forall(_.pending) &&
-                    fresh.find(_.participantId == mine.participantId).exists(!_.pending) &&
-                    fresh.find(_.participantId == theirs.participantId).exists(_.pending)
+                } yield stale.forall(_.isPending) &&
+                    fresh.find(_.participantId == mine.participantId).exists(!_.isPending) &&
+                    fresh.find(_.participantId == theirs.participantId).exists(_.isPending)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -727,7 +732,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     // The engine has both, the second being the move that ended the match.
                     _ <- IO {
                         engine.status = GameStatusResponse(
-                          completed = true,
+                          isCompleted = true,
                           participants = Nil,
                           turns = List(
                             EngineTurn(mine.participantId.value, created.plusSeconds(10), Some(created)),
@@ -912,18 +917,18 @@ class GameEngineServiceSpec extends PropertySuite {
                         (fixture, started, mine, theirs) = seated
                         _ <- IO {
                             engine.status = GameStatusResponse(
-                              completed = false,
+                              isCompleted = false,
                               participants = List(
                                 EngineParticipantStatus(
                                   mine.participantId.value,
-                                  pending = true,
-                                  completed = false,
+                                  isPending = true,
+                                  isCompleted = false,
                                   Some(created)
                                 ),
                                 EngineParticipantStatus(
                                   theirs.participantId.value,
-                                  pending = true,
-                                  completed = false,
+                                  isPending = true,
+                                  isCompleted = false,
                                   Some(created)
                                 )
                               ),
@@ -962,7 +967,7 @@ class GameEngineServiceSpec extends PropertySuite {
                         seats <- participantsOf(started)
                     } yield refreshed.completed &&
                         ended.exists(_.completed) &&
-                        seats.forall(p => p.completed && !p.pending)
+                        seats.forall(p => p.isCompleted && !p.isPending)
                 }
                 val result = for {
                     unnumbered <- run(None, "u")
@@ -989,8 +994,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 // by this callback is stamped as the callback runs.
                 reread <- services.engine.read(fixture.game.gameId, started.matchId, externalId)
             } yield stored.contains(model.Result(fixture.game.gameId, seat, 1, Map("points" -> 42.0), true)) &&
-                after.head.completed &&
-                !after.head.pending &&
+                after.head.isCompleted &&
+                !after.head.isPending &&
                 reread.completedAt.exists(at => !at.isBefore(started.start.get)) &&
                 completed.exists(_.matchId == started.matchId)
             result.timeout(15.seconds).unsafeRunSync()
@@ -1014,12 +1019,12 @@ class GameEngineServiceSpec extends PropertySuite {
                     seat = participants.head.participantId
                     _ <- IO {
                         engine.status = GameStatusResponse(
-                          completed = false,
+                          isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
                               seat.value,
-                              pending = true,
-                              completed = false,
+                              isPending = true,
+                              isCompleted = false,
                               prevMoveAt = Some(prevMoveAt)
                             )
                           )
@@ -1031,7 +1036,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     after <- participantsOf(started)
                 } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
                     !refreshed.completed &&
-                    after.head.pending &&
+                    after.head.isPending &&
                     after.head.due.contains(due)
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1052,15 +1057,15 @@ class GameEngineServiceSpec extends PropertySuite {
                 // The engine will claim the match is over, which is the answer that would do the most
                 // damage if it were applied: it completes the match and writes it a finish time.
                 _ <- IO {
-                    engine.status = GameStatusResponse(completed = true, participants = Nil)
+                    engine.status = GameStatusResponse(isCompleted = true, participants = Nil)
                 }
                 _ <- cancelling.set(
                   services.matches.cancel(fixture.game.gameId, started.matchId, externalId).void
                 )
                 refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 reread <- matchOf(fixture.game.gameId, started.matchId)
-            } yield refreshed.cancelled && !refreshed.completed &&
-                reread.exists(m => m.cancelled && !m.completed)
+            } yield refreshed.isCancelled && !refreshed.completed &&
+                reread.exists(m => m.isCancelled && !m.completed)
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1078,12 +1083,12 @@ class GameEngineServiceSpec extends PropertySuite {
                 seat = participants.head.participantId
                 _ <- IO {
                     engine.status = GameStatusResponse(
-                      completed = false,
+                      isCompleted = false,
                       participants = List(
                         EngineParticipantStatus(
                           seat.value,
-                          pending = true,
-                          completed = false,
+                          isPending = true,
+                          isCompleted = false,
                           prevMoveAt = Some(Instant.parse("2031-02-03T04:05:00Z"))
                         )
                       )
@@ -1091,7 +1096,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 }
                 _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 after <- participantsOf(started)
-            } yield after.head.pending && after.head.due.isEmpty
+            } yield after.head.isPending && after.head.due.isEmpty
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1140,18 +1145,18 @@ class GameEngineServiceSpec extends PropertySuite {
             // status call confirms the deadline rather than overturning it.
             _ <- IO {
                 engine.status = GameStatusResponse(
-                  completed = false,
+                  isCompleted = false,
                   participants = List(
                     EngineParticipantStatus(
                       mine.participantId.value,
-                      pending = true,
-                      completed = false,
+                      isPending = true,
+                      isCompleted = false,
                       prevMoveAt = Some(prevMoveAt)
                     ),
                     EngineParticipantStatus(
                       theirs.participantId.value,
-                      pending = false,
-                      completed = false,
+                      isPending = false,
+                      isCompleted = false,
                       prevMoveAt = None
                     )
                   )
@@ -1241,18 +1246,18 @@ class GameEngineServiceSpec extends PropertySuite {
             // rather than overturning it.
             _ <- IO {
                 engine.status = GameStatusResponse(
-                  completed = false,
+                  isCompleted = false,
                   participants = List(
                     EngineParticipantStatus(
                       mine.participantId.value,
-                      pending = true,
-                      completed = false,
+                      isPending = true,
+                      isCompleted = false,
                       prevMoveAt = Some(secondMoveAt)
                     ),
                     EngineParticipantStatus(
                       theirs.participantId.value,
-                      pending = false,
-                      completed = false,
+                      isPending = false,
+                      isCompleted = false,
                       prevMoveAt = None
                     )
                   )
@@ -1299,10 +1304,10 @@ class GameEngineServiceSpec extends PropertySuite {
                     winner = results.find(_.participantId == theirs.participantId)
                     after <- participantsOf(started)
                 } yield refreshed.completed &&
-                    results.forall(_.forfeit) &&
+                    results.forall(_.isForfeit) &&
                     loser.exists(r => !r.isWinner && r.rank == 2) &&
                     winner.exists(r => r.isWinner && r.rank == 1) &&
-                    after.forall(p => p.completed && !p.pending && p.due.isEmpty)
+                    after.forall(p => p.isCompleted && !p.isPending && p.due.isEmpty)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1333,18 +1338,18 @@ class GameEngineServiceSpec extends PropertySuite {
                     justNow <- IO.realTimeInstant
                     _ <- IO {
                         engine.status = GameStatusResponse(
-                          completed = false,
+                          isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
                               mine.participantId.value,
-                              pending = false,
-                              completed = false,
+                              isPending = false,
+                              isCompleted = false,
                               prevMoveAt = None
                             ),
                             EngineParticipantStatus(
                               theirs.participantId.value,
-                              pending = true,
-                              completed = false,
+                              isPending = true,
+                              isCompleted = false,
                               prevMoveAt = Some(justNow)
                             )
                           )
@@ -1401,7 +1406,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     after <- participantsOf(started)
                 } yield !seen.completed &&
                     results.isEmpty &&
-                    after.exists(p => p.pending && !p.completed)
+                    after.exists(p => p.isPending && !p.isCompleted)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1511,7 +1516,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     after <- participantsOf(started)
                     challenger = after.find(_.participantId == mine.participantId).get
                     opponent = after.find(_.participantId == theirs.participantId).get
-                } yield challenger.pending &&
+                } yield challenger.isPending &&
                     // Ten minutes less the four already spent, from the moment this turn began.
                     challenger.due.contains(second.plus(Duration.ofMinutes(6))) &&
                     // Not on the clock, so no deadline at all — their three minutes are spent but only
@@ -1587,7 +1592,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
                     results <- resultsOf(started)
                 } yield refreshed.completed &&
-                    results.forall(_.forfeit) &&
+                    results.forall(_.isForfeit) &&
                     results.find(_.participantId == mine.participantId).exists(r => !r.isWinner && r.rank == 2) &&
                     results.find(_.participantId == theirs.participantId).exists(r => r.isWinner && r.rank == 1)
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1661,18 +1666,18 @@ class GameEngineServiceSpec extends PropertySuite {
                     // spent five more minutes, and the opponent replied at once.
                     _ <- IO {
                         engine.status = GameStatusResponse(
-                          completed = false,
+                          isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
                               mine.participantId.value,
-                              pending = true,
-                              completed = false,
+                              isPending = true,
+                              isCompleted = false,
                               prevMoveAt = Some(fourth)
                             ),
                             EngineParticipantStatus(
                               theirs.participantId.value,
-                              pending = false,
-                              completed = false,
+                              isPending = false,
+                              isCompleted = false,
                               prevMoveAt = None
                             )
                           ),
@@ -1735,7 +1740,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     row.turnDue == challengerDue &&
                     row.turnDue.contains(second.plus(Duration.ofMinutes(6))) &&
                     // Not this caller's turn, so their own deadline is empty while the match's is not.
-                    row.due.isEmpty && !row.pending &&
+                    row.due.isEmpty && !row.isPending &&
                     mineRow.whoseTurn == row.whoseTurn && mineRow.turnDue == row.turnDue
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1900,7 +1905,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     // between — this is the state a player finds when the page loads after a start.
                     mine <- services.matches.due(externalId)
                     theirs <- services.matches.due(otherExternalId)
-                } yield participants.count(_.pending) == 1 &&
+                } yield participants.count(_.isPending) == 1 &&
                     (mine ++ theirs).map(_.matchId) == List(started.matchId)
                 result.timeout(30.seconds).unsafeRunSync()
         }
@@ -1931,7 +1936,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     made <- challenged(services, fixture, otherExternalId)
                     (started, _) = made
                     participants <- participantsOf(started)
-                } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.pending)
+                } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.isPending)
                 result.timeout(30.seconds).unsafeRunSync()
         }
     }
@@ -1963,7 +1968,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 } yield {
                     val request = engine.lastRequest.get
                     // A game of turns: each of the two players has half the minute, as a chess clock.
-                    started.live &&
+                    started.isLive &&
                     request.live.contains(LiveTerms(30L, "TOTAL")) &&
                     // Still sent: the engine sends no moves to it, but boxing finds matchmaker by it.
                     request.moveCallbackUrl.isDefined && request.resultsCallbackUrl.isDefined
@@ -1981,7 +1986,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
                     made <- challenged(services, fixture, otherExternalId, roundDuration = Some(Duration.ofMinutes(10)))
                     (started, _) = made
-                } yield !started.live && engine.lastRequest.exists(_.live.isEmpty)
+                } yield !started.isLive && engine.lastRequest.exists(_.live.isEmpty)
                 result.timeout(30.seconds).unsafeRunSync()
         }
     }
@@ -1994,7 +1999,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 noLimit <- services.tournaments
                     .createChallenge(
                       fixture.game.gameId,
-                      ChallengeRequest(characterId = Some(fixture.character.characterId), live = true),
+                      ChallengeRequest(characterId = Some(fixture.character.characterId), isLive = true),
                       externalId
                     )
                     .attempt
@@ -2026,9 +2031,9 @@ class GameEngineServiceSpec extends PropertySuite {
                     due <- services.matches.due(externalId)
                     active <- services.matches.active(externalId)
                 } yield !refreshed.completed &&
-                    participants.forall(p => !p.pending && p.due.isEmpty) &&
+                    participants.forall(p => !p.isPending && p.due.isEmpty) &&
                     due.isEmpty &&
-                    active.find(_.matchId == started.matchId).exists(_.live)
+                    active.find(_.matchId == started.matchId).exists(_.isLive)
                 result.timeout(30.seconds).unsafeRunSync()
         }
     }
@@ -2041,11 +2046,11 @@ class GameEngineServiceSpec extends PropertySuite {
                 started <- begin(fixture, liveChallenge(fixture))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
-                reported = ReportedResult(seat, rank = 2, scores = Map.empty, isWinner = false, forfeit = true)
+                reported = ReportedResult(seat, rank = 2, scores = Map.empty, isWinner = false, isForfeit = true)
                 _ <- services.engine.recordResults(fixture.game.gameId, started.matchId, List(reported), gameExternalId)
                 results <- resultsOf(started)
                 reread <- matchOf(fixture.game.gameId, started.matchId)
-            } yield results.exists(r => r.participantId == seat && r.forfeit && !r.isWinner) &&
+            } yield results.exists(r => r.participantId == seat && r.isForfeit && !r.isWinner) &&
                 reread.exists(_.completed)
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -2060,13 +2065,13 @@ class GameEngineServiceSpec extends PropertySuite {
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
                 started <- begin(fixture, liveChallenge(fixture))
-                _ <- IO { engine.status = GameStatusResponse(completed = true, participants = Nil) }
+                _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
                 refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 participants <- participantsOf(started)
                 active <- services.matches.active(externalId)
             } yield refreshed.completed &&
                 participants.nonEmpty &&
-                participants.forall(p => p.completed && !p.pending && p.due.isEmpty) &&
+                participants.forall(p => p.isCompleted && !p.isPending && p.due.isEmpty) &&
                 !active.exists(_.matchId == started.matchId)
             result.timeout(15.seconds).unsafeRunSync()
         }

@@ -42,9 +42,9 @@ class ProtocolSpec extends FunSuite {
         val status = engine.status("m-1").toOption.get
 
         val asMatchmaker = read[MmGameStatusResponse](write(status))
-        assertEquals(asMatchmaker.completed, false)
+        assertEquals(asMatchmaker.isCompleted, false)
         assertEquals(asMatchmaker.participants.map(_.participantId), List(11L, 22L))
-        assertEquals(asMatchmaker.participants.map(_.pending), List(true, false))
+        assertEquals(asMatchmaker.participants.map(_.isPending), List(true, false))
         assertEquals(asMatchmaker.participants.head.prevMoveAt, status.participants.head.prevMoveAt)
         // No moves yet, so nothing to report — and matchmaker reads the absence the same way.
         assertEquals(asMatchmaker.turns, Nil)

@@ -36,7 +36,7 @@ class NotificationServiceSpec extends PropertySuite {
                 s"game-$seed",
                 "description",
                 "https://engine.example.com/games",
-                active = true,
+                isActive = true,
                 Seq(
                   GameRole(
                     GameRoleId(0),

@@ -39,7 +39,7 @@ class RankingServiceSpec extends PropertySuite {
                 "Ladder",
                 "description",
                 "https://engine.example.com/games",
-                active = true,
+                isActive = true,
                 Seq(
                   GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "Only")
                 ),
@@ -52,11 +52,11 @@ class RankingServiceSpec extends PropertySuite {
     private def players(n: Int): IO[List[Player]] =
         List.fill(n)(()).traverse(_ => services.registration.register(unique("rank"), unique("rank-sub")))
 
-    /** A player's rating as play or an admin leaves it: `rated` is whether the leaderboard shows it — a match has moved
-      * it — or not, as for a row a match's start made; and how many rated matches stand behind it, which tell equal
-      * ratings apart.
+    /** A player's rating as play or an admin leaves it: `isRated` is whether the leaderboard shows it — a match has
+      * moved it — or not, as for a row a match's start made; and how many rated matches stand behind it, which tell
+      * equal ratings apart.
       */
-    private case class Rating(rating: Int, rated: Boolean, matches: Int = 1)
+    private case class Rating(rating: Int, isRated: Boolean, matches: Int = 1)
 
     private val upsert: Command[(Int, Long, Int, Int)] =
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, matches) VALUES ($int4, $int8, $int4, $int4)
@@ -67,7 +67,7 @@ class RankingServiceSpec extends PropertySuite {
         TestSession.resource.use { session =>
             ratings.toList.traverse_((player, r) =>
                 session.execute(upsert)(
-                  (game.gameId.value, player.playerId.value, r.rating, if (r.rated) r.matches else 0)
+                  (game.gameId.value, player.playerId.value, r.rating, if (r.isRated) r.matches else 0)
                 )
             )
         }
@@ -94,8 +94,8 @@ class RankingServiceSpec extends PropertySuite {
     private def expected(ratings: Map[Player, Rating]): Map[Long, Option[Int]] = {
         import scala.math.Ordering.Implicits._
         def standing(r: Rating) = (r.rating, r.matches)
-        val rated = ratings.values.filter(_.rated).map(standing).toList
-        ratings.map((player, r) => player.playerId.value -> Option.when(r.rated)(rated.count(_ > standing(r)) + 1))
+        val rated = ratings.values.filter(_.isRated).map(standing).toList
+        ratings.map((player, r) => player.playerId.value -> Option.when(r.isRated)(rated.count(_ > standing(r)) + 1))
     }
 
     // Close together, so that equal ratings are common and so are ties in matches between them, and some unrated, so
@@ -273,9 +273,9 @@ class RankingServiceSpec extends PropertySuite {
         } yield (first, second, third)
         val (first, second, third) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(first.ratings.flatMap(_.rank), (1 to 18).toList ++ List.fill(4)(19))
-        assert(first.more)
+        assert(first.isMore)
         assertEquals(second.ratings.flatMap(_.rank), (23 to 26).toList)
-        assert(!second.more)
-        assertEquals(third, Leaderboard(Nil, more = false))
+        assert(!second.isMore)
+        assertEquals(third, Leaderboard(Nil, isMore = false))
     }
 }

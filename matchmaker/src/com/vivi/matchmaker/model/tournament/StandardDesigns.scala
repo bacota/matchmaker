@@ -2,16 +2,16 @@ package com.vivi.matchmaker.model.tournament
 
 /** A standard tournament format (`tournament-design.md`, "Standard Tournament Designs"), as a design built for a game.
   *
-  * `twoRolesOnly` formats can only be played in a game of two required roles. `needsPoolSize` formats take their first
-  * stage's pool size from the tournament's default pool size, which whoever creates it may change. `classification` is
-  * the group a model of it is listed under where a tournament is created.
+  * `isTwoRolesOnly` formats can only be played in a game of two required roles. `isNeedsPoolSize` formats take their
+  * first stage's pool size from the tournament's default pool size, which whoever creates it may change.
+  * `classification` is the group a model of it is listed under where a tournament is created.
   */
 case class StandardDesign(
     key: String,
     name: String,
     description: String,
-    twoRolesOnly: Boolean = false,
-    needsPoolSize: Boolean = false,
+    isTwoRolesOnly: Boolean = false,
+    isNeedsPoolSize: Boolean = false,
     classification: String = "Elimination"
 )
 
@@ -23,25 +23,25 @@ object StandardDesigns {
         "single-elimination-consolation",
         "Single Elimination with Consolation",
         "Single elimination, with a match for third place.",
-        twoRolesOnly = true
+        isTwoRolesOnly = true
       ),
       StandardDesign(
         "modified-double-elimination",
         "Modified Double Elimination",
         "Lose twice and you are out, until a winner of each bracket is left to meet.",
-        twoRolesOnly = true
+        isTwoRolesOnly = true
       ),
       StandardDesign(
         "double-elimination",
         "Double Elimination",
         "Lose twice and you are out; the two brackets' winners meet in a final.",
-        twoRolesOnly = true
+        isTwoRolesOnly = true
       ),
       StandardDesign(
         "heats",
         "Heats with Single Elimination",
         "Round-robin heats seed a single elimination.",
-        needsPoolSize = true,
+        isNeedsPoolSize = true,
         classification = "Pools, then elimination"
       ),
       StandardDesign(
@@ -54,7 +54,7 @@ object StandardDesigns {
         "brazilian-repechage",
         "Brazilian Repechage",
         "Single elimination down to eight, then modified double elimination.",
-        twoRolesOnly = true
+        isTwoRolesOnly = true
       ),
       StandardDesign(
         "world-cup",
@@ -82,34 +82,34 @@ object StandardDesigns {
       * of two, so it may not be drawn ([[Ties]]).
       */
     private val eliminationMatch: TournamentDesign =
-        TournamentDesign(List(StageDesign(brackets = false, rotateRoles = false, demote = Some(2))))
+        TournamentDesign(List(StageDesign(isBrackets = false, isRotateRoles = false, demote = Some(2))))
 
     private def singleEliminationStage(until: Int): StageDesign =
-        StageDesign(repeat = Repetition.UntilRemaining(until), brackets = true, design = Some(eliminationMatch))
+        StageDesign(repeat = Repetition.UntilRemaining(until), isBrackets = true, design = Some(eliminationMatch))
 
     private def singleElimination: List[StageDesign] = List(singleEliminationStage(1))
 
     private def withConsolation: List[StageDesign] = List(
       StageDesign(
         repeat = Repetition.UntilRemaining(4),
-        brackets = true,
+        isBrackets = true,
         poolSize = Some(2),
         design = Some(eliminationMatch)
       ),
       StageDesign(
-        brackets = true,
+        isBrackets = true,
         poolSize = Some(2),
         minStratum = Some(-1),
-        strictStrata = true,
+        isStrictStrata = true,
         design = Some(eliminationMatch)
       ),
       StageDesign(
-        brackets = false,
+        isBrackets = false,
         poolSize = Some(2),
         minStratum = Some(-1),
-        strictStrata = true,
+        isStrictStrata = true,
         demote = None,
-        design = Some(TournamentDesign(List(StageDesign(brackets = false, demote = None))))
+        design = Some(TournamentDesign(List(StageDesign(isBrackets = false, demote = None))))
       )
     )
 
@@ -117,10 +117,10 @@ object StandardDesigns {
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
-          brackets = true,
+          isBrackets = true,
           demote = Some(2),
           minStratum = Some(-1),
-          strictStrata = true,
+          isStrictStrata = true,
           design = Some(eliminationMatch)
         )
 
@@ -140,9 +140,9 @@ object StandardDesigns {
       */
     def build(key: String, r: Int, poolSize: Option[Int]): Either[String, TournamentDesign] =
         find(key) match {
-            case None                                    => Left(s"there is no standard design called '$key'")
-            case Some(std) if std.twoRolesOnly && r != 2 => Left(s"${std.name} needs a game of exactly two players")
-            case Some(std) if std.needsPoolSize && poolSize.exists(_ < 1) => Left(s"${std.name} needs a pool size")
+            case None                                      => Left(s"there is no standard design called '$key'")
+            case Some(std) if std.isTwoRolesOnly && r != 2 => Left(s"${std.name} needs a game of exactly two players")
+            case Some(std) if std.isNeedsPoolSize && poolSize.exists(_ < 1) => Left(s"${std.name} needs a pool size")
             case Some(_) =>
                 Right(TournamentDesign(key match {
                     case "single-elimination"             => singleElimination
@@ -155,7 +155,7 @@ object StandardDesigns {
                             design = Some(eliminationMatch),
                             promote = Some(1),
                             demote = Some(2),
-                            strictStrata = false
+                            isStrictStrata = false
                           )
                         )
                     case "heats" =>
@@ -163,20 +163,20 @@ object StandardDesigns {
                         // knockout after it is sized for the game, since the heats take the tournament's default.
                         StageDesign(
                           poolSize = poolSize,
-                          brackets = false,
+                          isBrackets = false,
                           seedPolicy = SeedPolicy.Previous
                         ) :: knockout(r).map(sized(_, r))
                     case "ladder" =>
                         List(
                           StageDesign(
                             repeat = Repetition.UntilStopped,
-                            brackets = false,
+                            isBrackets = false,
                             maxStratum = None,
                             minStratum = None,
                             poolSize = Some(r),
                             promote = Some(1),
                             demote = Some(r),
-                            strictStrata = false,
+                            isStrictStrata = false,
                             seedPolicy = SeedPolicy.Reinitialize
                           )
                         )
@@ -184,17 +184,17 @@ object StandardDesigns {
                     case "world-cup" =>
                         StageDesign(
                           poolSize = Some(r + 2),
-                          brackets = false,
+                          isBrackets = false,
                           demote = Some((r + 4) / 2),
                           points = 2,
-                          pointsBonus = true,
+                          isPointsBonus = true,
                           pointsForDraw = 1,
                           seedPolicy = SeedPolicy.Reinitialize
                         ) :: knockout(r)
                     case "fencing" =>
                         StageDesign(
                           poolSize = Some(r + 3),
-                          brackets = false,
+                          isBrackets = false,
                           demote = Some((r + 3) / 2),
                           points = 1,
                           pointsForDraw = 0,
@@ -203,11 +203,11 @@ object StandardDesigns {
                     case "ncaa" =>
                         StageDesign(
                           poolSize = Some(r + 8),
-                          brackets = false,
+                          isBrackets = false,
                           demote = Some(2),
                           points = 2,
                           pointsForDraw = 1,
-                          rotateRoles = true,
+                          isRotateRoles = true,
                           seedPolicy = SeedPolicy.Reinitialize
                         ) :: knockout(r)
                 }))

@@ -30,8 +30,8 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     private case class NMatch(
         seats: List[Long],
-        rubber: Boolean,
-        tiesAllowed: Boolean,
+        isRubber: Boolean,
+        isTiesAllowed: Boolean,
         round: Option[Int],
         outcome: Option[List[Placing]]
     )
@@ -40,9 +40,15 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         members: List[PoolMember],
         matches: List[NMatch],
         sub: Option[NNode],
-        completed: Boolean
+        isCompleted: Boolean
     )
-    private case class NRun(stage: Int, repetition: Int, pools: List[NPool], sittingOut: List[Long], completed: Boolean)
+    private case class NRun(
+        stage: Int,
+        repetition: Int,
+        pools: List[NPool],
+        sittingOut: List[Long],
+        isCompleted: Boolean
+    )
     private case class NNode(
         path: List[Int],
         members: List[Member],
@@ -70,19 +76,19 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                           .map(m =>
                               NMatch(
                                 m.planned.seats.map(_.entrant).sorted,
-                                m.planned.rubber,
-                                m.tiesAllowed,
+                                m.planned.isRubber,
+                                m.isTiesAllowed,
                                 m.round,
                                 m.outcome.map(_.sortBy(_.entrant))
                               )
                           )
-                          .sortBy(m => (m.round.getOrElse(Int.MaxValue), m.seats.mkString(","), m.rubber)),
+                          .sortBy(m => (m.round.getOrElse(Int.MaxValue), m.seats.mkString(","), m.isRubber)),
                       p.sub.map(normal),
-                      p.completed
+                      p.isCompleted
                     )
                 ),
                 r.sittingOut.sorted,
-                r.completed
+                r.isCompleted
               )
           ),
           n.ranking
@@ -145,7 +151,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             )((s.game.gameId.value, matchId.value))
             _ <- seats.zipWithIndex.traverse_ { case ((participant, _), i) =>
                 session.execute(
-                  sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit)
+                  sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit)
                         VALUES ($int4, $int8, $int4, '{}', ${skunk.codec.all.bool}, false)""".command
                 )((s.game.gameId.value, participant, i + 1, i == 0))
             }

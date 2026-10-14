@@ -48,8 +48,11 @@ class ProtocolSpec extends FunSuite {
         val status = fought("sub-alice" -> Allocation(5, 0, 0)).status("m-1").toOption.get
         val asMatchmaker = read[MmGameStatusResponse](write(status))
 
-        assertEquals(asMatchmaker.completed, false)
-        assertEquals(asMatchmaker.participants.map(p => p.participantId -> p.pending), List(11L -> false, 22L -> true))
+        assertEquals(asMatchmaker.isCompleted, false)
+        assertEquals(
+          asMatchmaker.participants.map(p => p.participantId -> p.isPending),
+          List(11L -> false, 22L -> true)
+        )
         assertEquals(asMatchmaker.turns.map(_.participantId), List(11L))
         assertEquals(asMatchmaker.turns.head.startedAt, status.turns.head.startedAt)
     }

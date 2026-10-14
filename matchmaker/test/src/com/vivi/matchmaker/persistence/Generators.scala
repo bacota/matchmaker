@@ -72,7 +72,7 @@ object Generators {
           Seq.empty,
           externalId,
           characterUrl = characterUrl,
-          unimportantRoles = unimportantRoles
+          isUnimportantRoles = unimportantRoles
         )
 
     def genGameWithRole: Gen[Game] =
@@ -126,7 +126,7 @@ object Generators {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          friendly = friendly,
+          isFriendly = friendly,
           // Begun, as a match is once it is created in its engine: over once it is completed or cancelled.
           status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
         )

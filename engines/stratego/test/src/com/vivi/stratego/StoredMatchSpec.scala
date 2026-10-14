@@ -25,7 +25,7 @@ class StoredMatchSpec extends FunSuite {
           board = Board(
             Board.empty.cells
                 .updated(0, Some(Piece(0, Side.Red, Rank.Flag)))
-                .updated(60, Some(Piece(40, Side.Blue, Rank.Sergeant, revealed = true)))
+                .updated(60, Some(Piece(40, Side.Blue, Rank.Sergeant, isRevealed = true)))
                 .updated(99, Some(Piece(79, Side.Blue, Rank.Flag)))
           ),
           turns = List(
@@ -41,7 +41,7 @@ class StoredMatchSpec extends FunSuite {
             )
           ),
           isPublic = true,
-          completed = false,
+          isCompleted = false,
           createdAt = at(0),
           moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
           resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results"),
@@ -69,7 +69,7 @@ class StoredMatchSpec extends FunSuite {
 
     test("a concession is stored on its turn, and reads back; a turn that is not one stores nothing new") {
         val conceded =
-            stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), concession = true))
+            stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), isConcession = true))
         val stored = write(conceded)
         assertEquals(read[StrategoMatch](stored), conceded)
         assertEquals("\"concession\":true".r.findAllIn(stored).size, 1)

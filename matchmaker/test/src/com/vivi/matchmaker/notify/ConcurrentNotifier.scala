@@ -22,13 +22,13 @@ import cats.effect.IO
 class ConcurrentNotifier(expected: Int, timeout: FiniteDuration) extends RecordingNotifier {
     private val barrier = new CyclicBarrier(expected)
     private val passed = new AtomicInteger(0)
-    @volatile private var armed = false
+    @volatile private var isArmed = false
 
     /** From here on, a send waits for its siblings. Called once the fixture is built and its own mail is spent. */
-    def arm(): Unit = armed = true
+    def arm(): Unit = isArmed = true
 
     override def enqueue(message: MailMessage): IO[Unit] =
-        if (!armed) super.enqueue(message)
+        if (!isArmed) super.enqueue(message)
         else
             super.enqueue(message) *> IO.blocking {
                 barrier.await(timeout.toMillis, TimeUnit.MILLISECONDS)

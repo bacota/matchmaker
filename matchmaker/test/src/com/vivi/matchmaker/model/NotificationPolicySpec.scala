@@ -173,7 +173,7 @@ class NotificationPolicySpec extends FunSuite {
     }
 
     test("a column name per kind, all distinct, all derived from the code") {
-        assertEquals(NotificationType.MatchStarted.column, "notify_match_started")
+        assertEquals(NotificationType.MatchStarted.column, "is_notify_match_started")
         assertEquals(NotificationType.values.map(_.column).distinct.length, NotificationType.values.length)
     }
 

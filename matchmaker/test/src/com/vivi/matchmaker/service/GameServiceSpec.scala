@@ -310,23 +310,23 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), (false, Some(false)))
     }
 
-    // What the admin form's "Disabled" box does: an edit that clears `active` takes the game out of
+    // What the admin form's "Disabled" box does: an edit that clears `isActive` takes the game out of
     // the active list the menu is drawn from, and one that sets it again puts it back.
     test("an edit can disable a game and enable it again") {
         val result = for {
             admin <- makeAdmin()
             created <- gameService.createOrUpdate(
               admin.externalId,
-              Generators.genGameWithRole.sample.get.copy(active = true)
+              Generators.genGameWithRole.sample.get.copy(isActive = true)
             )
-            _ <- gameService.createOrUpdate(admin.externalId, created.copy(active = false))
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(isActive = false))
             whileDisabled <- gameService.list(admin.externalId, activeOnly = true)
             everything <- gameService.list(admin.externalId)
-            _ <- gameService.createOrUpdate(admin.externalId, created.copy(active = true))
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(isActive = true))
             afterEnabling <- gameService.list(admin.externalId, activeOnly = true)
         } yield (
           whileDisabled.exists(_.gameId == created.gameId),
-          everything.find(_.gameId == created.gameId).map(_.active),
+          everything.find(_.gameId == created.gameId).map(_.isActive),
           afterEnabling.exists(_.gameId == created.gameId)
         )
 
@@ -667,7 +667,7 @@ class GameServiceSpec extends PropertySuite {
             nickname <- IO(genUniqueString.sample.get)
             externalId <- IO(genUniqueString.sample.get)
             _ <- registrationService.register(nickname, externalId)
-            game <- IO(Generators.genGameWithRole.sample.get.copy(active = true))
+            game <- IO(Generators.genGameWithRole.sample.get.copy(isActive = true))
             created <- gameService.createOrUpdate(admin.externalId, game)
             games <- gameService.list(externalId)
         } yield games.find(_.gameId == created.gameId).exists(g => g.name == game.name && g.roles.size == 1)
@@ -678,7 +678,7 @@ class GameServiceSpec extends PropertySuite {
     test("list with activeOnly hides inactive games") {
         val result = for {
             admin <- makeAdmin()
-            inactive <- IO(Generators.genGame().sample.get.copy(active = false))
+            inactive <- IO(Generators.genGame().sample.get.copy(isActive = false))
             created <- gameService.createOrUpdate(admin.externalId, inactive)
             all <- gameService.list(admin.externalId)
             activeOnly <- gameService.list(admin.externalId, activeOnly = true)

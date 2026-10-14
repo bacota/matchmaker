@@ -102,11 +102,11 @@ object Router {
             case ("PUT", "me" :: "notifications" :: Nil) =>
                 body[Json.PreferencesRequest](request).flatMap(r =>
                     noContent(
-                      services.notifications.updateMine(caller, r.preferences, r.applyToGames, r.applyToMatches)
+                      services.notifications.updateMine(caller, r.preferences, r.isApplyToGames, r.isApplyToMatches)
                     )
                 )
 
-            // Same body as the route above, and `applyToGames` refused rather than ignored: there is
+            // Same body as the route above, and `isApplyToGames` refused rather than ignored: there is
             // no level between one game and another for it to mean anything about, so a client that
             // sends it here has asked for something this route cannot do -- and the likely way to end
             // up doing that is to reuse the body of its sibling above, which is exactly the mistake a
@@ -114,14 +114,16 @@ object Router {
             case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
                 withGameId(gameId) { id =>
                     body[Json.PreferencesRequest](request).flatMap { r =>
-                        if (r.applyToGames)
+                        if (r.isApplyToGames)
                             IO.pure(
                               Errors.badRequest(
                                 "applyToGames is not supported for one game's settings; it belongs to PUT /me/notifications"
                               )
                             )
                         else
-                            noContent(services.notifications.updateForGame(caller, id, r.preferences, r.applyToMatches))
+                            noContent(
+                              services.notifications.updateForGame(caller, id, r.preferences, r.isApplyToMatches)
+                            )
                     }
                 }
 
@@ -331,7 +333,7 @@ object Router {
                             r.rank,
                             r.scores.view.mapValues(JsonValues.fromScala).toMap,
                             r.isWinner,
-                            r.forfeit,
+                            r.isForfeit,
                             r.timeTaken,
                             r.eloStart,
                             r.eloDelta
@@ -366,7 +368,7 @@ object Router {
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
                 withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.FriendlyRequest](request).flatMap(r =>
-                        ok(services.matches.setFriendly(gid, mid, r.friendly, caller))
+                        ok(services.matches.setFriendly(gid, mid, r.isFriendly, caller))
                     )
                 }
 
@@ -418,7 +420,7 @@ object Router {
                               entry.rank,
                               entry.scores.view.mapValues(JsonValues.toScala).toMap,
                               entry.isWinner,
-                              entry.forfeit
+                              entry.isForfeit
                             )
                         )
                         val turns = r.turns.map(

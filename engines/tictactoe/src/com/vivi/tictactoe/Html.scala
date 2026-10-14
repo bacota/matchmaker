@@ -32,9 +32,9 @@ object Html {
         publicView: Boolean = false
     ): String = {
         val heading = state match {
-            case Some(s) if s.completed => outcome(s)
-            case Some(s)                => s"${s.turn.getOrElse("")} to move"
-            case None                   => "sign in to play"
+            case Some(s) if s.isCompleted => outcome(s)
+            case Some(s)                  => s"${s.turn.getOrElse("")} to move"
+            case None                     => "sign in to play"
         }
 
         s"""<!doctype html>
@@ -271,6 +271,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
-        else if (state.draw) "drawn"
+        else if (state.isDraw) "drawn"
         else state.winner.map(w => s"$w wins").getOrElse("over")
 }

@@ -70,7 +70,7 @@ object Html {
         publicView: Boolean = false
     ): String = {
         val heading = state match {
-            case Some(s) if s.completed        => outcome(s)
+            case Some(s) if s.isCompleted      => outcome(s)
             case Some(s) if s.phase == "setup" => "deploying"
             case Some(s)                       => s"${s.turn.getOrElse("")} to move"
             case None                          => "sign in to play"
@@ -1361,7 +1361,7 @@ $replayScript
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
-        else if (state.draw) "drawn"
+        else if (state.isDraw) "drawn"
         else if (state.ending.contains("conceded"))
             state.winner.flatMap(Side.parse).map(w => s"${w.other} conceded — $w wins").getOrElse("over")
         else if (state.ending.contains("flag")) state.winner.map(w => s"$w captured the flag").getOrElse("over")

@@ -63,7 +63,7 @@ class ArchiveSpec extends FunSuite with QuietTests {
         // What was archived is the stored JSON, which reads back as the match did.
         val bytes = recorder.archiveStore.bytesAt(recorder.archiveStore.urlOf("m-1")).get
         val archived = read[TicTacToeMatch](String(bytes, "UTF-8"))
-        assert(archived.completed)
+        assert(archived.isCompleted)
         assertEquals(archived.matchId, before.get.matchId)
     }
 
@@ -111,24 +111,24 @@ class ArchiveSpec extends FunSuite with QuietTests {
 
     test("archiving that fails leaves the live copy, and matchmaker's next status call archives it".tag(Quiet)) {
         val (engine, routes, live, recorder) = fixture()
-        recorder.refuseArchiving = true
+        recorder.isRefuseArchiving = true
         playToTheEnd(engine)
         assert(live.get("m-1").isDefined)
         assert(!recorder.isArchived("m-1"))
 
-        recorder.refuseArchiving = false
+        recorder.isRefuseArchiving = false
         val status = routes(EngineRequest("GET", "/matches/m-1/status"))
-        assertEquals(read[Protocol.GameStatusResponse](status.body).completed, true)
+        assertEquals(read[Protocol.GameStatusResponse](status.body).isCompleted, true)
         assert(recorder.isArchived("m-1"))
         assertEquals(live.get("m-1"), None)
     }
 
     test("a matchmaker that keeps no archives leaves every match where it is".tag(Quiet)) {
         val (engine, _, live, recorder) = fixture()
-        recorder.archivingUnavailable = true
+        recorder.isArchivingUnavailable = true
         playToTheEnd(engine)
         assert(live.get("m-1").isDefined)
-        assertEquals(engine.read("m-1").map(_.completed), Right(true))
+        assertEquals(engine.read("m-1").map(_.isCompleted), Right(true))
     }
 
     test("a match still being played is not archived by a status call") {

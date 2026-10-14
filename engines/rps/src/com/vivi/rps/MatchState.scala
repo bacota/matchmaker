@@ -3,6 +3,7 @@ package com.vivi.rps
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
+import upickle.implicits.key
 
 /** One player's seat in a match.
   *
@@ -35,7 +36,7 @@ case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, star
   * `clock` is a live match's turn clock, and `None` for every other match — defaulted, so that a match stored before
   * live matches existed reads back as the match it was.
   *
-  * `tiesAllowed` is false for a match that must not end in a draw. Then a tied throw starts another: `throws` holds
+  * `isTiesAllowed` is false for a match that must not end in a draw. Then a tied throw starts another: `throws` holds
   * every throw of every round, a round being each seat's next throw, and the match is over at the first round somebody
   * wins. Defaulted, so a match stored before it existed is the one-throw match it always was.
   */
@@ -44,7 +45,7 @@ case class RpsMatch(
     seats: List[Seat],
     throws: List[ThrowRecord],
     isPublic: Boolean,
-    completed: Boolean,
+    @key("completed") isCompleted: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
@@ -53,7 +54,7 @@ case class RpsMatch(
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
     override val description: Option[String] = None,
-    tiesAllowed: Boolean = true
+    @key("tiesAllowed") isTiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -116,7 +117,7 @@ case class RpsMatch(
       * nothing to end but the pair being complete — or, when ties are not allowed, the moment a pair is thrown that
       * somebody wins. Or, in a live match, the moment the clock ran out on whoever had not.
       */
-    def isOver: Boolean = ranOut || (completeRounds > 0 && (tiesAllowed || decide(lastRound).isDefined))
+    def isOver: Boolean = ranOut || (completeRounds > 0 && (isTiesAllowed || decide(lastRound).isDefined))
 
     /** Whether a live match's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
@@ -180,7 +181,7 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
 
     def isOver(m: RpsMatch): Boolean = m.isOver
 
-    def markCompleted(m: RpsMatch): RpsMatch = m.copy(completed = true)
+    def markCompleted(m: RpsMatch): RpsMatch = m.copy(isCompleted = true)
 
     def pending(m: RpsMatch): List[Seat] = m.pending
 
@@ -246,13 +247,13 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
               seats = seats,
               throws = Nil,
               isPublic = request.isPublic,
-              completed = false,
+              isCompleted = false,
               createdAt = now,
               moveCallbackUrl = request.moveCallbackUrl,
               resultsCallbackUrl = request.resultsCallbackUrl,
               gameDisplayName = request.gameDisplayName,
               description = request.description,
-              tiesAllowed = Protocol.tiesAllowed(request)
+              isTiesAllowed = Protocol.tiesAllowed(request)
             )
         }
 

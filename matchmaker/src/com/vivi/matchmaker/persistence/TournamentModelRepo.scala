@@ -31,8 +31,8 @@ class TournamentModelRepo(session: Session[IO]) {
         modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool
 
     private val modelColumns =
-        "tournament_model_id, version, name, description, classification, pool_size, late_entries, " +
-            "first_stage_model_id, active, choose_roles"
+        "tournament_model_id, version, name, description, classification, pool_size, is_late_entries, " +
+            "first_stage_model_id, is_active, is_choose_roles"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -84,7 +84,7 @@ class TournamentModelRepo(session: Session[IO]) {
     /** Every model a game could offer -- those with a classification that are active -- by classification and then
       * name.
       */
-    def listActive: IO[List[TournamentModel]] = all.map(ms => listed(ms.filter(_.active)))
+    def listActive: IO[List[TournamentModel]] = all.map(ms => listed(ms.filter(_.isActive)))
 
     /** Every model with a classification, deactivated or not: what a sync compares with the code. */
     def listClassified: IO[List[TournamentModel]] = all.map(listed)
@@ -147,17 +147,17 @@ class TournamentModelRepo(session: Session[IO]) {
     private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean)
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.lateEntries, m.chooseRoles)
+        (m.version, m.name, m.description, m.classification, m.poolSize, m.isLateEntries, m.isChooseRoles)
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            late_entries, choose_roles, first_stage_model_id)
+                                            is_late_entries, is_choose_roles, first_stage_model_id)
           VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, '')""".command
 
     private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
-                 classification = ${text.opt}, pool_size = ${int4.opt}, late_entries = $bool, choose_roles = $bool,
-                 active = true
+                 classification = ${text.opt}, pool_size = ${int4.opt}, is_late_entries = $bool, is_choose_roles = $bool,
+                 is_active = true
           WHERE tournament_model_id = $modelId""".command
 
     private val setFirst: Command[(String, TournamentModelId)] =
@@ -170,7 +170,7 @@ class TournamentModelRepo(session: Session[IO]) {
           VALUES ($modelId, $text, ${StageRows.fields(text)})""".command
 
     private val insertAtomic: Command[(TournamentModelId, String, Boolean)] =
-        sql"""INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, rotate_roles)
+        sql"""INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, is_rotate_roles)
           VALUES ($modelId, $text, $bool)""".command
 
     private val insertNesting: Command[(TournamentModelId, String, TournamentModelId)] =
@@ -198,9 +198,9 @@ class TournamentModelRepo(session: Session[IO]) {
     def delete(id: TournamentModelId): IO[Unit] = removeStages(id, keep = false)
 
     private val deactivateModel: Command[TournamentModelId] =
-        sql"UPDATE tournament_model SET active = false WHERE tournament_model_id = $modelId".command
+        sql"UPDATE tournament_model SET is_active = false WHERE tournament_model_id = $modelId".command
     private val deactivateStages: Command[TournamentModelId] =
-        sql"UPDATE stage_model SET active = false WHERE tournament_model_id = $modelId".command
+        sql"UPDATE stage_model SET is_active = false WHERE tournament_model_id = $modelId".command
 
     /** Deactivates a model, its stages and, depth first, its inner models: offered no longer, and kept. */
     def deactivate(id: TournamentModelId): IO[Unit] =
@@ -244,7 +244,7 @@ class TournamentModelRepo(session: Session[IO]) {
                     case None =>
                         for {
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))
-                            _ <- session.execute(insertAtomic)((model, stageId, stage.rotateRoles))
+                            _ <- session.execute(insertAtomic)((model, stageId, stage.isRotateRoles))
                         } yield Some(stageId)
                 }
             }
