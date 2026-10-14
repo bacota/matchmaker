@@ -125,7 +125,7 @@ class ArchiveServiceSpec extends FunSuite {
                     isCompleted = completed || cancelled,
                     None,
                     character.characterId,
-                    game.roles.head.gameRoleId
+                    Some(game.roles.head.gameRoleId)
                   ),
                   eloStart = EloRating.initial
                 )
@@ -164,7 +164,7 @@ class ArchiveServiceSpec extends FunSuite {
                     isCompleted = true,
                     None,
                     f.character.characterId,
-                    f.game.roles.head.gameRoleId
+                    Some(f.game.roles.head.gameRoleId)
                   ),
                   eloStart = EloRating.initial
                 )
@@ -411,7 +411,7 @@ class ArchiveServiceSpec extends FunSuite {
                 isCompleted = true,
                 None,
                 f.character.characterId,
-                f.game.roles.head.gameRoleId
+                Some(f.game.roles.head.gameRoleId)
               ),
               eloStart = EloRating.initial
             )

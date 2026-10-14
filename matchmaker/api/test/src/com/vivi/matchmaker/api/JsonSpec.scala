@@ -55,8 +55,8 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.displayName, "Parameter")
     }
 
-    // Unimportant roles travel with the game, and a game written before they existed keeps ratings by role.
-    test("a game says whether its roles are unimportant, and one that does not say has important ones") {
+    // A game without roles carries its range of players; a game with roles carries none, and writes none.
+    test("a game without roles carries its range of players, and a game with roles has none") {
         val game = Game(
           gameId = GameId(1),
           gameType = GameType.Plain,
@@ -69,9 +69,14 @@ class JsonSpec extends FunSuite {
           parameters = Seq.empty,
           externalId = "boxing"
         )
-        assert(read[Game](write(game.copy(hasUnimportantRoles = true))).hasUnimportantRoles)
-        val older = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq.filterNot(_._1 == "unimportantRoles")))
-        assert(!read[Game](older).hasUnimportantRoles)
+        val open = game.copy(minPlayers = Some(3), maxPlayers = Some(8), moveType = MoveType.Simultaneous)
+        val decoded = read[Game](write(open))
+        assertEquals((decoded.minPlayers, decoded.maxPlayers), (Some(3), Some(8)))
+        assert(decoded.isRoleless)
+        val unlimited = read[Game](write(open.copy(maxPlayers = None)))
+        assertEquals((unlimited.minPlayers, unlimited.maxPlayers), (Some(3), None))
+        assert(!read[Game](write(game)).isRoleless)
+        assert(!ujson.read(write(game)).obj.contains("minPlayers"))
     }
 
     // The key rides in the save request beside the game's fields and is read apart from them, and a

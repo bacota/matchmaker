@@ -9,7 +9,7 @@ import com.vivi.matchmaker.model.{MoveType, RoleType}
   */
 object Fixtures {
 
-    def game(roles: Int = 2, significant: Boolean = true, recommended: Int = 0): TournamentGame =
+    def game(roles: Int = 2, recommended: Int = 0): TournamentGame =
         TournamentGame(
           roles = (1 to roles).toList.map(i =>
               TournamentRole(id = i, roleType = RoleType.Required, preferenceLevel = None)
@@ -17,12 +17,21 @@ object Fixtures {
               (1 to recommended).toList.map(i =>
                   TournamentRole(id = roles + i, roleType = RoleType.Recommended, preferenceLevel = None)
               ),
-          hasSignificantRoles = significant,
           moveType = MoveType.Sequential,
           maxTurns = None
         )
 
     val twoPlayer: TournamentGame = game()
+
+    /** A game without roles of `least` to `most` players, played `perMatch` to a match — `None` for each pool in one.
+      */
+    def roleless(least: Int = 2, most: Option[Int] = None, perMatch: Option[Int] = None): TournamentGame =
+        TournamentGame(
+          roles = Nil,
+          moveType = MoveType.Simultaneous,
+          maxTurns = Some(1),
+          open = Some(OpenSeats(minPlayers = least, maxPlayers = most, playersPerMatch = perMatch))
+        )
 
     val hour: Duration = Duration.ofHours(1)
 

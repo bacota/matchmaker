@@ -58,13 +58,14 @@ class TournamentRepo(session: Session[IO]) {
         Option[Instant],
         Boolean,
         Option[Int],
-        Boolean
+        Boolean,
+        Option[Int]
     )
 
     private val written: Codec[Written] =
         text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: bool *: int4.opt *: int4.opt *:
             bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
-            bool *: instant.opt *: bool *: int4.opt *: bool
+            bool *: instant.opt *: bool *: int4.opt *: bool *: int4.opt
 
     // What is read: the written columns, then the round being played's start and deadline.
     private type Row = (Written, Option[Instant], Option[Instant])
@@ -75,7 +76,7 @@ class TournamentRepo(session: Session[IO]) {
               #$t.has_automatic_rounds, #$t.is_friendly, #$t.is_invitational, #$t.has_late_entries, #$t.min_rating, #$t.max_rating,
               #$t.is_public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
               #$t.has_concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.is_live, #$t.start,
-              #$t.has_role_choice, #$t.max_entrants, #$t.is_auto_started,
+              #$t.has_role_choice, #$t.max_entrants, #$t.is_auto_started, #$t.players_per_match,
               (SELECT r.start_date FROM round r
                 WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
               (SELECT r.deadline FROM round r
@@ -110,7 +111,8 @@ class TournamentRepo(session: Session[IO]) {
           t.settings.start,
           t.settings.hasRoleChoice,
           t.settings.maxEntrants,
-          t.settings.isAutoStarted
+          t.settings.isAutoStarted,
+          t.settings.playersPerMatch
         )
 
     private def tournamentOf(game: GameId, id: TournamentId, r: Row): Tournament = {
@@ -141,7 +143,8 @@ class TournamentRepo(session: Session[IO]) {
           start,
           chooseRoles,
           maxEntrants,
-          autoStart
+          autoStart,
+          playersPerMatch
         ) = w
         Tournament(
           gameId = game,
@@ -168,7 +171,8 @@ class TournamentRepo(session: Session[IO]) {
             start = start,
             hasRoleChoice = chooseRoles,
             maxEntrants = maxEntrants,
-            isAutoStarted = autoStart
+            isAutoStarted = autoStart,
+            playersPerMatch = playersPerMatch
           ),
           status = st,
           startedAt = startedAt,
@@ -186,10 +190,10 @@ class TournamentRepo(session: Session[IO]) {
                                       has_automatic_rounds, is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
                                       is_public, entries_per_player, round_duration, max_turns, has_concurrent_rounds,
                                       started_at, ended_at, checked_at, settings, is_live, start, has_role_choice,
-                                      max_entrants, is_auto_started, first_stage_id)
+                                      max_entrants, is_auto_started, players_per_match, first_stage_id)
           VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
-                  ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, 0)
+                  ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, ${int4.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
 
     /** Writes a new tournament. Its stages are written next, by [[StageRepo.copy]], in the same transaction. */
@@ -217,7 +221,8 @@ class TournamentRepo(session: Session[IO]) {
                  is_public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
                  max_turns = ${int4.opt}, has_concurrent_rounds = $bool, started_at = ${instant.opt},
                  ended_at = ${instant.opt}, checked_at = ${instant.opt}, settings = $settings, is_live = $bool,
-                 start = ${instant.opt}, has_role_choice = $bool, max_entrants = ${int4.opt}, is_auto_started = $bool
+                 start = ${instant.opt}, has_role_choice = $bool, max_entrants = ${int4.opt}, is_auto_started = $bool,
+                 players_per_match = ${int4.opt}
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
     /** Rewrites the tournament's own columns. Not the round being played, which is the round's to say. */

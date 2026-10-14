@@ -241,7 +241,7 @@ class FormatSpec extends FunSuite {
           matchId = MatchId(1),
           participantId = ParticipantId(2),
           nickname = "alice",
-          roleName = "First",
+          roleName = Some("First"),
           rank = Some(1),
           scores = Map.empty,
           isWinner = true,

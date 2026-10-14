@@ -17,20 +17,22 @@ object Schedule {
         if (k < 0 || k > n) 0L else (1 to k).foldLeft(1L)((acc, i) => acc * (n - k + i) / i)
 
     /** How many matches a round robin of `n` plays in this game: one match of everyone, when the pool can fill the
-      * required roles and is no bigger than the game has roles (`n` times over when roles are rotated); every
-      * `R`-member subset once, `R` times over when roles are rotated, in a bigger pool; and none when it cannot fill
-      * the required roles.
+      * required seats and is no bigger than a match can be (`n` times over when roles are rotated); every `R`-member
+      * subset once, `R` times over when roles are rotated, in a bigger pool; and none when it cannot fill the required
+      * seats. A game without roles has nothing to rotate, and seats each pool in one match unless the tournament says
+      * how many a match has.
       */
     def matchCount(n: Int, game: TournamentGame, rotateRoles: Boolean): Long = {
         val r = game.poolSeats
+        val rotate = rotateRoles && !game.isRoleless
         if (n < game.requiredSeats || n < 1) 0L
-        else if (n <= game.roles.size) (if (rotateRoles && game.hasSignificantRoles) n.toLong else 1L)
-        else choose(n, r) * (if (rotateRoles && game.hasSignificantRoles) r else 1)
+        else if (game.wholePoolSeats(n).isDefined) (if (rotate) n.toLong else 1L)
+        else choose(n, r) * (if (rotate) r else 1)
     }
 
     /** The matches of a round-robin pool, members in seed order, strongest first.
       *
-      * The subsets are taken in order of the members' seeds. With `rotateRoles` (and roles that matter) each subset
+      * The subsets are taken in order of the members' seeds. With `rotateRoles` (and a game with roles) each subset
       * plays once per role, the roles turned one place each time, so every member plays every role in it. Otherwise
       * each subset plays once, its roles handed out by [[roles]].
       *
@@ -49,8 +51,8 @@ object Schedule {
         if (n < game.requiredSeats || n < 1) Nil
         else {
             // Everyone in one match, if the game has a seat for each of them; otherwise every R-member subset.
-            val size = if (n <= game.roles.size) n else math.min(n, r)
-            val rotate = rotateRoles && game.hasSignificantRoles
+            val size = game.wholePoolSeats(n).getOrElse(math.min(n, r))
+            val rotate = rotateRoles && !game.isRoleless
             // Each subset's seats, members in seed order, with the roles of each pass.
             val subsets: List[List[Long]] =
                 if (size == 2 && concurrent == 1) circle(members) else members.combinations(size).toList
@@ -73,16 +75,16 @@ object Schedule {
         }
     }
 
-    /** The roles of a match whose roles are not rotated: chosen, the strongest seed choosing first, in a tournament
-      * whose seats always choose; in seat order where they do not matter; by preference where any role has a preference
-      * level, the most preferred to the strongest seed; and otherwise chosen (`tournament-design.md`, "Choice of
-      * Roles"). `subset` is in seed order. A match of one seat has nothing to choose between.
+    /** The roles of a match whose roles are not rotated: none in a game without roles, whose seats are all alike;
+      * chosen, the strongest seed choosing first, in a tournament whose seats always choose; by preference where any
+      * role has a preference level, the most preferred to the strongest seed; and otherwise chosen
+      * (`tournament-design.md`, "Choice of Roles"). `subset` is in seed order. A match of one seat has nothing to
+      * choose between.
       */
     def roles(subset: List[Long], seating: List[TournamentRole], game: TournamentGame): List[SeatPlan] =
-        if (game.hasRoleChoice && subset.sizeIs > 1)
+        if (game.isRoleless) subset.map(e => SeatPlan(entrant = e, role = None))
+        else if (game.hasRoleChoice && subset.sizeIs > 1)
             subset.zipWithIndex.map((e, i) => SeatPlan(entrant = e, role = None, chooseOrder = Some(i)))
-        else if (!game.hasSignificantRoles)
-            subset.zip(seating).map((e, role) => SeatPlan(entrant = e, role = Some(role.id)))
         else if (seating.exists(_.preferenceLevel.isDefined)) {
             val preferred = seating.zipWithIndex.sortBy((role, i) => (-role.preferenceLevel.getOrElse(Int.MinValue), i))
             subset.zip(preferred).map { case (e, (role, _)) => SeatPlan(entrant = e, role = Some(role.id)) }

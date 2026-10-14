@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import scala.util.chaining.*
 import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
@@ -55,7 +56,7 @@ class EloRatingServiceSpec extends PropertySuite {
     private def register(): IO[Player] =
         services.registration.register(nickname = unique("elo"), externalId = unique("elo-sub"))
 
-    private def makeGame(unimportantRoles: Boolean = false): IO[Game] =
+    private def makeGame(roleless: Boolean = false): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
@@ -83,18 +84,29 @@ class EloRatingServiceSpec extends PropertySuite {
                   )
                 ),
                 Seq.empty,
-                unique("duel"),
-                hasUnimportantRoles = unimportantRoles
+                unique("duel")
               )
+                  // Without roles, two players a match: the same duel, its seats all alike.
+                  .pipe(g =>
+                      if (roleless)
+                          g.copy(
+                            roles = Seq.empty,
+                            minPlayers = Some(2),
+                            maxPlayers = Some(2),
+                            moveType = MoveType.Simultaneous,
+                            maxTurns = Some(1)
+                          )
+                      else g
+                  )
             )
         }
 
     /** A plain game of two required roles, an overall admin, an admin of the game, and two players. */
     private case class Fixture(game: Game, overall: Player, host: Player, first: Player, second: Player)
 
-    private def fixture(unimportantRoles: Boolean = false): IO[Fixture] =
+    private def fixture(roleless: Boolean = false): IO[Fixture] =
         for {
-            game <- makeGame(unimportantRoles)
+            game <- makeGame(roleless)
             overall <- register()
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
             host <- register()
@@ -114,14 +126,18 @@ class EloRatingServiceSpec extends PropertySuite {
         )
 
     /** A match between the two players, hosted by the game's admin, started and not yet over. */
+    private def roleOf(game: Game, i: Int): GameRoleId =
+        game.roles.lift(i).fold(GameRoleId.unassigned)(_.gameRoleId)
+
     private def started(f: Fixture, friendly: Boolean, timeLimit: Option[Duration] = None): IO[MatchId] =
         Challenges
             .startedMatch(
               services = services,
               game = f.game,
               seats = List(
-                Challenges.Seat(player = f.first, role = f.game.roles(0).gameRoleId),
-                Challenges.Seat(player = f.second, role = f.game.roles(1).gameRoleId)
+                // A game without roles has none to choose, and the seat's is never asked for.
+                Challenges.Seat(player = f.first, role = roleOf(f.game, 0)),
+                Challenges.Seat(player = f.second, role = roleOf(f.game, 1))
               ),
               friendly = friendly,
               roundDuration = timeLimit,
@@ -246,7 +262,9 @@ class EloRatingServiceSpec extends PropertySuite {
     private def roleRatings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
         TestSession.resource.use { session =>
             val repo = new EloRatingRepo(session)
-            List(f.first -> f.game.roles(0), f.second -> f.game.roles(1))
+            // None for a game without roles, which has no role to be rated in.
+            List(f.first -> f.game.roles.lift(0), f.second -> f.game.roles.lift(1))
+                .collect { case (p, Some(role)) => (p, role) }
                 .traverse((p, role) =>
                     repo
                         .readRated(game = f.game.gameId, player = p.playerId, role = Some(role.gameRoleId))
@@ -932,9 +950,9 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(record, Some(MatchRecord(losses = 1)))
     }
 
-    test("a game whose roles are unimportant keeps no ratings by role") {
+    test("a game without roles keeps no ratings by role") {
         val result = for {
-            f <- fixture(unimportantRoles = true)
+            f <- fixture(roleless = true)
             matchId <- started(f = f, friendly = false)
             _ <- finish(f = f, matchId = matchId, winner = f.first)
             overall <- ratings(f)

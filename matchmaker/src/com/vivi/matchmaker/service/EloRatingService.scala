@@ -25,9 +25,9 @@ import com.vivi.matchmaker.persistence.{
     TextCodec
 }
 
-/** Players' Elo ratings in each game, overall and, for a game whose roles matter, in each role: the leaderboards
-  * anybody may read, and the setting of an overall one that a game's admin may do. What moves them is a match that is
-  * not friendly completing, which is [[EloRatingService.rate]], called from inside the transaction that completes it.
+/** Players' Elo ratings in each game, overall and, for a game with roles, in each role: the leaderboards anybody may
+  * read, and the setting of an overall one that a game's admin may do. What moves them is a match that is not friendly
+  * completing, which is [[EloRatingService.rate]], called from inside the transaction that completes it.
   */
 class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = MatchEndings.disabled)(using
     TextCodec[T]
@@ -183,8 +183,9 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
 object EloRatingService {
 
     /** What each of a match's players is rated as it begins — the starting rating for a player who has none yet — for
-      * the start to write on their seats: overall, and when `byRole`, in the role each seat is for. For every match,
-      * friendly or not: it is a fact about the seat either way.
+      * the start to write on their seats: overall, and when `byRole`, in the role each seat is for — a seat of a game
+      * without roles has none, and is rated overall only. For every match, friendly or not: it is a fact about the seat
+      * either way.
       *
       * For the start's own transaction, the one that writes the seats. Every seat's number has to come from the same
       * moment: a match of some of these players completing alongside the start is either in all of them or in none. So
@@ -202,12 +203,13 @@ object EloRatingService {
     def startingRatings(
         session: skunk.Session[IO],
         gameId: GameId,
-        seats: Seq[(PlayerId, GameRoleId)],
+        seats: Seq[(PlayerId, Option[GameRoleId])],
         byRole: Boolean
     ): IO[StartingRatings] = {
         val repo = new EloRatingRepo(session)
         val keys = seats.map((player, _) => RatingKey(None, player)) ++
-            (if (byRole) seats.map((player, role) => RatingKey(Some(role), player)) else Nil)
+            (if (byRole) seats.collect { case (player, Some(role)) => RatingKey(Some(role), player) }
+             else Nil)
         (repo.ensureRatedIn(gameId, keys) *> repo.readForShare(gameId, keys)).map(StartingRatings(_))
     }
 
@@ -217,8 +219,9 @@ object EloRatingService {
     case class StartingRatings(ratings: Map[RatingKey, Int]) {
         def overall(player: PlayerId): Int = ratings(RatingKey(None, player))
 
-        /** The player's rating in `role`: none when the game's roles are unimportant. */
-        def inRole(player: PlayerId, role: GameRoleId): Option[Int] = ratings.get(RatingKey(Some(role), player))
+        /** The player's rating in `role`: none for a seat with no role, in a game without roles. */
+        def inRole(player: PlayerId, role: Option[GameRoleId]): Option[Int] =
+            role.flatMap(r => ratings.get(RatingKey(Some(r), player)))
     }
 
     /** What a rated match did to each seat's ratings: overall, and in the seat's role — none in a role for a match some
@@ -308,9 +311,11 @@ object EloRatingService {
                         val record = MatchRecord
                             .of(rank = ranks(row.participantId), ranks = ranks.values.toSeq, forfeit = forfeit)
                         deltas.get(row.participantId).map(d => (RatingKey(None, row.playerId), d, record)).toList ++
+                            // A seat with no role, in a game without roles, has no rating in one to move.
                             inRole
                                 .get(row.participantId)
-                                .map(d => (RatingKey(Some(row.gameRoleId), row.playerId), d, record))
+                                .zip(row.gameRoleId)
+                                .map((d, role) => (RatingKey(Some(role), row.playerId), d, record))
                     }
                     .sortBy(_._1)
                 for {
@@ -403,10 +408,12 @@ object EloRatingService {
                 .groupMapReduce(r => bySeat(r.participantId).playerId)(r =>
                     deltas.getOrElse(r.participantId, 0) - r.eloDelta.getOrElse(0)
                 )(_ + _)
+            // Only seats with a role: a game without roles keeps no ratings in one.
             roleChange = results
-                .groupMapReduce(r =>
-                    RatingKey(Some(bySeat(r.participantId).gameRoleId), bySeat(r.participantId).playerId)
-                )(r => inRole.getOrElse(r.participantId, 0) - r.eloRoleDelta.getOrElse(0))(_ + _)
+                .filter(r => bySeat(r.participantId).gameRoleId.isDefined)
+                .groupMapReduce(r => RatingKey(bySeat(r.participantId).gameRoleId, bySeat(r.participantId).playerId))(
+                  r => inRole.getOrElse(r.participantId, 0) - r.eloRoleDelta.getOrElse(0)
+                )(_ + _)
             // Whether a turn running out ended it, for the whole match, as `rate` decided when it completed: one
             // row's flag is enough. Read row by row instead, a match an engine flagged on the loser's row alone
             // would give its winner a forfeit win and never take it back.
@@ -418,15 +425,10 @@ object EloRatingService {
                 .flatMap { r =>
                     val seat = bySeat(r.participantId)
                     val record = MatchRecord.of(rank = r.rank, ranks = results.map(_.rank), forfeit = forfeit)
-                    List(
-                      (RatingKey(None, seat.playerId), r.eloDelta, deltas.get(r.participantId), record),
-                      (
-                        RatingKey(Some(seat.gameRoleId), seat.playerId),
-                        r.eloRoleDelta,
-                        inRole.get(r.participantId),
-                        record
-                      )
-                    )
+                    (RatingKey(None, seat.playerId), r.eloDelta, deltas.get(r.participantId), record) ::
+                        seat.gameRoleId.toList.map(role =>
+                            (RatingKey(Some(role), seat.playerId), r.eloRoleDelta, inRole.get(r.participantId), record)
+                        )
                 }
                 .filter((_, was, now, _) => was.isDefined || now.isDefined)
                 .sortBy(_._1)
@@ -457,8 +459,8 @@ object EloRatingService {
                     .traverse_(participantRepo.adjustEloStart(gameId, seat.participantId, _)) *>
                     // A later seat in the same role began at a role rating this changes; one in another role, or
                     // with no role rating, did not.
-                    roleChange
-                        .get(RatingKey(Some(seat.gameRoleId), seat.playerId))
+                    seat.gameRoleId
+                        .flatMap(role => roleChange.get(RatingKey(Some(role), seat.playerId)))
                         .filter(_ != 0)
                         .traverse_(participantRepo.adjustEloRoleStart(gameId, seat.participantId, _))
             }

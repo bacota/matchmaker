@@ -160,15 +160,21 @@ CREATE TABLE game (
     -- What happens when a turn runs out: a rule of the game, set by its admin, where the time limit is
     -- the tournament's.
     timeout_action    TEXT NOT NULL DEFAULT 'FORFEIT' CHECK (timeout_action IN ('FORFEIT')),
-    -- The admin saying no role has an advantage in winning. Otherwise a rated match moves each player's
-    -- rating in their role as well as overall (elo_role_rating).
-    has_unimportant_roles BOOLEAN NOT NULL DEFAULT false,
+    -- How many players a match of a game without roles may seat: set for such a game, which has no
+    -- game_role rows, and NULL for a game whose roles are its seats. NULL max_players is no limit. A
+    -- tournament chooses how many each match seats (tournament.players_per_match).
+    min_players       INT CONSTRAINT game_min_players_check CHECK (min_players >= 1),
+    max_players       INT,
     -- Whether players move in turn ('seq') or all at once ('sim'), which decides how a tournament divides
     -- a round's time; and how many turns a simultaneous game lasts, where it can say.
     move_type         TEXT NOT NULL DEFAULT 'seq' CONSTRAINT game_move_type_check CHECK (move_type IN ('seq', 'sim')),
     max_turns         INT CONSTRAINT game_max_turns_check CHECK (max_turns > 0),
     create_date       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+    update_date       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT game_max_players_check
+        CHECK (max_players IS NULL OR (min_players IS NOT NULL AND max_players >= min_players)),
+    -- A game without roles is played by everyone moving at once, so no seat goes first.
+    CONSTRAINT game_roleless_simultaneous CHECK (min_players IS NULL OR move_type = 'sim')
 );
 
 CREATE INDEX ON game (external_id);
@@ -320,8 +326,8 @@ CREATE TABLE tournament_model (
     pool_size            INT CHECK (pool_size > 0),
     first_stage_model_id TEXT NOT NULL,
     has_late_entries      BOOLEAN NOT NULL DEFAULT false,
-    -- Whether every match's seats choose their roles, in seed order, whatever the game's preference levels
-    -- and whether its roles matter. A challenge's do.
+    -- Whether every match's seats choose their roles, in seed order, whatever the game's preference levels.
+    -- A challenge's do.
     has_role_choice      BOOLEAN NOT NULL DEFAULT false,
     -- False once the code no longer defines it and a tournament made from it has entrants: offered no
     -- longer, and kept for them. Its stages and inner models are deactivated with it.
@@ -459,6 +465,9 @@ CREATE TABLE tournament (
     max_turns           INT CHECK (max_turns > 0),
     -- The size of a pool of any stage that does not set its own.
     default_pool_size   INT NOT NULL CHECK (default_pool_size > 0),
+    -- For a game without roles: how many players each match seats. NULL seats each pool in one match.
+    -- Always NULL for a game with roles, whose roles decide.
+    players_per_match   INT CHECK (players_per_match > 0),
     -- How long a round lasts, which is also every match's time limit: spent as the game spends time
     -- (`Clock.forMatch`), a chess clock in a game of turns and a limit per turn in one of simultaneous moves.
     round_duration      INTERVAL,
@@ -1006,8 +1015,7 @@ CREATE TABLE participant (
     chosen_at            TIMESTAMPTZ,
     -- The player's ratings, overall and in the seat's role, as the match began (elo_rating,
     -- elo_role_rating). A seat exists from when its round begins, and is rated when its match is created
-    -- in the engine. The role's is NULL in a game whose roles are unimportant, and such a match is rated
-    -- overall only.
+    -- in the engine. The role's is NULL in a game without roles, and such a match is rated overall only.
     elo_start            INT,
     elo_role_start       INT,
     -- The seat's notifications, resolved when it is created (see player) and changed only by the player
@@ -1177,7 +1185,7 @@ CREATE INDEX elo_rating_unplaced ON elo_rating (game_id)
             AND (rank IS NULL OR ranked_rating IS DISTINCT FROM rating OR ranked_matches IS DISTINCT FROM matches))
        OR (NOT (matches > 0 OR set_by IS NOT NULL) AND rank IS NOT NULL);
 
--- Ratings by role, for a game whose roles are not unimportant: a pool of their own, played seat against
+-- Ratings by role, for a game with roles: a pool of their own, played seat against
 -- seat by the same arithmetic as the overall ones, so the gap between roles is what a role is worth. As
 -- elo_rating, but only ever moved by play.
 CREATE TABLE elo_role_rating (

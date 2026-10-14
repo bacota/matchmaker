@@ -515,7 +515,7 @@ object MatchTables {
                         // a statement of it. The text says it; the emoji is decoration over the top.
                         if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
-                        span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        span(cls := "who", row.nickname + row.roleName.fold("")(role => s" ($role)")),
                         // Their Elo rating as the match began, in a friendly match as in any other, and
                         // what the match did to it if it was rated.
                         span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),

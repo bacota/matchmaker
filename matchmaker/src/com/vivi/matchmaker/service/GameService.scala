@@ -180,16 +180,34 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** What the schema would refuse anyway, refused here first so that it is a 400 explaining itself rather than a
       * constraint violation surfacing as a 500.
       *
-      * The one rule that is not the schema's: a game must define at least one role. Every seat of a match names a role,
-      * so a game with none is a game nothing can be played in — it would take challenges no further than the form that
-      * tried to create one.
+      * The rules that are not the schema's: a game has roles or a range of players, exactly one of the two. A game with
+      * neither is a game nothing can be played in — it would take challenges no further than the form that tried to
+      * create one — and one with both would be asking its seats to be at once named and all alike.
       */
     private def validate(game: Game): IO[Unit] =
         for {
-            _ <- IO.raiseWhen(game.roles.isEmpty)(
+            _ <- IO.raiseWhen(game.roles.isEmpty && !game.isRoleless)(
               ValidationError(
-                s"game '${game.name}' defines no roles; every seat names one, so a game needs at least one"
+                s"game '${game.name}' defines no roles and no number of players; it needs one or the other"
               )
+            )
+            _ <- IO.raiseWhen(game.roles.nonEmpty && game.isRoleless)(
+              ValidationError(
+                s"game '${game.name}' has roles and a number of players; a game without roles has the number instead"
+              )
+            )
+            _ <- IO.raiseWhen(game.maxPlayers.isDefined && !game.isRoleless)(
+              ValidationError(s"game '${game.name}' has a most players but no fewest")
+            )
+            _ <- IO.raiseWhen(game.minPlayers.exists(_ < 1))(
+              ValidationError(s"game '${game.name}' needs at least one player a match")
+            )
+            _ <- IO.raiseWhen(game.minPlayers.zip(game.maxPlayers).exists((least, most) => most < least))(
+              ValidationError(s"game '${game.name}' has fewer most players than fewest")
+            )
+            // Nobody goes first in a game without roles: everyone moves at once.
+            _ <- IO.raiseWhen(game.isRoleless && game.moveType != MoveType.Simultaneous)(
+              ValidationError(s"game '${game.name}' has no roles, so its players must move at once")
             )
             // Its display name falls back to it, and a blank one is a constraint violation rather
             // than an explanation.

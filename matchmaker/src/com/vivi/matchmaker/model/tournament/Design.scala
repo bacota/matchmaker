@@ -100,49 +100,78 @@ object Ties {
 /** One of a game's roles, as a tournament needs to know it. */
 case class TournamentRole(id: Int, roleType: com.vivi.matchmaker.model.RoleType, preferenceLevel: Option[Int])
 
+/** How a game without roles seats its matches, as a tournament plays it: the game's range of players, and the
+  * tournament's `playersPerMatch` — `None` seats each pool in one match.
+  */
+case class OpenSeats(minPlayers: Int, maxPlayers: Option[Int], playersPerMatch: Option[Int])
+
 /** What a tournament needs to know about its game.
   *
-  * `roles` are all the game's roles in the order the game lists them. `hasSignificantRoles` is the negation of the
-  * game's `has_unimportant_roles`: whether it matters who plays which. `hasRoleChoice` is the tournament's, not the
-  * game's: every match's seats choose their roles, whatever the game says about them.
+  * `roles` are all the game's roles in the order the game lists them, empty for a game without roles, which has `open`
+  * instead. `hasRoleChoice` is the tournament's, not the game's: every match's seats choose their roles, whatever the
+  * game says about them — in a game that has roles to choose.
   */
 case class TournamentGame(
     roles: List[TournamentRole],
-    hasSignificantRoles: Boolean,
     moveType: com.vivi.matchmaker.model.MoveType,
     maxTurns: Option[Int],
-    hasRoleChoice: Boolean = false
+    hasRoleChoice: Boolean = false,
+    open: Option[OpenSeats] = None
 ) {
     import com.vivi.matchmaker.model.RoleType
 
-    /** The game's "R": its required and recommended roles, which is what a pool is sized by. */
-    def poolSeats: Int = roles.count(_.roleType != RoleType.Optional)
+    /** Whether the game is played without roles: its seats are all alike, and the tournament says how many a match has.
+      */
+    def isRoleless: Boolean = open.isDefined
+
+    /** The game's "R", which is what a pool is sized by: its required and recommended roles, or for a game without
+      * roles the tournament's players per match. A tournament that seats each pool in one match has no R of its own;
+      * the fewest players the game takes stands in for it.
+      */
+    def poolSeats: Int =
+        open.fold(roles.count(_.roleType != RoleType.Optional))(o => o.playersPerMatch.getOrElse(o.minPlayers))
 
     /** How many members a match needs. */
-    def requiredSeats: Int = roles.count(_.roleType == RoleType.Required)
+    def requiredSeats: Int = open.fold(roles.count(_.roleType == RoleType.Required))(_.minPlayers)
+
+    /** How many seats a match of a pool of `n` has, when the pool is small enough to play as one match: everyone, if
+      * the game has a seat for each of them. `None` when the pool is too big and plays its `R`-member subsets instead.
+      */
+    def wholePoolSeats(n: Int): Option[Int] =
+        open match {
+            case Some(o) => Option.when(o.playersPerMatch.forall(n <= _))(n)
+            case None    => Option.when(n <= roles.size)(n)
+        }
 
     /** The roles a match seats, required first, then recommended, then optional, each in the game's own order. A match
       * of `n` seats plays the first `n`, so it has the optional roles only when it has more seats than the game's R.
+      * Empty for a game without roles.
       */
     def seatingRoles: List[TournamentRole] =
         roles.filter(_.roleType == RoleType.Required) ++ roles.filter(_.roleType == RoleType.Recommended) ++
             roles.filter(_.roleType == RoleType.Optional)
 
-    /** Whether a rubber match can break a tie: only in a game of exactly two roles (Q7). */
-    def isRubberApplicable: Boolean = roles.sizeIs == 2
+    /** Whether a rubber match can break a tie: only in a game of two seats a match (Q7) — exactly two roles, or two
+      * players per match.
+      */
+    def isRubberApplicable: Boolean = open.fold(roles.sizeIs == 2)(_.playersPerMatch.contains(2))
 }
 
 object TournamentGame {
-    def of(game: com.vivi.matchmaker.model.Game): TournamentGame =
+
+    /** `playersPerMatch` is the tournament's, for a game without roles; a game with roles ignores it. */
+    def of(game: com.vivi.matchmaker.model.Game, playersPerMatch: Option[Int] = None): TournamentGame =
         TournamentGame(
           roles = game.roles.toList
               .sortBy(_.gameRoleId.value)
               .map(r =>
                   TournamentRole(id = r.gameRoleId.value, roleType = r.roleType, preferenceLevel = r.preferenceLevel)
               ),
-          hasSignificantRoles = !game.hasUnimportantRoles,
           moveType = game.moveType,
-          maxTurns = game.maxTurns
+          maxTurns = game.maxTurns,
+          open = game.minPlayers.map(least =>
+              OpenSeats(minPlayers = least, maxPlayers = game.maxPlayers, playersPerMatch = playersPerMatch)
+          )
         )
 }
 
@@ -175,6 +204,20 @@ object Validation {
             List(
               Option.when(game.requiredSeats == 0)(
                 Problem(where = "", message = "the game has no required role, so no match could start")
+              ),
+              game.open.flatMap(o =>
+                  o.playersPerMatch.collect {
+                      case k if k < o.minPlayers =>
+                          Problem(
+                            where = "",
+                            message = s"a match of $k players is fewer than the game's least of ${o.minPlayers}"
+                          )
+                      case k if o.maxPlayers.exists(k > _) =>
+                          Problem(
+                            where = "",
+                            message = s"a match of $k players is more than the game's most of ${o.maxPlayers.get}"
+                          )
+                  }
               ),
               Option.when(
                 game.moveType == com.vivi.matchmaker.model.MoveType.Simultaneous && game.maxTurns.isEmpty &&
@@ -270,16 +313,27 @@ object Validation {
           } else None,
           Option.when(stage.design.isEmpty && n < game.requiredSeats)(
             p(
-              s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it could never play a match"
+              if (game.isRoleless)
+                  s"a pool of $n is fewer than the game's least of ${game.requiredSeats} players, so it could never " +
+                      "play a match"
+              else
+                  s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it could never play " +
+                      "a match"
             )
           ),
+          // Each pool one match: a pool bigger than the game takes is a match its engine cannot play.
+          game.open
+              .filter(o => stage.design.isEmpty && o.playersPerMatch.isEmpty)
+              .flatMap(_.maxPlayers)
+              .filter(n > _)
+              .map(most => p(s"each pool plays as one match, and a pool of $n is more than the game's most of $most")),
           Option.when(
             stage.design.isDefined && (stage.hasPointsBonus || stage.isRotatingRoles || stage.hasConcurrentRounds)
           )(
             w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")
           ),
           Option.when(stage.hasRubberMatch && !game.isRubberApplicable)(
-            w("a rubber match only breaks ties in a game of two roles; scores will be used instead")
+            w("a rubber match only breaks ties in a game of two seats a match; scores will be used instead")
           ),
           Option.when(stage.hasBrackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(
             w("brackets keep their shape only when the winner takes the seed")

@@ -37,7 +37,8 @@ object TournamentStatus {
   * `isLive` makes every match live, its turns and clock the engine's to run. `start` is when it is meant to be played,
   * shown and nothing more. `hasRoleChoice` has every match's seats choose their roles, whatever the game's preference
   * levels. `maxEntrants` is the most entries it takes, and with `isAutoStarted` it starts by itself when they are
-  * reached.
+  * reached. `playersPerMatch` is for a game without roles: how many players each match seats, `None` for every member
+  * of a pool in one match. Always `None` for a game with roles, whose roles decide.
   */
 case class TournamentSettings(
     hasAutomaticRounds: Boolean = false,
@@ -56,7 +57,8 @@ case class TournamentSettings(
     start: Option[Instant] = None,
     hasRoleChoice: Boolean = false,
     maxEntrants: Option[Int] = None,
-    isAutoStarted: Boolean = false
+    isAutoStarted: Boolean = false,
+    playersPerMatch: Option[Int] = None
 )
 
 /** A design every game may offer, which a tournament is made from by copying its stages: one of the standard formats

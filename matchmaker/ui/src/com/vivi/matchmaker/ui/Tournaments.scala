@@ -259,7 +259,15 @@ object Tournaments {
               ownerControls(d, editing)
           else emptyNode,
           child <-- editing.signal.map(
-            if (_) game.fold(emptyNode)(g => form(game = g, existing = Some(t), onSaved = () => editing.set(false)))
+            if (_)
+                game.fold(emptyNode)(g =>
+                    form(
+                      game = g,
+                      existing = Some(t),
+                      onSaved = () => editing.set(false),
+                      entered = d.entries.count(!_.isWithdrawn)
+                    )
+                )
             else emptyNode
           ),
           entriesSection(d, me),
@@ -286,6 +294,20 @@ object Tournaments {
                 )(_ => reload(d))
             )
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
+        val entered = d.entries.count(!_.isWithdrawn)
+        // Entries can keep coming after the pool size was set to how many had entered, and a game without roles played
+        // as one match a pool would then start as more than one match.
+        val morePools = Option.when(
+          t.status == TournamentStatus.Open &&
+              Store.games.now().exists(g => g.gameId == t.gameId && g.isRoleless) && entered > t.defaultPoolSize
+        )(
+          p(
+            cls := "detail",
+            role := "status",
+            s"$entered have entered and pools hold ${t.defaultPoolSize}, so this will start as more than one pool. " +
+                "Edit the tournament to change the pool size."
+          )
+        )
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
         val checking = Var(false)
         // This round's own length, in hours; blank for the tournament's.
@@ -295,6 +317,7 @@ object Tournaments {
         div(
           cls := "card",
           h3("Run This Tournament"),
+          morePools.getOrElse(emptyNode),
           div(
             cls := "row",
             t.status match {
@@ -834,12 +857,17 @@ object Tournaments {
 
     /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
       * tournament's model and default pool size are not offered for editing, since its stages cannot change.
+      *
+      * For a game without roles it also asks how many players a match has, and — for a tournament not yet started, with
+      * `entered` entries so far — offers the pool size that puts everyone entered in one pool.
       */
-    def form(game: Game, existing: Option[Tournament], onSaved: () => Unit): HtmlElement = {
+    def form(game: Game, existing: Option[Tournament], onSaved: () => Unit, entered: Int = 0): HtmlElement = {
         val key = existing.fold("new-tournament")(t => s"tournament-${t.tournamentId.value}")
         val running = existing.exists(_.status == TournamentStatus.Running)
-        val r = game.poolSeats
         val s0 = existing.map(_.settings).getOrElse(TournamentSettings())
+        // A game without roles: whether each pool is one match, and otherwise how many players a match has, as typed.
+        val wholePool = Var(game.isRoleless && existing.isDefined && s0.playersPerMatch.isEmpty)
+        val perMatch = Var(s0.playersPerMatch.orElse(game.minPlayers).fold("")(_.toString))
         val name = Var(existing.map(_.name).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val models: Signal[Seq[TournamentModel]] =
@@ -873,6 +901,11 @@ object Tournaments {
             models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
         def isKeeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
+        def playersPerMatch: Option[Int] =
+            Option.when(game.isRoleless && !wholePool.now())(perMatch.now().trim.toIntOption).flatten
+        // The game's R as this tournament plays it: its roles, or for a game without roles the players per match.
+        def r: Int = TournamentGame.of(game, playersPerMatch).poolSeats
+
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
          * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
          * model whose players always choose, which every tournament made from it does. */
@@ -903,7 +936,8 @@ object Tournaments {
           start = ChallengeForm.startOf(plannedStart.now()),
           hasRoleChoice = chooseRoles.now(),
           maxEntrants = int(maxEntrants),
-          isAutoStarted = autoStart.now() && int(maxEntrants).isDefined
+          isAutoStarted = autoStart.now() && int(maxEntrants).isDefined,
+          playersPerMatch = playersPerMatch
         )
         def check(): Unit =
             problems.set(chosen.now() match {
@@ -913,7 +947,7 @@ object Tournaments {
                 case Some(m) =>
                     Validation.validate(
                       design = m.design,
-                      game = TournamentGame.of(game),
+                      game = TournamentGame.of(game, playersPerMatch),
                       maxTurns = settings.maxTurns,
                       defaultPoolSize = int(poolSize).orElse(Some(r))
                     )
@@ -936,6 +970,47 @@ object Tournaments {
             Views.tipField(id = freshTipId(s"$key-tip"), caption = caption, text = tip)(
               input(tpe := "number", inputMode := "numeric", controlled(value <-- v.signal, onInput.mapToValue --> v))
             )
+
+        /* How many players a match of a game without roles has: a number in the game's range, or everyone in the
+         * pool. */
+        def playersControl: HtmlElement = {
+            val range = game.maxPlayers.fold(s"at least ${game.requiredSeats}")(m => s"${game.requiredSeats} to $m")
+            val id = freshTipId(s"$key-tip")
+            div(
+              withTip(
+                id = id,
+                subject = "Players per match",
+                text = s"How many players each match has: $range. Or everyone in the pool in one match — then set " +
+                    "the pool size to how many should play together."
+              )(
+                label(
+                  cls := "field",
+                  "Players per match",
+                  select(
+                    aria.describedBy := id,
+                    onChange.mapToValue --> (v => wholePool.set(v == "pool")),
+                    value <-- wholePool.signal.map(if (_) "pool" else "count"),
+                    option(value := "count", "A number of players"),
+                    option(value := "pool", "Everyone in the pool")
+                  )
+                )
+              ),
+              child <-- wholePool.signal.map(isPool =>
+                  if (isPool) emptyNode
+                  else
+                      field(
+                        "Players in each match",
+                        input(
+                          tpe := "number",
+                          inputMode := "numeric",
+                          minAttr := game.requiredSeats.toString,
+                          game.maxPlayers.fold(emptyMod)(m => maxAttr := m.toString),
+                          controlled(value <-- perMatch.signal, onInput.mapToValue --> perMatch)
+                        )
+                      )
+              )
+            )
+        }
 
         div(
           cls := "card",
@@ -1000,12 +1075,22 @@ object Tournaments {
                         )
                     case _ => emptyNode
                 },
+                if (game.isRoleless) playersControl else emptyNode,
                 number(
                   caption = "Default pool size",
                   v = poolSize,
                   tip =
                       "How many play in a pool of any stage that does not set its own size. Filled in from the format."
-                )
+                ),
+                // Everyone entered so far in one pool: as many as the game takes in a match, when it has a most.
+                if (game.isRoleless && entered > 0) {
+                    val everyone = game.maxPlayers.fold(entered)(math.min(entered, _))
+                    button(
+                      tpe := "button",
+                      s"One pool of everyone entered ($everyone)",
+                      onClick --> (_ => poolSize.set(everyone.toString))
+                    )
+                } else emptyNode
               ),
           h4("Settings"),
           checkbox(
@@ -1030,12 +1115,16 @@ object Tournaments {
             tip = "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
           ),
           checkbox(caption = "Public", v = isPublic, tip = "Anybody may see it listed, and watch its matches."),
-          checkbox(
-            caption = "Players choose roles",
-            v = chooseRoles,
-            tip = "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
-                "being given them."
-          ),
+          // Nothing to choose in a game without roles.
+          if (game.isRoleless) emptyNode
+          else
+              checkbox(
+                caption = "Players choose roles",
+                v = chooseRoles,
+                tip =
+                    "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
+                        "being given them."
+              ),
           checkbox(
             caption = "Live",
             v = live,
@@ -1144,7 +1233,8 @@ object Tournaments {
       */
     private def formatsSection(game: Game, player: Player): HtmlElement = {
         val said = Var("")
-        val tg = TournamentGame.of(game)
+        // Judged as the server judges an offer: a game without roles at its smallest matches.
+        val tg = TournamentGame.of(game, game.minPlayers)
         val offered: Signal[Set[TournamentModelId]] =
             Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty).map(_.tournamentModelId).toSet)
         val tipId = freshTipId("formats-tip")
