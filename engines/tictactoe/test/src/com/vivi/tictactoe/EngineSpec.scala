@@ -25,8 +25,20 @@ class EngineSpec extends FunSuite with QuietTests {
           settings = "{}",
           timeLimitSeconds = Some(600),
           players = List(
-            Protocol.EnginePlayer("sub-alice", 11L, roles.head, None, None),
-            Protocol.EnginePlayer("sub-bob", 22L, roles(1), None, None)
+            Protocol.EnginePlayer(
+              cognitoId = "sub-alice",
+              participantId = 11L,
+              role = roles.head,
+              characterId = None,
+              characterState = None
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = "sub-bob",
+              participantId = 22L,
+              role = roles(1),
+              characterId = None,
+              characterState = None
+            )
           ),
           moveCallbackUrl = Some(moveUrl),
           resultsCallbackUrl = Some(resultsUrl)
@@ -35,7 +47,12 @@ class EngineSpec extends FunSuite with QuietTests {
     private def fixture(isPublic: Boolean = false, roles: List[Option[String]] = List(None, None)) = {
         val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
-        val engine = Engine(store, recorder, "http://engine.test", () => Instant.parse("2026-01-01T00:00:00Z"))
+        val engine = Engine(
+          store = store,
+          matchmaker = recorder,
+          baseUrl = "http://engine.test",
+          now = () => Instant.parse("2026-01-01T00:00:00Z")
+        )
         val created = engine.createGame(createRequest(isPublic, roles)).toOption.get
         val m = store.get("m-1").get
         (engine, recorder, store, created, m)
@@ -71,7 +88,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a create sent again with the same match id is answered with the first one's urls, and changes nothing") {
         val (engine, recorder, store, created, _) = fixture(isPublic = true)
-        engine.move("m-1", "sub-alice", 4)
+        engine.move(matchId = "m-1", cognitoId = "sub-alice", cell = 4)
         val played = store.get("m-1").get
 
         assertEquals(engine.createGame(createRequest(isPublic = true)), Right(created))
@@ -83,7 +100,16 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a create for a stored match id naming other players is refused as a conflict") {
         val (engine, _, store, _, m) = fixture()
         val other = createRequest().copy(players =
-            List(Protocol.EnginePlayer("sub-carol", 33L, None, None, None), createRequest().players(1))
+            List(
+              Protocol.EnginePlayer(
+                cognitoId = "sub-carol",
+                participantId = 33L,
+                role = None,
+                characterId = None,
+                characterState = None
+              ),
+              createRequest().players(1)
+            )
         )
 
         assertEquals(
@@ -95,7 +121,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a game for anything but two players is refused") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         val solo = createRequest().copy(players = createRequest().players.take(1))
         assertEquals(
           engine.createGame(solo),
@@ -106,7 +132,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test("every move is reported to matchmaker, naming who moved and who is next") {
         val (engine, recorder, store, _, m) = fixture()
 
-        assert(engine.move("m-1", playerOf(m, Mark.X), 4).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 4).isRight)
         assertEquals(recorder.moves.size, 1)
         val (url, first) = recorder.moves.head
         assertEquals(url, moveUrl)
@@ -123,14 +149,19 @@ class EngineSpec extends FunSuite with QuietTests {
         val recorder = RecordingMatchmaker()
         val start = Instant.parse("2026-01-01T00:00:00Z")
         var elapsed = 0L
-        val engine = Engine(store, recorder, "http://engine.test", () => start.plusSeconds(elapsed))
+        val engine = Engine(
+          store = store,
+          matchmaker = recorder,
+          baseUrl = "http://engine.test",
+          now = () => start.plusSeconds(elapsed)
+        )
         engine.createGame(createRequest())
         val m = store.get("m-1").get
 
         elapsed = 60
-        engine.move("m-1", playerOf(m, Mark.X), 4)
+        engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 4)
         elapsed = 90
-        engine.move("m-1", playerOf(m, Mark.O), 0)
+        engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.O), cell = 0)
 
         // Matchmaker would infer exactly this for a game of alternating turns, and the point of
         // saying it is that only the engine knows whether the inference holds.
@@ -141,10 +172,19 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a player may not move out of turn, twice, or into a taken cell") {
         val (engine, recorder, _, _, m) = fixture()
 
-        assertEquals(engine.move("m-1", playerOf(m, Mark.O), 0), Left(Refusal.Invalid("it is X's turn, not O's")))
-        assert(engine.move("m-1", playerOf(m, Mark.X), 0).isRight)
-        assertEquals(engine.move("m-1", playerOf(m, Mark.X), 1), Left(Refusal.Invalid("it is O's turn, not X's")))
-        assertEquals(engine.move("m-1", playerOf(m, Mark.O), 0), Left(Refusal.Invalid("cell 0 is already taken by X")))
+        assertEquals(
+          engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.O), cell = 0),
+          Left(Refusal.Invalid("it is X's turn, not O's"))
+        )
+        assert(engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 0).isRight)
+        assertEquals(
+          engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 1),
+          Left(Refusal.Invalid("it is O's turn, not X's"))
+        )
+        assertEquals(
+          engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.O), cell = 0),
+          Left(Refusal.Invalid("cell 0 is already taken by X"))
+        )
         // A refused move is not a move: matchmaker heard about exactly the one that landed.
         assertEquals(recorder.moves.size, 1)
     }
@@ -152,16 +192,16 @@ class EngineSpec extends FunSuite with QuietTests {
     test("someone with no seat in the match may not move in it") {
         val (engine, recorder, _, _, _) = fixture()
         assertEquals(
-          engine.move("m-1", "sub-carol", 0),
+          engine.move(matchId = "m-1", cognitoId = "sub-carol", cell = 0),
           Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
         )
-        assertEquals(engine.move("m-1", "", 0).isLeft, true)
+        assertEquals(engine.move(matchId = "m-1", cognitoId = "", cell = 0).isLeft, true)
         assertEquals(recorder.moves, Nil)
     }
 
     test("a match whose two seats are the same player is refused, since a seat is found by subject") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         val both = createRequest()
         val doubled = both.copy(players = both.players.map(_.copy(cognitoId = "sub-alice")))
         assertEquals(
@@ -177,7 +217,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         // X takes the top row, O the middle of the board and one below it.
         List((x, 0), (o, 3), (x, 1), (o, 4), (x, 2)).foreach((token, cell) =>
-            assert(engine.move("m-1", token, cell).isRight, s"cell $cell")
+            assert(engine.move(matchId = "m-1", cognitoId = token, cell = cell).isRight, s"cell $cell")
         )
 
         val finished = store.get("m-1").get
@@ -212,7 +252,9 @@ class EngineSpec extends FunSuite with QuietTests {
         //  X O O
         //  O X X
         List((x, 0), (o, 1), (x, 2), (o, 4), (x, 3), (o, 6), (x, 7), (o, 5), (x, 8))
-            .foreach((token, cell) => assert(engine.move("m-1", token, cell).isRight, s"cell $cell"))
+            .foreach((token, cell) =>
+                assert(engine.move(matchId = "m-1", cognitoId = token, cell = cell).isRight, s"cell $cell")
+            )
 
         val results = recorder.results.head._2.results
         assert(results.forall(r => r.rank == 1 && !r.isWinner))
@@ -227,9 +269,14 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, _, m) = fixture()
         val x = playerOf(m, Mark.X)
         val o = playerOf(m, Mark.O)
-        List((x, 0), (o, 3), (x, 1), (o, 4), (x, 2)).foreach((token, cell) => engine.move("m-1", token, cell))
+        List((x, 0), (o, 3), (x, 1), (o, 4), (x, 2)).foreach((token, cell) =>
+            engine.move(matchId = "m-1", cognitoId = token, cell = cell)
+        )
 
-        assertEquals(engine.move("m-1", o, 8), Left(Refusal.Invalid("this match is already over")))
+        assertEquals(
+          engine.move(matchId = "m-1", cognitoId = o, cell = 8),
+          Left(Refusal.Invalid("this match is already over"))
+        )
         assertEquals(recorder.results.size, 1)
     }
 
@@ -242,11 +289,11 @@ class EngineSpec extends FunSuite with QuietTests {
         // Nobody has moved, so the first player's clock started when the match was created.
         assertEquals(opening.participants.head.prevMoveAt, Some(Instant.parse("2026-01-01T00:00:00Z")))
 
-        engine.move("m-1", playerOf(m, Mark.X), 4)
+        engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 4)
         assertEquals(engine.status("m-1").toOption.get.participants.filter(_.isPending).map(_.participantId), List(22L))
 
         List((playerOf(m, Mark.O), 0), (playerOf(m, Mark.X), 1), (playerOf(m, Mark.O), 2), (playerOf(m, Mark.X), 7))
-            .foreach((token, cell) => engine.move("m-1", token, cell))
+            .foreach((token, cell) => engine.move(matchId = "m-1", cognitoId = token, cell = cell))
 
         val over = engine.status("m-1").toOption.get
         assert(over.isCompleted)
@@ -259,15 +306,20 @@ class EngineSpec extends FunSuite with QuietTests {
         val store = InMemoryMatchStore[TicTacToeMatch]()
         val start = Instant.parse("2026-01-01T00:00:00Z")
         var elapsed = 0L
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => start.plusSeconds(elapsed))
+        val engine = Engine(
+          store = store,
+          matchmaker = RecordingMatchmaker(),
+          baseUrl = "http://engine.test",
+          now = () => start.plusSeconds(elapsed)
+        )
         engine.createGame(createRequest())
         val m = store.get("m-1").get
 
         // X takes a minute over the opening; O replies after thirty seconds more.
         elapsed = 60
-        engine.move("m-1", playerOf(m, Mark.X), 4)
+        engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 4)
         elapsed = 90
-        engine.move("m-1", playerOf(m, Mark.O), 0)
+        engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.O), cell = 0)
 
         val all = engine.status("m-1").toOption.get.turns
         assertEquals(all.map(_.participantId), List(11L, 22L))
@@ -287,17 +339,20 @@ class EngineSpec extends FunSuite with QuietTests {
     test("an unknown match is a 404 to matchmaker and to a player alike") {
         val (engine, _, _, _, _) = fixture()
         assertEquals(engine.status("nope"), Left(Refusal.NotFound("no match 'nope'")))
-        assertEquals(engine.move("nope", "sub-alice", 0), Left(Refusal.NotFound("no match 'nope'")))
+        assertEquals(
+          engine.move(matchId = "nope", cognitoId = "sub-alice", cell = 0),
+          Left(Refusal.NotFound("no match 'nope'"))
+        )
     }
 
     test("a match with no callback urls is still playable") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
-        val engine = Engine(store, recorder, "http://engine.test")
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test")
         engine.createGame(createRequest().copy(moveCallbackUrl = None, resultsCallbackUrl = None))
         val m = store.get("m-1").get
 
-        assert(engine.move("m-1", playerOf(m, Mark.X), 0).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 0).isRight)
         assertEquals(recorder.moves, Nil)
     }
 
@@ -312,8 +367,8 @@ class EngineSpec extends FunSuite with QuietTests {
         val at = Instant.parse("2026-01-01T00:00:00Z")
         val x = m.seatOf(Mark.X).get
         val o = m.seatOf(Mark.O).get
-        engine.move("m-1", x.cognitoId, 4)
-        engine.move("m-1", o.cognitoId, 0)
+        engine.move(matchId = "m-1", cognitoId = x.cognitoId, cell = 4)
+        engine.move(matchId = "m-1", cognitoId = o.cognitoId, cell = 0)
 
         val states = recorder.moves.map(_._2.state.get)
         assertEquals(states.map(_.sequence), List(1L, 2L))
@@ -331,8 +386,10 @@ class EngineSpec extends FunSuite with QuietTests {
         recorder.isFailingCallbacks = true
 
         // X takes the top row.
-        List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) => assert(engine.move("m-1", who, cell).isRight))
-        val winning = engine.move("m-1", x, 2)
+        List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) =>
+            assert(engine.move(matchId = "m-1", cognitoId = who, cell = cell).isRight)
+        )
+        val winning = engine.move(matchId = "m-1", cognitoId = x, cell = 2)
         assert(winning.isRight, s"the move was committed, so it must not be reported as failing: $winning")
         assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves.size, 5)
@@ -343,7 +400,9 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, _, m) = fixture()
         val x = m.seatOf(Mark.X).get
         val o = m.seatOf(Mark.O).get
-        List(x -> 0, o -> 3, x -> 1, o -> 4, x -> 2).foreach((seat, cell) => engine.move("m-1", seat.cognitoId, cell))
+        List(x -> 0, o -> 3, x -> 1, o -> 4, x -> 2).foreach((seat, cell) =>
+            engine.move(matchId = "m-1", cognitoId = seat.cognitoId, cell = cell)
+        )
         val turns = recorder.results.head._2.turns.get
         assertEquals(turns.map(_.participantId), List(x, o, x, o, x).map(_.participantId))
     }
@@ -354,16 +413,21 @@ class EngineSpec extends FunSuite with QuietTests {
     private def secondTurnOfX(kind: String): TicTacToeMatch = {
         val clock = AtomicReference(Instant.parse("2026-01-01T00:00:00Z"))
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => clock.get)
+        val engine = Engine(
+          store = store,
+          matchmaker = RecordingMatchmaker(),
+          baseUrl = "http://engine.test",
+          now = () => clock.get
+        )
         engine.createGame(createRequest().copy(live = Some(Protocol.LiveTerms(30, kind))))
         val m = store.get("m-1").get
         m.seats.foreach(seat => engine.core.opened("m-1", seat))
         def advance(seconds: Long) = clock.updateAndGet(_.plusSeconds(seconds))
 
         advance(20)
-        assert(engine.move("m-1", playerOf(m, Mark.X), 0).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.X), cell = 0).isRight)
         advance(5)
-        assert(engine.move("m-1", playerOf(m, Mark.O), 4).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = playerOf(m, Mark.O), cell = 4).isRight)
         advance(9)
         assert(!engine.read("m-1").toOption.get.isOver, "X still has a second on its clock")
         advance(1)

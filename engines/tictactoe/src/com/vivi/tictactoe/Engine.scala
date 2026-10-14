@@ -44,8 +44,12 @@ class Engine(
                 // match was created for the first move of the game — or, in a live match, when this
                 // player opened the board, if that was later.
                 val started =
-                    TurnClock.turnStart(current.clock, seat.participantId, TicTacToeMatch.clockStartedAt(current))
-                val turn = TurnRecord(seat.participantId, at, started)
+                    TurnClock.turnStart(
+                      clock = current.clock,
+                      participantId = seat.participantId,
+                      turnStartedAt = TicTacToeMatch.clockStartedAt(current)
+                    )
+                val turn = TurnRecord(participantId = seat.participantId, takenAt = at, startedAt = started)
                 val played =
                     current.copy(
                       board = board,
@@ -68,7 +72,14 @@ class Engine(
           winner = m.winner.map(_.toString),
           isDrawn = m.isDrawn,
           winningLine = m.board.winningLine,
-          players = m.seats.map(s => SeatView(s.mark.toString, s.cognitoId, s.participantId, m.moveCount(s.mark))),
+          players = m.seats.map(s =>
+              SeatView(
+                mark = s.mark.toString,
+                cognitoId = s.cognitoId,
+                participantId = s.participantId,
+                moves = m.moveCount(s.mark)
+              )
+          ),
           clock = core.clockView(m)
         )
 }

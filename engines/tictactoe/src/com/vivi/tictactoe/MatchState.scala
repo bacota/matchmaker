@@ -105,7 +105,13 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
             val marks =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Mark.X, Mark.O)
-            Right(players.zip(marks).map((p, mark) => Seat(mark, p.cognitoId, p.participantId, p.nickname)))
+            Right(
+              players
+                  .zip(marks)
+                  .map((p, mark) =>
+                      Seat(mark = mark, cognitoId = p.cognitoId, participantId = p.participantId, nickname = p.nickname)
+                  )
+            )
         }
 
     def seats(m: TicTacToeMatch): List[Seat] = m.seats

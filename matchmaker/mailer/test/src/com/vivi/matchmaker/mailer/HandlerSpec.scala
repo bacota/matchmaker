@@ -15,7 +15,9 @@ class HandlerSpec extends FunSuite {
         )
 
     private def mail(recipient: String): String =
-        upickle.default.write(MailMessage("from@example.com", recipient, "subject", "body"))
+        upickle.default.write(
+          MailMessage(sender = "from@example.com", recipient = recipient, subject = "subject", body = "body")
+        )
 
     test("every record in the batch is read, in order") {
         val records = Handler.records(event("m-1" -> mail("a@example.com"), "m-2" -> mail("b@example.com")))

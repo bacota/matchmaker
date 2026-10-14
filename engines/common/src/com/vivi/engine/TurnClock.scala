@@ -137,7 +137,7 @@ object TurnClock {
                       (),
                       s"a live match needs a time limit of at least a second; ${terms.timeLimitSeconds} was sent"
                     )
-                } yield Some(TurnClock(terms.timeLimitSeconds, kind))
+                } yield Some(TurnClock(limitSeconds = terms.timeLimitSeconds, kind = kind))
         }
 
     import Protocol.given

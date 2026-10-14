@@ -129,7 +129,9 @@ object Views {
         reload: () => Future[Unit],
         subsection: Boolean
     )(content: Modifier[HtmlElement]*): HtmlElement =
-        refreshableSection(heading, Var(false), reload, subsection)(content*)
+        refreshableSection(heading = heading, refreshing = Var(false), reload = reload, subsection = subsection)(
+          content*
+        )
 
     /** The same, over a reloading flag the caller owns.
       *
@@ -154,7 +156,7 @@ object Views {
           cls("refreshing") <-- refreshing.signal,
           div(
             cls := "section-head",
-            tip.fold(title)((id, text) => withTip(id, heading, text)(title)),
+            tip.fold(title)((id, text) => withTip(id = id, subject = heading, text = text)(title)),
             button(
               cls := "refresh",
               tpe := "button",
@@ -317,7 +319,7 @@ object Views {
           h2("Choose a Nickname"),
           p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
           field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
-          busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
+          busyButton(label = "Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
                   if (Store.isStillSignedInAs(signIn)) {
                       Store.player.set(Store.PlayerState.Registered(player))
@@ -587,9 +589,9 @@ object Views {
                    * nothing once it has if there is nothing to answer. */
                   if (failed)
                       refreshableSection(
-                        "You Have Been Invited",
-                        refreshingChallenges,
-                        () => Store.reloadMyChallenges(),
+                        heading = "You Have Been Invited",
+                        refreshing = refreshingChallenges,
+                        reload = () => Store.reloadMyChallenges(),
                         subsection = false
                       )(
                         p(cls := "empty", "Couldn't load your invitations just now. Refresh to try again.")
@@ -597,9 +599,9 @@ object Views {
                   else if (!known || unanswered.isEmpty) emptyNode
                   else
                       refreshableSection(
-                        "You Have Been Invited",
-                        refreshingChallenges,
-                        () => Store.reloadMyChallenges(),
+                        heading = "You Have Been Invited",
+                        refreshing = refreshingChallenges,
+                        reload = () => Store.reloadMyChallenges(),
                         subsection = false
                       )(ul(unanswered.map(c => invitationRow(c, gameOf(games, c.summary.tournament.gameId)))))
               }
@@ -615,13 +617,18 @@ object Views {
     private def invitationRow(invited: ChallengeSummary, game: Option[Game]): HtmlElement = {
         val t = invited.summary.tournament
         def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit =
-            Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, character), busy, invitationGone(t)) { _ =>
+            Store.run(
+              action =
+                  ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = character),
+              busy = busy,
+              onFailure = invitationGone(t)
+            ) { _ =>
                 Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} accepted.")
                 // Accepting may have filled one that starts itself: the start's reloads cover both.
                 reloadAfterStart(t.gameId)
             }
         def declined(busy: Var[Boolean], decline: Future[Unit]): Unit =
-            Store.run(decline, busy, invitationGone(t)) { _ =>
+            Store.run(action = decline, busy = busy, onFailure = invitationGone(t)) { _ =>
                 Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} declined.")
                 reloadChallengeSections(t.gameId)
             }
@@ -639,14 +646,14 @@ object Views {
                               s"${invited.summary.ownerNickname} invited ${mine.character.name} to ${invited.summary.gameName}"
                             ),
                             div(cls := "detail", challengeTerms(t, invited.entries.size)),
-                            busyButton("Accept")(accepted(Some(mine.character.characterId))),
-                            busyButton("Decline", classes = Some("link"))(busy =>
+                            busyButton(label = "Accept")(accepted(Some(mine.character.characterId))),
+                            busyButton(label = "Decline", classes = Some("link"))(busy =>
                                 declined(
                                   busy,
                                   ApiClient.revokeTournamentCharacterInvitation(
-                                    t.gameId,
-                                    t.tournamentId,
-                                    mine.character.characterId
+                                    gameId = t.gameId,
+                                    tournamentId = t.tournamentId,
+                                    characterId = mine.character.characterId
                                   )
                                 )
                             )
@@ -659,7 +666,8 @@ object Views {
                             ),
                             div(cls := "detail", challengeTerms(t, invited.entries.size)),
                             game match {
-                                case Some(g) if g.gameType == GameType.Plain => busyButton("Accept")(accepted(None))
+                                case Some(g) if g.gameType == GameType.Plain =>
+                                    busyButton(label = "Accept")(accepted(None))
                                 case _ =>
                                     button(
                                       tpe := "button",
@@ -668,10 +676,14 @@ object Views {
                                       onClick --> (_ => Store.show(Store.Page.OneGame(t.gameId)))
                                     )
                             },
-                            busyButton("Decline", classes = Some("link"))(busy =>
+                            busyButton(label = "Decline", classes = Some("link"))(busy =>
                                 declined(
                                   busy,
-                                  ApiClient.revokeTournamentInvitation(t.gameId, t.tournamentId, me.playerId)
+                                  ApiClient.revokeTournamentInvitation(
+                                    gameId = t.gameId,
+                                    tournamentId = t.tournamentId,
+                                    playerId = me.playerId
+                                  )
                                 )
                             )
                           )
@@ -710,9 +722,9 @@ object Views {
                   if (mine.isEmpty) emptyNode
                   else
                       refreshableSection(
-                        "Ready to Start",
-                        refreshingChallenges,
-                        () => Store.reloadMyChallenges(),
+                        heading = "Ready to Start",
+                        refreshing = refreshingChallenges,
+                        reload = () => Store.reloadMyChallenges(),
                         subsection = false
                       )(ul(mine.map(readyToStartRow)))
               }
@@ -724,17 +736,21 @@ object Views {
           cls := "row",
           div(cls := "title", c.summary.gameName),
           div(cls := "detail", challengeTerms(t, c.entries.size)),
-          busyButton("Start") { busy =>
-              Store.run(ApiClient.tournamentStep(t.gameId, t.tournamentId, "start"), busy, challengeStale(t))(_ =>
-                  reloadAfterStart(t.gameId)
-              )
+          busyButton(label = "Start") { busy =>
+              Store.run(
+                action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
+                busy = busy,
+                onFailure = challengeStale(t)
+              )(_ => reloadAfterStart(t.gameId))
           },
           // Enough players having entered is no promise the owner still wants the match, so the way out of it stays
           // here alongside the start.
-          busyButton("Cancel") { busy =>
-              Store.run(ApiClient.tournamentStep(t.gameId, t.tournamentId, "cancel"), busy, challengeStale(t))(_ =>
-                  reloadChallengeSections(t.gameId)
-              )
+          busyButton(label = "Cancel") { busy =>
+              Store.run(
+                action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                busy = busy,
+                onFailure = challengeStale(t)
+              )(_ => reloadChallengeSections(t.gameId))
           }
         )
     }
@@ -774,7 +790,12 @@ object Views {
       * a second request would only be a second chance for the two screens to disagree about it.
       */
     private def dueSection(game: Option[Game] = None): HtmlElement =
-        refreshableSection("Your Turn", refreshingDue, () => Store.reloadDue(), subsection = false)(
+        refreshableSection(
+          heading = "Your Turn",
+          refreshing = refreshingDue,
+          reload = () => Store.reloadDue(),
+          subsection = false
+        )(
           listing(Store.due.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Due))(
             p(
               cls := "empty",
@@ -796,7 +817,12 @@ object Views {
       * things the main page shows, and a section that has to be opened to find out whether it is empty is not shown.
       */
     private def myMatchesSection(game: Option[Game] = None): HtmlElement =
-        refreshableSection("Current Matches", refreshingActive, () => Store.reloadActive(), subsection = false)(
+        refreshableSection(
+          heading = "Current Matches",
+          refreshing = refreshingActive,
+          reload = () => Store.reloadActive(),
+          subsection = false
+        )(
           listing(Store.active.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Active))(
             p(
               cls := "empty",
@@ -838,9 +864,9 @@ object Views {
                   if (waiting.isEmpty) emptyNode
                   else
                       refreshableSection(
-                        "Waiting to Start",
-                        refreshingChallenges,
-                        () => Store.reloadMyChallenges(),
+                        heading = "Waiting to Start",
+                        refreshing = refreshingChallenges,
+                        reload = () => Store.reloadMyChallenges(),
                         subsection = true
                       )(ul(waiting.map(c => waitingRow(c, player))))
           }
@@ -863,18 +889,25 @@ object Views {
           // The owner calls their own off; anybody else withdraws their entry. Both are refused once it has started,
           // which `challengeStale` treats as the news it is.
           if (c.summary.isOwner)
-              busyButton("Cancel", classes = Some("link")) { busy =>
-                  Store.run(ApiClient.tournamentStep(t.gameId, t.tournamentId, "cancel"), busy, challengeStale(t))(_ =>
-                      reloadChallengeSections(t.gameId)
-                  )
+              busyButton(label = "Cancel", classes = Some("link")) { busy =>
+                  Store.run(
+                    action =
+                        ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                    busy = busy,
+                    onFailure = challengeStale(t)
+                  )(_ => reloadChallengeSections(t.gameId))
               }
           else
               mine.fold(emptyNode) { entry =>
-                  busyButton("Withdraw", classes = Some("link")) { busy =>
+                  busyButton(label = "Withdraw", classes = Some("link")) { busy =>
                       Store.run(
-                        ApiClient.withdrawFromTournament(t.gameId, t.tournamentId, entry.entrantId),
-                        busy,
-                        challengeStale(t)
+                        action = ApiClient.withdrawFromTournament(
+                          gameId = t.gameId,
+                          tournamentId = t.tournamentId,
+                          entrantId = entry.entrantId
+                        ),
+                        busy = busy,
+                        onFailure = challengeStale(t)
                       )(_ => reloadChallengeSections(t.gameId))
                   }
               }
@@ -884,9 +917,9 @@ object Views {
     /** The caller's finished matches in every game, a window of time at a time. */
     private def recentlyCompletedSection: HtmlElement =
         refreshableSection(
-          "Recently Completed",
-          refreshingCompleted,
-          () => Store.reloadCompleted(),
+          heading = "Recently Completed",
+          refreshing = refreshingCompleted,
+          reload = () => Store.reloadCompleted(),
           subsection = false
         )(
           completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(
@@ -942,7 +975,7 @@ object Views {
             if (!Store.completedLoading.now().contains(list)) {
                 retrying.set(true)
                 retryHadFocus = false
-                Store.showCompleted(list).onComplete { _ =>
+                Store.showCompleted(list = list).onComplete { _ =>
                     retrying.set(false)
                     if (retryHadFocus && Store.completedView.now().exists(_.list == list))
                         statusLine.foreach(_.focus())
@@ -972,7 +1005,7 @@ object Views {
 
         def move(to: CompletedPage => Int): Unit =
             Store.completedView.now().filter(_.list == list).foreach { current =>
-                Store.showCompleted(list, to(current.page), Some(current.page.asOf))
+                Store.showCompleted(list = list, page = to(current.page), asOf = Some(current.page.asOf))
             }
 
         /* Named by the window it goes to -- "Previous week", "Next 24 hours" -- in the frame shown. */
@@ -1013,7 +1046,7 @@ object Views {
               onChange.mapToValue --> { code =>
                   CompletedFrame.fromCode(code).foreach { frame =>
                       Store.completedFrame.set(frame)
-                      Store.showCompleted(list)
+                      Store.showCompleted(list = list)
                   }
               }
             )
@@ -1049,8 +1082,8 @@ object Views {
           div(
             cls := "completed-steps",
             // Earlier on the left, later on the right, as time reads.
-            step("Previous", "older", _.hasOlder, _.page + 1),
-            step("Next", "newer", _.page > 0, _.page - 1)
+            step(word = "Previous", direction = "older", shown = _.hasOlder, to = _.page + 1),
+            step(word = "Next", direction = "newer", shown = _.page > 0, to = _.page - 1)
           )
         )
     }
@@ -1191,9 +1224,9 @@ object Views {
           // Their matches in every game, as the main page lists the reader's own -- but only the ones
           // they made public. One reload fills both, so both are marked as reloading by it.
           refreshableSection(
-            "Current Matches",
-            refreshingPublicMatches,
-            () => Store.reloadPublicMatches(player.playerId),
+            heading = "Current Matches",
+            refreshing = refreshingPublicMatches,
+            reload = () => Store.reloadPublicMatches(player.playerId),
             subsection = false
           )(
             listing(Store.publicActive.signal, Store.publicMatchesLoading.signal)(
@@ -1212,9 +1245,9 @@ object Views {
             )
           ),
           refreshableSection(
-            "Recently Completed",
-            refreshingPublicMatches,
-            () => Store.reloadPublicMatches(player.playerId),
+            heading = "Recently Completed",
+            refreshing = refreshingPublicMatches,
+            reload = () => Store.reloadPublicMatches(player.playerId),
             subsection = false
           )(
             completedWindow(Store.CompletedList.Public(player.playerId, None), "None finished in public.")(
@@ -1256,10 +1289,11 @@ object Views {
                       )
                     ),
                     withTip(
-                      freshTipId("record-tip"),
-                      "record",
-                      "Wins, losses and draws in the matches it has finished that were not friendly, whoever owned " +
-                          "it for them. In brackets, how many of the wins and losses came by forfeit."
+                      id = freshTipId("record-tip"),
+                      subject = "record",
+                      text =
+                          "Wins, losses and draws in the matches it has finished that were not friendly, whoever owned " +
+                              "it for them. In brackets, how many of the wins and losses came by forfeit."
                     )(p(cls := "character-record", "Record: ", recordText(profile.record))),
                     if (profile.description.trim.isEmpty) emptyNode
                     else p(cls := "character-description", profile.description)
@@ -1268,9 +1302,9 @@ object Views {
               case _         => emptyNode
           },
           refreshableSection(
-            "Current Matches",
-            refreshingPublicMatches,
-            () => Store.reloadCharacterMatches(character),
+            heading = "Current Matches",
+            refreshing = refreshingPublicMatches,
+            reload = () => Store.reloadCharacterMatches(character),
             subsection = false
           )(
             listing(Store.publicActive.signal, Store.publicMatchesLoading.signal)(
@@ -1290,9 +1324,9 @@ object Views {
             )
           ),
           refreshableSection(
-            "Recently Completed",
-            refreshingPublicMatches,
-            () => Store.reloadCharacterMatches(character),
+            heading = "Recently Completed",
+            refreshing = refreshingPublicMatches,
+            reload = () => Store.reloadCharacterMatches(character),
             subsection = false
           )(
             completedWindow(Store.CompletedList.OfCharacter(character), "None finished in public.")(
@@ -1415,35 +1449,41 @@ object Views {
                                   case Some(c) =>
                                       val t = c.summary.tournament
                                       characterInviteButtons(
-                                        game.gameId,
-                                        invitee,
-                                        c.invitedCharacters.map(_.character.characterId).toSet
+                                        gameId = game.gameId,
+                                        owner = invitee,
+                                        exclude = c.invitedCharacters.map(_.character.characterId).toSet
                                       ) { (ch, busy) =>
                                           Store.run(
-                                            ApiClient.inviteCharacterToTournament(
-                                              game.gameId,
-                                              t.tournamentId,
-                                              ch.characterId
+                                            action = ApiClient.inviteCharacterToTournament(
+                                              gameId = game.gameId,
+                                              tournamentId = t.tournamentId,
+                                              characterId = ch.characterId
                                             ),
-                                            busy,
-                                            challengeStale(t)
+                                            busy = busy,
+                                            onFailure = challengeStale(t)
                                           )(_ => Store.refreshChallenges(game.gameId))
                                       }
                                   case None => emptyNode
                               }
                             )
                         else
-                            busyButton(s"Invite ${invitee.nickname}", disabledWhen = picked.signal.map(_.isEmpty)) {
-                                busy =>
-                                    picked.now().foreach { id =>
-                                        Store.run(
-                                          ApiClient.inviteToTournament(game.gameId, id, invitee.playerId),
-                                          busy,
-                                          challengeStale(
-                                            mine.find(_.summary.tournament.tournamentId == id).get.summary.tournament
-                                          )
-                                        )(_ => Store.refreshChallenges(game.gameId))
-                                    }
+                            busyButton(
+                              label = s"Invite ${invitee.nickname}",
+                              disabledWhen = picked.signal.map(_.isEmpty)
+                            ) { busy =>
+                                picked.now().foreach { id =>
+                                    Store.run(
+                                      action = ApiClient.inviteToTournament(
+                                        gameId = game.gameId,
+                                        tournamentId = id,
+                                        playerId = invitee.playerId
+                                      ),
+                                      busy = busy,
+                                      onFailure = challengeStale(
+                                        mine.find(_.summary.tournament.tournamentId == id).get.summary.tournament
+                                      )
+                                    )(_ => Store.refreshChallenges(game.gameId))
+                                }
                             }
                       )
                   }
@@ -1581,13 +1621,13 @@ object Views {
     private[ui] def characterInviteButtons(gameId: GameId, owner: PublicPlayer, exclude: Set[CharacterId])(
         invite: (CharacterName, Var[Boolean]) => Unit
     ): HtmlElement =
-        theirCharacters(gameId, owner, exclude)(names =>
+        theirCharacters(gameId = gameId, owner = owner, exclude = exclude)(names =>
             ul(
               names.map(c =>
                   li(
                     cls := "row",
                     div(cls := "title", c.name),
-                    busyButton(s"Invite ${c.name}", classes = Some("link"))(busy => invite(c, busy))
+                    busyButton(label = s"Invite ${c.name}", classes = Some("link"))(busy => invite(c, busy))
                   )
               )
             )
@@ -1600,7 +1640,7 @@ object Views {
         exclude: Set[CharacterId],
         chosen: Var[Option[CharacterId]]
     ): HtmlElement =
-        theirCharacters(gameId, owner, exclude) { names =>
+        theirCharacters(gameId = gameId, owner = owner, exclude = exclude) { names =>
             field(
               "Their character",
               select(
@@ -1633,7 +1673,7 @@ object Views {
     private def reviewControl(summary: MatchSummary): HtmlElement =
         if (summary.isCompleted && summary.isArchiveExpired) archiveExpiredNote
         else if (summary.isCompleted)
-            busyButton("Review game", classes = Some("link")) { busy =>
+            busyButton(label = "Review game", classes = Some("link")) { busy =>
                 Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
                         case Some(url) => openSignedIn(url)
@@ -1839,7 +1879,7 @@ object Views {
               role := "cell",
               cls := "elo",
               // Only the "?", a word being too wide for the column; named for a screen reader by what it marks.
-              tipped(freshTipId("friendly-tip"), friendlyMeaning, emptyNode)(
+              tipped(id = freshTipId("friendly-tip"), text = friendlyMeaning, control = emptyNode)(
                 cls := "tip-toggle",
                 aria.label := "Friendly match",
                 "?"
@@ -1918,7 +1958,12 @@ object Views {
           if (summary.isFriendly) friendlyLabel() else emptyNode,
           matchParameters(summary),
           summary.due.map(countdown).getOrElse(emptyNode),
-          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.isLive),
+          timeLimitDetail(
+            limit = summary.timeLimit,
+            kind = summary.timeLimitKind,
+            unit = summary.timeLimitUnit,
+            live = summary.isLive
+          ),
           playControls(summary),
           matchNotifications(summary)
         )
@@ -1945,7 +1990,12 @@ object Views {
           // The rule behind that deadline, which the deadline itself does not give away: the same
           // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
           // opposite decisions.
-          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.isLive),
+          timeLimitDetail(
+            limit = summary.timeLimit,
+            kind = summary.timeLimitKind,
+            unit = summary.timeLimitUnit,
+            live = summary.isLive
+          ),
           matchNotifications(summary)
         )
 
@@ -1955,7 +2005,7 @@ object Views {
           cls := "controls",
           // The play url lives on the match rather than the summary, and is the game engine's,
           // not matchmaker's — so it is fetched when asked for and opened directly.
-          busyButton("Play", classes = Some("link")) { busy =>
+          busyButton(label = "Play", classes = Some("link")) { busy =>
               Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                   m.playUrl match {
                       case Some(url) => openSignedIn(url)
@@ -1965,13 +2015,13 @@ object Views {
           },
           // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
           // engine, which is what recovers from a callback that never arrived.
-          busyButton("Refresh", classes = Some("link")) { busy =>
+          busyButton(label = "Refresh", classes = Some("link")) { busy =>
               Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(reloadAfterMatchRefresh)
           },
           // Only the owner's. The engine is not told — its board stays playable — so the
           // confirmation says what actually happens.
           if (summary.isOwner)
-              busyButton("Cancel", classes = Some("link")) { busy =>
+              busyButton(label = "Cancel", classes = Some("link")) { busy =>
                   if (
                     dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open.")
                   )
@@ -2039,16 +2089,20 @@ object Views {
                   // `MatchStarted`, but that match has already started, so it is a choice that could
                   // never apply again. What is saved for it is what was fetched, unchanged.
                   Notifications.form(
-                    "Notification Preferences for this match",
-                    "What we email you about this match, whatever you change elsewhere later.",
-                    preferences,
+                    heading = "Notification Preferences for this match",
+                    explanation = "What we email you about this match, whatever you change elsewhere later.",
+                    preferences = preferences,
                     withDefault = false,
                     saveLabel = "Save for this match",
                     kinds = NotificationType.duringMatch
                   ) { chosen =>
                       chosen.completeForSeat match {
                           case Some(answers) =>
-                              ApiClient.updateMatchNotifications(summary.gameId, summary.matchId, answers)
+                              ApiClient.updateMatchNotifications(
+                                gameId = summary.gameId,
+                                matchId = summary.matchId,
+                                preferences = answers
+                              )
                           // Unreachable: the form seeds every kind a seat holds and its button is
                           // disabled while any is unanswered. A failed Future rather than a silent
                           // success, so that a hole in that reasoning shows up beside the form instead
@@ -2272,10 +2326,10 @@ object Views {
     private def editGameDialog(game: Game): HtmlElement = {
         val opening = editGameOpening
         gameDialog(
-          Some(game),
-          s"edit-game-${game.gameId.value}-heading",
-          s"Edit ${game.displayName}",
-          closeEditGame,
+          existing = Some(game),
+          headingId = s"edit-game-${game.gameId.value}-heading",
+          title = s"Edit ${game.displayName}",
+          close = closeEditGame,
           onSaved = _ => if (editGameOpening == opening) closeEditGame()
         )
     }
@@ -2292,7 +2346,7 @@ object Views {
           cls := "modal-scrim",
           Modal.inertBehind,
           onClick --> (event => if (event.target == event.currentTarget) close()),
-          gameForm(existing, heading = Some(headingId -> title), onSaved = onSaved).amend(
+          gameForm(existing = existing, heading = Some(headingId -> title), onSaved = onSaved).amend(
             cls := "modal",
             role := "dialog",
             htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
@@ -2318,9 +2372,9 @@ object Views {
       */
     private def gameHistory(game: Game): HtmlElement =
         refreshableSection(
-          "Your Completed Matches",
-          refreshingCompleted,
-          () => Store.reloadCompleted(),
+          heading = "Your Completed Matches",
+          refreshing = refreshingCompleted,
+          reload = () => Store.reloadCompleted(),
           subsection = false
         )(
           completedWindow(Store.CompletedList.Mine(Some(game.gameId)), "You have not finished a match of this yet.")(
@@ -2366,10 +2420,10 @@ object Views {
                             // Straight to the game that was just created: it is now in the menu, and its own
                             // screen is where anything else is done with it.
                             gameDialog(
-                              None,
-                              "add-game-heading",
-                              "Add a Game",
-                              close,
+                              existing = None,
+                              headingId = "add-game-heading",
+                              title = "Add a Game",
+                              close = close,
                               onSaved = saved => if (opening == mine) Store.show(Store.Page.OneGame(saved.gameId))
                             )
                         } else emptyNode
@@ -2450,24 +2504,31 @@ object Views {
     )
 
     private def emptyRole: RoleDraft =
-        RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(RoleType.Required), Var(""))
-    private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
+        RoleDraft(
+          gameRoleId = GameRoleId.unassigned,
+          name = Var(""),
+          displayName = Var(""),
+          roleType = Var(RoleType.Required),
+          preferenceLevel = Var("")
+        )
+    private def emptyParameter: ParameterDraft =
+        ParameterDraft(name = Var(""), displayName = Var(""), values = Var(""), default = Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
         RoleDraft(
-          role.gameRoleId,
-          Var(role.name),
-          Var(role.displayName),
-          Var(role.roleType),
-          Var(role.preferenceLevel.fold("")(_.toString))
+          gameRoleId = role.gameRoleId,
+          name = Var(role.name),
+          displayName = Var(role.displayName),
+          roleType = Var(role.roleType),
+          preferenceLevel = Var(role.preferenceLevel.fold("")(_.toString))
         )
 
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
-          Var(parameter.name),
-          Var(parameter.displayName),
-          Var(parameter.values.map(_.value).mkString(", ")),
-          Var(parameter.defaultValue.getOrElse(""))
+          name = Var(parameter.name),
+          displayName = Var(parameter.displayName),
+          values = Var(parameter.values.map(_.value).mkString(", ")),
+          default = Var(parameter.defaultValue.getOrElse(""))
         )
 
     /** The possible values of a parameter, as typed: one comma-separated list, because a parameter with three values is
@@ -2480,9 +2541,9 @@ object Views {
     private def roleEditor(formKey: String, roles: Var[List[RoleDraft]]): HtmlElement =
         div(
           withTip(
-            s"$formKey-roles-tip",
-            "Roles",
-            "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
+            id = s"$formKey-roles-tip",
+            subject = "Roles",
+            text = "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
                 "every required role is filled, or, for a challenge that starts itself, every required and " +
                 "recommended role. Optional roles can always be left empty, and a recommended one counts " +
                 "toward a tournament's pool size. A role that already exists can " +
@@ -2498,9 +2559,9 @@ object Views {
                 // A caption on each field, with what it means in a tip beside it rather than under it:
                 // the explanation is the same on every row, and repeated in full it would bury the rows.
                 withTip(
-                  nameTip,
-                  "Role name",
-                  "What the game engine is sent for this seat, so it has to be the name the engine expects."
+                  id = nameTip,
+                  subject = "Role name",
+                  text = "What the game engine is sent for this seat, so it has to be the name the engine expects."
                 )(
                   label(
                     cls := "field",
@@ -2512,9 +2573,9 @@ object Views {
                   )
                 ),
                 withTip(
-                  displayTip,
-                  "Role display name",
-                  "What players see for this seat. Left blank, it is the name."
+                  id = displayTip,
+                  subject = "Role display name",
+                  text = "What players see for this seat. Left blank, it is the name."
                 )(
                   label(
                     cls := "field",
@@ -2535,9 +2596,9 @@ object Views {
                   )
                 ),
                 withTip(
-                  preferenceTip,
-                  "Role preference level",
-                  "In a tournament where roles are chosen, the role with the highest level goes to the " +
+                  id = preferenceTip,
+                  subject = "Role preference level",
+                  text = "In a tournament where roles are chosen, the role with the highest level goes to the " +
                       "highest seed. Leave blank for no preference."
                 )(
                   label(
@@ -2576,9 +2637,9 @@ object Views {
     private def parameterEditor(formKey: String, parameters: Var[List[ParameterDraft]]): HtmlElement =
         div(
           withTip(
-            s"$formKey-parameters-tip",
-            "Parameters",
-            "How the game engine is configured when a match is created. The name is what the engine is " +
+            id = s"$formKey-parameters-tip",
+            subject = "Parameters",
+            text = "How the game engine is configured when a match is created. The name is what the engine is " +
                 "sent; the display name is what players see, and is the name if left blank. A parameter's " +
                 "default has to be one of its values, and a game may have none at all."
           )(h4("Parameters")),
@@ -2640,7 +2701,14 @@ object Views {
         else
             Right(
               named.map((id, name, roleType, displayName, preference) =>
-                  GameRole(id, GameId.unassigned, name, roleType, displayName, preference.toIntOption)
+                  GameRole(
+                    gameRoleId = id,
+                    gameId = GameId.unassigned,
+                    name = name,
+                    roleType = roleType,
+                    displayName = displayName,
+                    preferenceLevel = preference.toIntOption
+                  )
               )
             )
     }
@@ -2661,13 +2729,15 @@ object Views {
             .map { d =>
                 val name = d.name.now().trim
                 GameParameter[String](
-                  GameId.unassigned,
-                  GameParameterId(0),
-                  name,
-                  Option(d.default.now().trim).filter(_.nonEmpty),
-                  splitValues(d.values.now()).map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                  gameId = GameId.unassigned,
+                  gameParameterId = GameParameterId(0),
+                  name = name,
+                  defaultValue = Option(d.default.now().trim).filter(_.nonEmpty),
+                  values = splitValues(d.values.now()).map(v =>
+                      GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+                  ),
                   // Left blank, a parameter is shown by its name -- the server does the same.
-                  Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
+                  displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
                 )
             }
             .filter(_.name.nonEmpty)
@@ -2765,18 +2835,18 @@ object Views {
           ),
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           tipField(
-            s"$formKey-display-name-tip",
-            "Display name",
-            "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
+            id = s"$formKey-display-name-tip",
+            caption = "Display name",
+            text = "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
                 "name, which is what the game engine is told."
           )(input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
           field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
           // The name means nothing on its own, and getting it wrong fails nowhere near this form.
           tipField(
-            s"$formKey-engine-identity-tip",
-            "Engine identity",
-            "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
+            id = s"$formKey-engine-identity-tip",
+            caption = "Engine identity",
+            text = "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
                 "game's API key are taken to come from it."
           )(
             input(
@@ -2788,9 +2858,9 @@ object Views {
           // Whether a key is stored is the one thing about it this form can tell, since the key itself never comes
           // back.
           tipField(
-            s"$formKey-api-key-tip",
-            "API key",
-            existing match {
+            id = s"$formKey-api-key-tip",
+            caption = "API key",
+            text = existing match {
                 case Some(game) if game.hasApiKey =>
                     "A key is set. Leave this blank to keep it, or enter a new one to replace it."
                 case Some(_) =>
@@ -2828,9 +2898,9 @@ object Views {
           existing.fold(emptyNode) { _ =>
               val tipId = s"$formKey-disable-tip"
               withTip(
-                tipId,
-                "Disable Game",
-                "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
+                id = tipId,
+                subject = "Disable Game",
+                text = "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
                     "and matches are left as they are. It is listed on Add a Game, where it can be enabled again."
               )(
                 label(
@@ -2849,9 +2919,9 @@ object Views {
           {
               val tipId = s"$formKey-unimportant-roles-tip"
               withTip(
-                tipId,
-                "Unimportant Roles",
-                "Check this if no role has any advantage in winning the game."
+                id = tipId,
+                subject = "Unimportant Roles",
+                text = "Check this if no role has any advantage in winning the game."
               )(
                 label(
                   input(
@@ -2865,9 +2935,9 @@ object Views {
           }, {
               val tipId = s"$formKey-move-type-tip"
               withTip(
-                tipId,
-                "Moves",
-                "Whether players take turns one after another, or all move at once. A tournament gives each " +
+                id = tipId,
+                subject = "Moves",
+                text = "Whether players take turns one after another, or all move at once. A tournament gives each " +
                     "player a chess clock in the first case and a time limit per turn in the second."
               )(
                 label(
@@ -2884,9 +2954,9 @@ object Views {
           }, {
               val tipId = s"$formKey-max-turns-tip"
               withTip(
-                tipId,
-                "Maximum turns",
-                "How many turns a match lasts, if the game always ends after a fixed number. A tournament " +
+                id = tipId,
+                subject = "Maximum turns",
+                text = "How many turns a match lasts, if the game always ends after a fixed number. A tournament " +
                     "divides a round's time by it when everyone moves at once. Leave blank if it varies."
               )(
                 label(
@@ -2904,7 +2974,7 @@ object Views {
           },
           parameterEditor(formKey, parameters),
           busyButton(
-            if (existing.isDefined) "Save Changes" else "Create Game",
+            label = if (existing.isDefined) "Save Changes" else "Create Game",
             // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
             // to be long enough, as the server checks too.
             disabledWhen = name.signal
@@ -3001,7 +3071,11 @@ object Views {
       * the page that is about that player.
       */
     private def adminMatchesSection(game: Game, player: PublicPlayer): HtmlElement =
-        div(child <-- currentPlayer.map(_.fold(emptyNode)(reader => adminMatches(game, player, reader))))
+        div(
+          child <-- currentPlayer.map(
+            _.fold(emptyNode)(reader => adminMatches(game = game, player = player, reader = reader))
+          )
+        )
 
     /* Not on the admin's own page: it is another player an admin is there to manage -- their rating in
      * the game, and whether each of their matches is friendly. */
@@ -3043,9 +3117,9 @@ object Views {
               case None => emptyNode
               case Some(found) =>
                   refreshableSection(
-                    "Friendly or Rated",
-                    refreshing,
-                    () => fetch(mount),
+                    heading = "Friendly or Rated",
+                    refreshing = refreshing,
+                    reload = () => fetch(mount),
                     subsection = true,
                     tip = Some(
                       s"friendly-admin-tip-${game.gameId.value}" ->
@@ -3096,9 +3170,11 @@ object Views {
                 checked <-- friendly.signal,
                 onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
                     friendly.set(on)
-                    Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
-                        friendly.set(saved.isFriendly)
-                    )
+                    Store.run(
+                      action = ApiClient.setFriendly(gameId = game.gameId, matchId = m.matchId, friendly = on),
+                      busy = busy,
+                      onFailure = _ => friendly.set(!on)
+                    )(saved => friendly.set(saved.isFriendly))
                 }
               )
             ),
@@ -3116,7 +3192,9 @@ object Views {
     private def ratingsSection(game: Game): HtmlElement =
         div(
           child <-- currentPlayer.map(
-            _.fold(emptyNode)(player => div(ratingsList(game, player, None), roleRankings(game, player)))
+            _.fold(emptyNode)(player =>
+                div(ratingsList(game = game, player = player, role = None), roleRankings(game, player))
+            )
           )
         )
 
@@ -3144,7 +3222,9 @@ object Views {
                 )
               ),
               // A section of its own once a role is chosen, which announces itself as the overall one does.
-              child <-- chosen.signal.distinct.map(_.fold(emptyNode)(role => ratingsList(game, player, Some(role))))
+              child <-- chosen.signal.distinct.map(
+                _.fold(emptyNode)(role => ratingsList(game = game, player = player, role = Some(role)))
+              )
             )
         }
 
@@ -3197,7 +3277,7 @@ object Views {
             val askedMine = mineRequest
             busy.set(true)
             ApiClient
-                .standing(game.gameId, player.playerId, roleId)
+                .standing(gameId = game.gameId, playerId = player.playerId, role = roleId)
                 .map(Right(_))
                 .recover {
                     case ApiError(404, _) =>
@@ -3212,7 +3292,7 @@ object Views {
                     if (askedMine == mineRequest && Store.isStillSignedInAs(signIn)) mine.set(Some(answer))
                 )
             ApiClient
-                .leaderboard(game.gameId, at, roleId)
+                .leaderboard(gameId = game.gameId, page = at, role = roleId)
                 .map { found =>
                     if (current) {
                         loadError.set(None)
@@ -3282,9 +3362,9 @@ object Views {
           onMountCallback(_ => fetch(0)),
           onUnmountCallback(_ => request += 1),
           refreshableSection(
-            role.fold("Player Rankings")(r => s"${r.displayName} Rankings"),
-            refreshing,
-            () => fetch(),
+            heading = role.fold("Player Rankings")(r => s"${r.displayName} Rankings"),
+            refreshing = refreshing,
+            reload = () => fetch(),
             subsection = role.isDefined,
             tip = Some(
               s"ratings-tip-${game.gameId.value}$idSuffix" -> role.fold(
@@ -3360,7 +3440,13 @@ object Views {
                             // box -- when the page around it is answered again.
                             tbody(
                               children <-- rows.split(_.player.playerId)((_, first, rating) =>
-                                  ratingRow(game, first.player, rating, administers, savedRow)
+                                  ratingRow(
+                                    game = game,
+                                    rated = first.player,
+                                    rating = rating,
+                                    administers = administers,
+                                    onSaved = savedRow
+                                  )
                               )
                             ),
                             // The player's own line, after the page and set apart from it: their place, with their
@@ -3368,8 +3454,9 @@ object Views {
                             // that has just finished may have moved.
                             tfoot(
                               child <-- mine.signal.combineWith(administers).map {
-                                  case (Some(Right(you)), admin) => footRow(you, "mine", "you, now", admin)
-                                  case _                         => emptyNode
+                                  case (Some(Right(you)), admin) =>
+                                      footRow(standing = you, kind = "mine", note = "you, now", administers = admin)
+                                  case _ => emptyNode
                               },
                               children <-- found.signal.combineWith(administers).map {
                                   case (Some(Right(them)), admin) =>
@@ -3394,21 +3481,21 @@ object Views {
               cls := "completed-steps",
               // Named for their board, since a role's sits on the page beside the overall one.
               step(
-                "Previous",
-                "Previous 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
-                "backward",
-                page.signal.map(_ > 0),
-                _ - 1
+                caption = "Previous",
+                label = "Previous 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                side = "backward",
+                possible = page.signal.map(_ > 0),
+                to = _ - 1
               ),
               step(
-                "Next",
-                "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
-                "forward",
-                board.signal.map(_.exists(_.hasMore)),
-                _ + 1
+                caption = "Next",
+                label = "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                side = "forward",
+                possible = board.signal.map(_.exists(_.hasMore)),
+                to = _ + 1
               )
             ),
-            findPlayer(game, found, role)
+            findPlayer(game = game, found = found, role = role)
           )
         )
     }
@@ -3448,9 +3535,10 @@ object Views {
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
               val typed = prefix.now().trim
               if (typed.nonEmpty)
-                  Store.runSignedIn(ApiClient.findInRankings(game.gameId, typed, role.map(_.gameRoleId)), busy)(
-                    answer => found.set(Some(Right(answer)))
-                  )
+                  Store.runSignedIn(
+                    ApiClient.findInRankings(gameId = game.gameId, prefix = typed, role = role.map(_.gameRoleId)),
+                    busy
+                  )(answer => found.set(Some(Right(answer))))
           },
           label(forId := id, "Find a Player"),
           div(
@@ -3511,9 +3599,9 @@ object Views {
           span(
             cls := "sr-only",
             List(
-              spoken(count(r.wins, "win", "wins"), r.forfeitWins),
-              spoken(count(r.losses, "loss", "losses"), r.forfeitLosses),
-              count(r.draws, "draw", "draws")
+              spoken(count(n = r.wins, one = "win", many = "wins"), r.forfeitWins),
+              spoken(count(n = r.losses, one = "loss", many = "losses"), r.forfeitLosses),
+              count(n = r.draws, one = "draw", many = "draws")
             ).mkString("; ")
           )
         )
@@ -3559,7 +3647,10 @@ object Views {
                       cls := "compound",
                       onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
                           typed.now().trim.toIntOption.foreach { n =>
-                              Store.run(ApiClient.setRating(game.gameId, rated.playerId, n), busy) { saved =>
+                              Store.run(
+                                ApiClient.setRating(gameId = game.gameId, playerId = rated.playerId, rating = n),
+                                busy
+                              ) { saved =>
                                   typed.set("")
                                   onSaved(saved)
                               }
@@ -3590,9 +3681,10 @@ object Views {
           cls := "search inline-form",
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
               typed.now().trim.toIntOption.foreach { n =>
-                  Store.run(ApiClient.setRating(game.gameId, player.playerId, n), busy) { saved =>
-                      typed.set("")
-                      said.set(s"${saved.player.nickname} is now rated ${saved.rating} in ${game.displayName}.")
+                  Store.run(ApiClient.setRating(gameId = game.gameId, playerId = player.playerId, rating = n), busy) {
+                      saved =>
+                          typed.set("")
+                          said.set(s"${saved.player.nickname} is now rated ${saved.rating} in ${game.displayName}.")
                   }
               }
           },
@@ -3631,7 +3723,7 @@ object Views {
             div(
               child <-- currentPlayer.map {
                   case None         => p(cls := "empty", "Loading…")
-                  case Some(player) => challengePanel(game, player, Seq.empty)
+                  case Some(player) => challengePanel(game = game, player = player, characters = Seq.empty)
               }
             )
         else {
@@ -3654,9 +3746,15 @@ object Views {
                           case Some(Nil) =>
                               val admin = Store.administers(game.gameId, player)
                               div(
-                                characterPrompt(game, admin, checked, () => status.foreach(_.focus())),
+                                characterPrompt(
+                                  game = game,
+                                  admin = admin,
+                                  checked = checked,
+                                  focusStatus = () => status.foreach(_.focus())
+                                ),
                                 child <-- admin.map(
-                                  if (_) challengePanel(game, player, Seq.empty) else emptyNode
+                                  if (_) challengePanel(game = game, player = player, characters = Seq.empty)
+                                  else emptyNode
                                 )
                               )
                           case Some(characters) =>
@@ -3670,7 +3768,7 @@ object Views {
                                       onClick --> (_ => openSignedIn(url))
                                     )
                                 ),
-                                challengePanel(game, player, characters)
+                                challengePanel(game = game, player = player, characters = characters)
                               )
                       }
               },
@@ -3724,7 +3822,7 @@ object Views {
                       s"Make a character in ${game.displayName}",
                       onClick --> (_ => openSignedIn(url))
                     ),
-                    busyButton("I've made one — check again", classes = Some("link")) { busy =>
+                    busyButton(label = "I've made one — check again", classes = Some("link")) { busy =>
                         // Cleared first, so that a second "no character yet" is a change the live
                         // region announces rather than the same text it already holds.
                         checked.set(None)
@@ -3792,22 +3890,30 @@ object Views {
                     // for one player, and one being looked up while the form is open is a different
                     // challenge, offered by opening it again.
                     child <-- Store.showChallengeForm.signal.map {
-                        if (_) challengeDialog(newChallengeForm(game, player, characters, Store.invitee.now()))
+                        if (_)
+                            challengeDialog(
+                              newChallengeForm(
+                                game = game,
+                                player = player,
+                                characters = characters,
+                                invitee = Store.invitee.now()
+                              )
+                            )
                         else emptyNode
                     },
                     refreshableSection(
-                      "Your Open Challenges",
-                      refreshingChallenges,
-                      () => Store.reloadChallenges(game.gameId),
+                      heading = "Your Open Challenges",
+                      refreshing = refreshingChallenges,
+                      reload = () => Store.reloadChallenges(game.gameId),
                       subsection = true
                     )(
                       if (mine.isEmpty) p(cls := "empty", "You have none open.")
                       else ul(mine.map(myChallengeRow(game, _)))
                     ),
                     refreshableSection(
-                      "Open Challenges",
-                      refreshingChallenges,
-                      () => Store.reloadChallenges(game.gameId),
+                      heading = "Open Challenges",
+                      refreshing = refreshingChallenges,
+                      reload = () => Store.reloadChallenges(game.gameId),
                       subsection = true
                     )(
                       if (others.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
@@ -3891,16 +3997,21 @@ object Views {
           // challenge that seats more may be worth starting without them. The players then choose their
           // roles, the strongest first.
           if (c.entries.size >= least)
-              busyButton("Start") { busy =>
-                  Store.run(ApiClient.tournamentStep(game.gameId, t.tournamentId, "start"), busy, challengeStale(t))(
-                    _ => reloadAfterStart(game.gameId)
-                  )
+              busyButton(label = "Start") { busy =>
+                  Store.run(
+                    action =
+                        ApiClient.tournamentStep(gameId = game.gameId, tournamentId = t.tournamentId, step = "start"),
+                    busy = busy,
+                    onFailure = challengeStale(t)
+                  )(_ => reloadAfterStart(game.gameId))
               }
           else div(cls := "detail", s"needs at least $least players to start"),
-          busyButton("Cancel") { busy =>
-              Store.run(ApiClient.tournamentStep(game.gameId, t.tournamentId, "cancel"), busy, challengeStale(t))(_ =>
-                  reloadChallengeSections(game.gameId)
-              )
+          busyButton(label = "Cancel") { busy =>
+              Store.run(
+                action = ApiClient.tournamentStep(gameId = game.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                busy = busy,
+                onFailure = challengeStale(t)
+              )(_ => reloadChallengeSections(game.gameId))
           },
           invitedList(game, c),
           invitePanel(game, c)
@@ -3926,11 +4037,15 @@ object Views {
                       div(cls := "detail", if (entered) "entered" else "not answered yet"),
                       if (entered) emptyNode
                       else
-                          busyButton("Revoke", classes = Some("link")) { busy =>
+                          busyButton(label = "Revoke", classes = Some("link")) { busy =>
                               Store.run(
-                                ApiClient.revokeTournamentInvitation(game.gameId, t.tournamentId, invitation.playerId),
-                                busy,
-                                challengeStale(t)
+                                action = ApiClient.revokeTournamentInvitation(
+                                  gameId = game.gameId,
+                                  tournamentId = t.tournamentId,
+                                  playerId = invitation.playerId
+                                ),
+                                busy = busy,
+                                onFailure = challengeStale(t)
                               )(_ => Store.refreshChallenges(game.gameId))
                           }
                     )
@@ -3947,11 +4062,15 @@ object Views {
                       ),
                       if (entered) emptyNode
                       else
-                          busyButton("Revoke", classes = Some("link")) { busy =>
+                          busyButton(label = "Revoke", classes = Some("link")) { busy =>
                               Store.run(
-                                ApiClient.revokeTournamentCharacterInvitation(game.gameId, t.tournamentId, id),
-                                busy,
-                                challengeStale(t)
+                                action = ApiClient.revokeTournamentCharacterInvitation(
+                                  gameId = game.gameId,
+                                  tournamentId = t.tournamentId,
+                                  characterId = id
+                                ),
+                                busy = busy,
+                                onFailure = challengeStale(t)
                               )(_ => Store.refreshChallenges(game.gameId))
                           }
                     )
@@ -4022,7 +4141,7 @@ object Views {
                       "Find a player",
                       input(tpe := "search", controlled(value <-- prefix.signal, onInput.mapToValue --> prefix))
                     ),
-                    busyButton("Search", disabledWhen = prefix.signal.map(_.trim.isEmpty)) { busy =>
+                    busyButton(label = "Search", disabledWhen = prefix.signal.map(_.trim.isEmpty)) { busy =>
                         // Guarded by the sign-in counter, because this writes into the store: an answer after a
                         // sign-out would teach the next player's session who the previous one was looking for.
                         val signIn = Store.currentSignIn
@@ -4049,34 +4168,39 @@ object Views {
                                           li(
                                             cls := "row",
                                             div(cls := "title", candidate.nickname),
-                                            characterInviteButtons(game.gameId, candidate, charactersAsked) {
-                                                (ch, busy) =>
-                                                    Store.run(
-                                                      ApiClient.inviteCharacterToTournament(
-                                                        game.gameId,
-                                                        t.tournamentId,
-                                                        ch.characterId
-                                                      ),
-                                                      busy,
-                                                      challengeStale(t)
-                                                    )(_ => Store.refreshChallenges(game.gameId))
+                                            characterInviteButtons(
+                                              gameId = game.gameId,
+                                              owner = candidate,
+                                              exclude = charactersAsked
+                                            ) { (ch, busy) =>
+                                                Store.run(
+                                                  action = ApiClient.inviteCharacterToTournament(
+                                                    gameId = game.gameId,
+                                                    tournamentId = t.tournamentId,
+                                                    characterId = ch.characterId
+                                                  ),
+                                                  busy = busy,
+                                                  onFailure = challengeStale(t)
+                                                )(_ => Store.refreshChallenges(game.gameId))
                                             }
                                           )
                                       else
                                           li(
                                             cls := "row",
                                             div(cls := "title", candidate.nickname),
-                                            busyButton(s"Invite ${candidate.nickname}", classes = Some("link")) {
-                                                busy =>
-                                                    Store.run(
-                                                      ApiClient.inviteToTournament(
-                                                        game.gameId,
-                                                        t.tournamentId,
-                                                        candidate.playerId
-                                                      ),
-                                                      busy,
-                                                      challengeStale(t)
-                                                    )(_ => Store.refreshChallenges(game.gameId))
+                                            busyButton(
+                                              label = s"Invite ${candidate.nickname}",
+                                              classes = Some("link")
+                                            ) { busy =>
+                                                Store.run(
+                                                  action = ApiClient.inviteToTournament(
+                                                    gameId = game.gameId,
+                                                    tournamentId = t.tournamentId,
+                                                    playerId = candidate.playerId
+                                                  ),
+                                                  busy = busy,
+                                                  onFailure = challengeStale(t)
+                                                )(_ => Store.refreshChallenges(game.gameId))
                                             }
                                           )
                                   )
@@ -4123,11 +4247,15 @@ object Views {
               case Some(entry) =>
                   div(
                     div(cls := "detail", "you have entered"),
-                    busyButton("Withdraw", classes = Some("link")) { busy =>
+                    busyButton(label = "Withdraw", classes = Some("link")) { busy =>
                         Store.run(
-                          ApiClient.withdrawFromTournament(game.gameId, t.tournamentId, entry.entrantId),
-                          busy,
-                          challengeStale(t)
+                          action = ApiClient.withdrawFromTournament(
+                            gameId = game.gameId,
+                            tournamentId = t.tournamentId,
+                            entrantId = entry.entrantId
+                          ),
+                          busy = busy,
+                          onFailure = challengeStale(t)
                         )(_ => reloadChallengeSections(game.gameId))
                     }
                   )
@@ -4157,16 +4285,21 @@ object Views {
                           )
                         )
                     else emptyNode,
-                    busyButton("Enter", disabledWhen = character.signal.map(_.isEmpty && characterGame)) { busy =>
-                        Store.run(
-                          ApiClient
-                              .enterTournament(game.gameId, t.tournamentId, character.now().filter(_ => characterGame)),
-                          busy,
-                          challengeStale(t)
-                        ) { _ =>
-                            // Entering may have filled one that starts itself: the start's reloads cover both.
-                            reloadAfterStart(game.gameId)
-                        }
+                    busyButton(label = "Enter", disabledWhen = character.signal.map(_.isEmpty && characterGame)) {
+                        busy =>
+                            Store.run(
+                              action = ApiClient
+                                  .enterTournament(
+                                    gameId = game.gameId,
+                                    tournamentId = t.tournamentId,
+                                    characterId = character.now().filter(_ => characterGame)
+                                  ),
+                              busy = busy,
+                              onFailure = challengeStale(t)
+                            ) { _ =>
+                                // Entering may have filled one that starts itself: the start's reloads cover both.
+                                reloadAfterStart(game.gameId)
+                            }
                     }
                   )
           }
@@ -4231,7 +4364,9 @@ object Views {
       * `label.field`, with the input pointed at the tip so that it is read out with the field.
       */
     private[ui] def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
-        withTip(id, caption, text)(label(cls := "field", caption, control.amend(aria.describedBy := id)))
+        withTip(id = id, subject = caption, text = text)(
+          label(cls := "field", caption, control.amend(aria.describedBy := id))
+        )
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
       * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
@@ -4258,9 +4393,9 @@ object Views {
 
     private def friendlyLabel(): HtmlElement =
         withTip(
-          freshTipId("friendly-tip"),
-          "friendly",
-          friendlyMeaning
+          id = freshTipId("friendly-tip"),
+          subject = "friendly",
+          text = friendlyMeaning
         )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
 
     /** The "Friendly" column's heading: the word itself showing what a friendly match is, as the Elo column's
@@ -4271,11 +4406,11 @@ object Views {
     private def friendlyHeading(): HtmlElement =
         span(
           span(cls := "narrow-heading", "Friendly"),
-          tipWord(freshTipId("friendly-tip"), "Friendly", friendlyMeaning)
+          tipWord(id = freshTipId("friendly-tip"), word = "Friendly", text = friendlyMeaning)
         )
 
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
-        tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
+        tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
       * cell too narrow to hold both a word and a "?" -- the heading of a running match's Friendly column. A button, so
@@ -4283,7 +4418,7 @@ object Views {
       * under it.
       */
     private def tipWord(id: String, word: String, text: String): HtmlElement =
-        tipped(id, text, emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
+        tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
 
     /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. */
     private def tipped(id: String, text: String, control: Modifier[HtmlElement])(
@@ -4368,10 +4503,10 @@ object Views {
         game.parameters
             .map(p =>
                 ParameterChoice(
-                  p.name,
-                  p.displayName,
-                  Format.parameterValues(p.values.map(_.value.toString)),
-                  p.defaultValue.map(_.toString)
+                  name = p.name,
+                  label = p.displayName,
+                  values = Format.parameterValues(p.values.map(_.value.toString)),
+                  default = p.defaultValue.map(_.toString)
                 )
             )
             .filter(_.values.nonEmpty)
@@ -4571,10 +4706,11 @@ object Views {
                         )
                     else
                         withTip(
-                          "plays-tip",
-                          "I will play in this match",
-                          "Leave this unticked to offer a match for other players to play, which you can invite " +
-                              "them to, but have no place in."
+                          id = "plays-tip",
+                          subject = "I will play in this match",
+                          text =
+                              "Leave this unticked to offer a match for other players to play, which you can invite " +
+                                  "them to, but have no place in."
                         )(
                           label(
                             input(
@@ -4586,10 +4722,11 @@ object Views {
                           )
                         ),
                     withTip(
-                      "friendly-tip",
-                      "Friendly",
-                      "A friendly match does not move its players' ratings; untick for a rated one. As an admin of " +
-                          "this game you can change it later, until the match is completed."
+                      id = "friendly-tip",
+                      subject = "Friendly",
+                      text =
+                          "A friendly match does not move its players' ratings; untick for a rated one. As an admin of " +
+                              "this game you can change it later, until the match is completed."
                     )(
                       label(
                         input(
@@ -4605,10 +4742,11 @@ object Views {
           // Offered only when there is a choice to make: a game whose roles are all required seats exactly that many.
           if (most > least)
               withTip(
-                "seats-tip",
-                "Players",
-                s"How many play, from $least to $most. It is full, and starts if you ask it to, when that many have " +
-                    "entered; you can also start it with fewer, as long as there are at least " + least + "."
+                id = "seats-tip",
+                subject = "Players",
+                text =
+                    s"How many play, from $least to $most. It is full, and starts if you ask it to, when that many have " +
+                        "entered; you can also start it with fewer, as long as there are at least " + least + "."
               )(
                 label(
                   cls := "field",
@@ -4631,7 +4769,12 @@ object Views {
                   div(
                     cls := "detail-panel",
                     p(cls := "detail", s"Inviting ${asked.nickname}: only the character you choose may enter."),
-                    characterChooser(game.gameId, asked, Set.empty, inviteeCharacter)
+                    characterChooser(
+                      gameId = game.gameId,
+                      owner = asked,
+                      exclude = Set.empty,
+                      chosen = inviteeCharacter
+                    )
                   )
               else p(cls := "detail", s"Inviting ${asked.nickname}: only they may enter.")
           ),
@@ -4639,9 +4782,9 @@ object Views {
           // two questions. How the time is spent is the game's: a chess clock shared out among the players of a game
           // of turns, and a limit on each turn in one where everybody moves at once.
           withTip(
-            "time-limit-tip",
-            "Time to play",
-            "How long the match may take. In a game of turns each player gets an equal share of it as a chess " +
+            id = "time-limit-tip",
+            subject = "Time to play",
+            text = "How long the match may take. In a game of turns each player gets an equal share of it as a chess " +
                 "clock; in a game where everybody moves at once it is shared out among the turns. Leave it blank " +
                 "for no limit."
           )(
@@ -4684,10 +4827,11 @@ object Views {
                 .map((raw, isLive) => limitProblem(raw, isLive).getOrElse(""))
           ),
           withTip(
-            "live-tip",
-            "Live",
-            "Played in real time. The game engine runs the turns and keeps the clock itself, so the time to play " +
-                "is required. A player who runs out of time loses the match."
+            id = "live-tip",
+            subject = "Live",
+            text =
+                "Played in real time. The game engine runs the turns and keeps the clock itself, so the time to play " +
+                    "is required. A player who runs out of time loses the match."
           )(
             label(
               input(
@@ -4699,10 +4843,11 @@ object Views {
             )
           ),
           withTip(
-            "public-tip",
-            "Public",
-            "Anyone may watch the match, without signing in, and it is listed among the public matches on each " +
-                "player's page. It does not change who may enter the challenge."
+            id = "public-tip",
+            subject = "Public",
+            text =
+                "Anyone may watch the match, without signing in, and it is listed among the public matches on each " +
+                    "player's page. It does not change who may enter the challenge."
           )(
             label(
               input(
@@ -4714,10 +4859,11 @@ object Views {
             )
           ),
           withTip(
-            "planned-start-tip",
-            "When to play",
-            "When you mean the match to be played, shown to anyone deciding whether to enter. It starts the match " +
-                "no sooner and no later. Leave it blank to say nothing."
+            id = "planned-start-tip",
+            subject = "When to play",
+            text =
+                "When you mean the match to be played, shown to anyone deciding whether to enter. It starts the match " +
+                    "no sooner and no later. Leave it blank to say nothing."
           )(
             label(
               cls := "field",
@@ -4753,7 +4899,7 @@ object Views {
               )
           },
           busyButton(
-            "Create Challenge",
+            label = "Create Challenge",
             disabledWhen = timeLimit.signal
                 .combineWith(live.signal, ownCharacter.signal, seated, inviteeCharacter.signal)
                 .map { case (limit, isLive, own, inIt, asked) =>

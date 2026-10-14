@@ -41,7 +41,13 @@ object Generators {
             // generated players sharing one is a case worth generating rather than avoiding.
             local <- genString
             email <- Gen.oneOf(Some(s"$local@example.com"), None)
-        } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId, email)
+        } yield Player(
+          playerId = PlayerId.unassigned,
+          nickname = nickname,
+          isAdmin = isAdmin,
+          externalId = externalId,
+          email = email
+        )
 
     // Existing suites all build a character alongside the game, so Character is the default;
     // Plain-game coverage passes gameType explicitly.
@@ -58,19 +64,31 @@ object Generators {
             // can be played in. Two rather than one because two players in one match may not share a
             // role.
         } yield Game(
-          GameId.unassigned,
-          gameType,
-          name,
-          name,
-          description,
-          url,
-          active,
-          Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", roleType = RoleType.Required, displayName = "first"),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", roleType = RoleType.Required, displayName = "second")
+          gameId = GameId.unassigned,
+          gameType = gameType,
+          name = name,
+          displayName = name,
+          description = description,
+          url = url,
+          isActive = active,
+          roles = Seq(
+            GameRole(
+              gameRoleId = GameRoleId(0),
+              gameId = GameId.unassigned,
+              name = "first",
+              roleType = RoleType.Required,
+              displayName = "first"
+            ),
+            GameRole(
+              gameRoleId = GameRoleId(0),
+              gameId = GameId.unassigned,
+              name = "second",
+              roleType = RoleType.Required,
+              displayName = "second"
+            )
           ),
-          Seq.empty,
-          externalId,
+          parameters = Seq.empty,
+          externalId = externalId,
           characterUrl = characterUrl,
           hasUnimportantRoles = unimportantRoles
         )
@@ -82,7 +100,14 @@ object Generators {
             roleType <- Gen.oneOf(RoleType.values.toSeq)
             preferenceLevel <- Gen.option(Gen.choose(0, 5))
         } yield {
-            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, roleType, roleName, preferenceLevel)
+            val role = GameRole(
+              gameRoleId = GameRoleId(0),
+              gameId = GameId.unassigned,
+              name = roleName,
+              roleType = roleType,
+              displayName = roleName,
+              preferenceLevel = preferenceLevel
+            )
             base.copy(roles = Seq(role))
         }
 
@@ -91,7 +116,14 @@ object Generators {
             name <- genString
             description <- genString
             state <- genString
-        } yield Character(CharacterId(0), gameId, name, description, state, playerId)
+        } yield Character(
+          characterId = CharacterId(0),
+          gameId = gameId,
+          name = name,
+          description = description,
+          state = state,
+          playerId = playerId
+        )
 
     /** A match. Its tournament, and so whose it is, is the one [[TestMatches.writeMatch]] gives it. */
     def genMatch(gameId: GameId, matchId: MatchId): Gen[Match] =
@@ -111,21 +143,21 @@ object Generators {
             timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
             friendly <- Gen.oneOf(true, false)
         } yield Match(
-          gameId,
-          matchId,
-          TournamentId.unassigned,
-          description,
-          completedAt,
-          Some(start),
-          timeLimit,
-          "{}",
-          isPublic,
-          cancelled,
-          statusUrl,
-          playUrl,
-          publicUrl,
-          timeLimitKind,
-          timeLimitUnit,
+          gameId = gameId,
+          matchId = matchId,
+          tournamentId = TournamentId.unassigned,
+          description = description,
+          completedAt = completedAt,
+          start = Some(start),
+          timeLimit = timeLimit,
+          settings = "{}",
+          isPublic = isPublic,
+          isCancelled = cancelled,
+          statusUrl = statusUrl,
+          playUrl = playUrl,
+          publicUrl = publicUrl,
+          timeLimitKind = timeLimitKind,
+          timeLimitUnit = timeLimitUnit,
           isFriendly = friendly,
           // Begun, as a match is once it is created in its engine: over once it is completed or cancelled.
           status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
@@ -143,15 +175,15 @@ object Generators {
             completed <- Gen.oneOf(true, false)
             due <- Gen.option(genInstant)
         } yield CharacterParticipant(
-          ParticipantId(0),
-          gameId,
-          matchId,
-          playerId,
-          pending,
-          completed,
-          due,
-          characterId,
-          gameRoleId
+          participantId = ParticipantId(0),
+          gameId = gameId,
+          matchId = matchId,
+          playerId = playerId,
+          isPending = pending,
+          isCompleted = completed,
+          due = due,
+          characterId = characterId,
+          gameRoleId = gameRoleId
         )
 
     /** As `genParticipant`, for a game that has no characters. */
@@ -165,7 +197,16 @@ object Generators {
             pending <- Gen.oneOf(true, false)
             completed <- Gen.oneOf(true, false)
             due <- Gen.option(genInstant)
-        } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, gameRoleId)
+        } yield PlainParticipant(
+          participantId = ParticipantId(0),
+          gameId = gameId,
+          matchId = matchId,
+          playerId = playerId,
+          isPending = pending,
+          isCompleted = completed,
+          due = due,
+          gameRoleId = gameRoleId
+        )
 
     def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
         for {
@@ -174,7 +215,14 @@ object Generators {
             isWinner <- Gen.oneOf(true, false)
             // A friendly match's result has none, a rated one's has one.
             eloDelta <- Gen.option(Gen.choose(-32, 32))
-        } yield Result(gameId, participantId, rank, scores, isWinner, eloDelta = eloDelta)
+        } yield Result(
+          gameId = gameId,
+          participantId = participantId,
+          rank = rank,
+          scores = scores,
+          isWinner = isWinner,
+          eloDelta = eloDelta
+        )
 
     /* Values are restricted to the shapes a jsonb round trip preserves exactly: a Double comes
      * back a Double, but an Int would come back a Double too, so ints are not generated here. */

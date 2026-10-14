@@ -20,33 +20,33 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     /** (1) Somebody entered a challenge or tournament you own, or withdrew from one. */
     case ChallengeAccepted
         extends NotificationType(
-          "CHALLENGE_ACCEPTED",
-          "Someone enters my challenge",
-          "Or my tournament. Also when someone withdraws."
+          code = "CHALLENGE_ACCEPTED",
+          label = "Someone enters my challenge",
+          detail = "Or my tournament. Also when someone withdraws."
         )
 
     /** (2) A challenge or tournament you own is full, so you can start it. */
     case ChallengeReady
         extends NotificationType(
-          "CHALLENGE_READY",
-          "My challenge can start",
-          "Or my tournament: it is full."
+          code = "CHALLENGE_READY",
+          label = "My challenge can start",
+          detail = "Or my tournament: it is full."
         )
 
     /** (3) Somebody else entered a challenge or tournament you had entered, or withdrew from one. */
     case AcceptanceChanged
         extends NotificationType(
-          "ACCEPTANCE_CHANGED",
-          "Someone joins a challenge",
-          "Or a tournament you entered. Also when one of them withdraws."
+          code = "ACCEPTANCE_CHANGED",
+          label = "Someone joins a challenge",
+          detail = "Or a tournament you entered. Also when one of them withdraws."
         )
 
     /** (4) A challenge or tournament you entered is full, so its owner can start it. */
     case AcceptedChallengeReady
         extends NotificationType(
-          "ACCEPTED_CHALLENGE_READY",
-          "A challenge can start",
-          "Or a tournament you entered: you are waiting on its owner."
+          code = "ACCEPTED_CHALLENGE_READY",
+          label = "A challenge can start",
+          detail = "Or a tournament you entered: you are waiting on its owner."
         )
 
     /** (5) Somebody has invited you to a challenge or tournament of theirs.
@@ -57,17 +57,17 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       */
     case InvitationReceived
         extends NotificationType(
-          "INVITATION_RECEIVED",
-          "Someone invites me to a challenge",
-          "Or to a tournament, offered to you in particular."
+          code = "INVITATION_RECEIVED",
+          label = "Someone invites me to a challenge",
+          detail = "Or to a tournament, offered to you in particular."
         )
 
     /** (6) Somebody has accepted an invitation you sent, by entering. */
     case InvitationAccepted
         extends NotificationType(
-          "INVITATION_ACCEPTED",
-          "My invitation is accepted",
-          "Someone you invited has entered."
+          code = "INVITATION_ACCEPTED",
+          label = "My invitation is accepted",
+          detail = "Someone you invited has entered."
         )
 
     /** (7) Somebody has turned down an invitation you sent.
@@ -77,25 +77,42 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       */
     case InvitationRejected
         extends NotificationType(
-          "INVITATION_REJECTED",
-          "My invitation is turned down",
-          "Also when they simply say no."
+          code = "INVITATION_REJECTED",
+          label = "My invitation is turned down",
+          detail = "Also when they simply say no."
         )
 
     /** (8) A match you are a participant in has begun. */
     case MatchStarted
-        extends NotificationType("MATCH_STARTED", "A match I am in starts", "With whose turn it is first.")
+        extends NotificationType(
+          code = "MATCH_STARTED",
+          label = "A match I am in starts",
+          detail = "With whose turn it is first."
+        )
 
     /** (7) Somebody took a turn in a match you are playing. */
     case TurnTaken
-        extends NotificationType("TURN_TAKEN", "Someone takes a turn", "Every move in every match you are playing.")
+        extends NotificationType(
+          code = "TURN_TAKEN",
+          label = "Someone takes a turn",
+          detail = "Every move in every match you are playing."
+        )
 
     /** (8) It is your turn. */
-    case YourTurn extends NotificationType("YOUR_TURN", "It is my turn", "Including when a turn is nearly due.")
+    case YourTurn
+        extends NotificationType(
+          code = "YOUR_TURN",
+          label = "It is my turn",
+          detail = "Including when a turn is nearly due."
+        )
 
     /** (9) A match you are in has ended or been called off. */
     case MatchEnded
-        extends NotificationType("MATCH_ENDED", "A match I am in ends", "However it ends, including cancellation.")
+        extends NotificationType(
+          code = "MATCH_ENDED",
+          label = "A match I am in ends",
+          detail = "However it ends, including cancellation."
+        )
 
     /** (10) Every match of a round of a tournament you own is over, and the next waits on you to start it.
       *
@@ -104,9 +121,9 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       */
     case TournamentRoundDone
         extends NotificationType(
-          "TOURNAMENT_ROUND_DONE",
-          "A round of my tournament ends",
-          "When you start each round yourself."
+          code = "TOURNAMENT_ROUND_DONE",
+          label = "A round of my tournament ends",
+          detail = "When you start each round yourself."
         )
 
     /** The column this kind is stored in, on `player` and `player_game` alike — and on `participant` for the [[onSeat]]
@@ -232,7 +249,12 @@ case class NotificationPreferences(
             taken <- isNotifiedOfTurnTaken
             yours <- isNotifiedOfYourTurn
             ended <- isNotifiedOfMatchEnded
-        } yield SeatNotifications(started, taken, yours, ended)
+        } yield SeatNotifications(
+          isNotifiedOfMatchStarted = started,
+          isNotifiedOfTurnTaken = taken,
+          isNotifiedOfYourTurn = yours,
+          isNotifiedOfMatchEnded = ended
+        )
 }
 
 object NotificationPreferences {
@@ -279,7 +301,12 @@ object SeatNotifications {
 
     /** One answer for all four, as a seat is stamped when every kind resolves alike.
       */
-    def all(enabled: Boolean): SeatNotifications = SeatNotifications(enabled, enabled, enabled, enabled)
+    def all(enabled: Boolean): SeatNotifications = SeatNotifications(
+      isNotifiedOfMatchStarted = enabled,
+      isNotifiedOfTurnTaken = enabled,
+      isNotifiedOfYourTurn = enabled,
+      isNotifiedOfMatchEnded = enabled
+    )
 }
 
 /** The levels a new seat inherits from, unresolved.

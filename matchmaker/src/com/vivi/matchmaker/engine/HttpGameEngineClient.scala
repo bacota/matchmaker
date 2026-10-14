@@ -25,15 +25,16 @@ class HttpGameEngineClient(
 ) extends GameEngineClient {
 
     def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-        send("POST", gameUrl, apiKey, Some(write(request))).map(parse[CreateGameResponse](gameUrl, _))
+        send(method = "POST", url = gameUrl, key = apiKey, body = Some(write(request)))
+            .map(parse[CreateGameResponse](gameUrl, _))
 
     def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] = {
         val url = withSince(statusUrl, since)
-        send("GET", url, apiKey, None).map(parse[GameStatusResponse](url, _))
+        send(method = "GET", url = url, key = apiKey, body = None).map(parse[GameStatusResponse](url, _))
     }
 
     override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
-        send("POST", cancelUrl, apiKey, Some("{}")).void
+        send(method = "POST", url = cancelUrl, key = apiKey, body = Some("{}")).void
 
     /* `since` goes on the query string rather than in a body, because this is a GET and the engine
      * is free to ignore it: one that does not report turns answers the same either way. Appended

@@ -54,10 +54,14 @@ class Engine(
                 // this player opened the board, if that was later.
                 val record =
                     MoveRecord(
-                      seat.participantId,
-                      seat.side,
-                      at,
-                      TurnClock.turnStart(current.clock, seat.participantId, current.createdAt),
+                      participantId = seat.participantId,
+                      side = seat.side,
+                      takenAt = at,
+                      startedAt = TurnClock.turnStart(
+                        clock = current.clock,
+                        participantId = seat.participantId,
+                        turnStartedAt = current.createdAt
+                      ),
                       setup = Some(parsed)
                     )
                 (current.copy(board = board, turns = current.turns :+ record), record)
@@ -92,7 +96,7 @@ class Engine(
                 _ <- current.board.cells.lift(from).flatten.filter(_.side == seat.side) match {
                     case Some(p)
                         if current.board.targets(seat.side, from).contains(to) &&
-                            Rules.isShuttling(current.history(seat.side), Step(p.id, from, to)) =>
+                            Rules.isShuttling(current.history(seat.side), Step(pieceId = p.id, from = from, to = to)) =>
                         Left(
                           Refusal.Invalid(
                             s"that would be a fourth move in a row between ${Board.name(from)} and ${Board.name(to)}"
@@ -100,12 +104,23 @@ class Engine(
                         )
                     case _ => Right(())
                 }
-                moved <- current.board.move(seat.side, from, to).left.map(Refusal.Invalid.apply)
+                moved <- current.board.move(side = seat.side, from = from, to = to).left.map(Refusal.Invalid.apply)
             } yield {
                 val started =
-                    TurnClock.turnStart(current.clock, seat.participantId, StrategoMatch.clockStartedAt(current))
-                val step = Step(current.board(from).get.id, from, to)
-                val record = MoveRecord(seat.participantId, seat.side, at, started, Some(step), moved.battle)
+                    TurnClock.turnStart(
+                      clock = current.clock,
+                      participantId = seat.participantId,
+                      turnStartedAt = StrategoMatch.clockStartedAt(current)
+                    )
+                val step = Step(pieceId = current.board(from).get.id, from = from, to = to)
+                val record = MoveRecord(
+                  participantId = seat.participantId,
+                  side = seat.side,
+                  takenAt = at,
+                  startedAt = started,
+                  step = Some(step),
+                  battle = moved.battle
+                )
                 (current.copy(board = moved.board, turns = current.turns :+ record), record)
             }
         }
@@ -120,7 +135,13 @@ class Engine(
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             Either.cond(
               !current.isOver, {
-                  val record = MoveRecord(seat.participantId, seat.side, at, at, isConcession = true)
+                  val record = MoveRecord(
+                    participantId = seat.participantId,
+                    side = seat.side,
+                    takenAt = at,
+                    startedAt = at,
+                    isConcession = true
+                  )
                   (current.copy(turns = current.turns :+ record), record)
               },
               Refusal.Invalid("this match is already over")
@@ -146,11 +167,11 @@ class Engine(
                     val own = viewer.contains(p.side)
                     Option.when(m.isInPlay || own)(
                       PieceView(
-                        square,
-                        p.side.toString,
-                        Option.when(own || p.isRevealed)(p.rank.toString),
-                        p.isRevealed,
-                        p.isMoved
+                        square = square,
+                        side = p.side.toString,
+                        rank = Option.when(own || p.isRevealed)(p.rank.toString),
+                        isRevealed = p.isRevealed,
+                        isMoved = p.isMoved
                       )
                     )
                 }
@@ -177,12 +198,12 @@ class Engine(
           maxMoves = m.maxMoves,
           players = m.seats.map(s =>
               SeatView(
-                s.side.toString,
-                s.cognitoId,
-                s.participantId,
-                m.moves.count(_.side == s.side),
-                m.captured(s.side),
-                s.nickname
+                side = s.side.toString,
+                cognitoId = s.cognitoId,
+                participantId = s.participantId,
+                moves = m.moves.count(_.side == s.side),
+                captured = m.captured(s.side),
+                nickname = s.nickname
               )
           ),
           clock = core.clockView(m),
@@ -193,10 +214,12 @@ class Engine(
     private def moveView(r: MoveRecord): Option[LastMove] =
         r.step.map(s =>
             LastMove(
-              r.side.toString,
-              s.from,
-              s.to,
-              r.battle.map(b => BattleView(b.attacker.toString, b.defender.toString, b.result.toString))
+              side = r.side.toString,
+              from = s.from,
+              to = s.to,
+              battle = r.battle.map(b =>
+                  BattleView(attacker = b.attacker.toString, defender = b.defender.toString, result = b.result.toString)
+              )
             )
         )
 
@@ -209,7 +232,13 @@ class Engine(
             Protocol.ReplayView(
               opening.cells.indices.toList.flatMap(square =>
                   opening(square).map(p =>
-                      PieceView(square, p.side.toString, Option.unless(unseen(p.id))(p.rank.toString), false, false)
+                      PieceView(
+                        square = square,
+                        side = p.side.toString,
+                        rank = Option.unless(unseen(p.id))(p.rank.toString),
+                        isRevealed = false,
+                        isMoved = false
+                      )
                   )
               ),
               m.moves.flatMap(moveView)

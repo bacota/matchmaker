@@ -99,37 +99,45 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
             externalId.map("x-external-id" -> _)
 
     def recordMove(url: String, notification: Protocol.MoveNotification): Unit =
-        http.post(url, write(notification), "execute-api", headers)
+        http.post(url = url, body = write(notification), service = "execute-api", headers = headers)
 
     def recordResults(url: String, results: Protocol.MatchResults): Unit =
-        http.post(url, write(results), "execute-api", headers)
+        http.post(url = url, body = write(results), service = "execute-api", headers = headers)
 
     def saveCharacterState(matchmakerUrl: String, characterId: Long, state: String): Unit =
         http.send(
-          "PUT",
-          s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/state",
-          Some(write(Protocol.UpdateStateRequest(state))),
-          "execute-api",
-          headers
+          method = "PUT",
+          url = s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/state",
+          body = Some(write(Protocol.UpdateStateRequest(state))),
+          service = "execute-api",
+          headers = headers
         )
 
     def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
         read[Protocol.RegisteredCharacter](
-          call("POST", s"${matchmakerUrl.stripSuffix("/")}/characters", Some(write(request)))
+          call(method = "POST", url = s"${matchmakerUrl.stripSuffix("/")}/characters", body = Some(write(request)))
         ).characterId
 
     def listCharacters(matchmakerUrl: String, ownerExternalId: String): List[Protocol.OwnedCharacter] = {
         val owner = java.net.URLEncoder.encode(ownerExternalId, java.nio.charset.StandardCharsets.UTF_8)
         read[List[Protocol.OwnedCharacter]](
-          call("GET", s"${matchmakerUrl.stripSuffix("/")}/characters?owner=$owner", None)
+          call(method = "GET", url = s"${matchmakerUrl.stripSuffix("/")}/characters?owner=$owner", body = None)
         )
     }
 
     def editCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.EditCharacterRequest): Unit =
-        call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId", Some(write(request)))
+        call(
+          method = "PUT",
+          url = s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId",
+          body = Some(write(request))
+        )
 
     def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit =
-        call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/owner", Some(write(request)))
+        call(
+          method = "PUT",
+          url = s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/owner",
+          body = Some(write(request))
+        )
 
     private def archiveUrl(matchmakerUrl: String, matchId: String, action: String = ""): String = {
         val id = java.net.URLEncoder.encode(matchId, java.nio.charset.StandardCharsets.UTF_8)
@@ -141,14 +149,26 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
         matchId: String,
         request: Protocol.ArchiveUploadRequest
     ): Protocol.ArchiveUploadAnswer =
-        read[Protocol.ArchiveUploadAnswer](call("POST", archiveUrl(matchmakerUrl, matchId), Some(write(request))))
+        read[Protocol.ArchiveUploadAnswer](
+          call(
+            method = "POST",
+            url = archiveUrl(matchmakerUrl = matchmakerUrl, matchId = matchId),
+            body = Some(write(request))
+          )
+        )
 
     def confirmArchive(matchmakerUrl: String, matchId: String): Protocol.ArchiveConfirmation =
-        read[Protocol.ArchiveConfirmation](call("POST", archiveUrl(matchmakerUrl, matchId, "/confirm"), Some("{}")))
+        read[Protocol.ArchiveConfirmation](
+          call(
+            method = "POST",
+            url = archiveUrl(matchmakerUrl = matchmakerUrl, matchId = matchId, action = "/confirm"),
+            body = Some("{}")
+          )
+        )
 
     def readArchive(matchmakerUrl: String, matchId: String): ArchiveLocation = {
-        val url = archiveUrl(matchmakerUrl, matchId, "/read")
-        http.exchange("POST", url, Some("{}"), "execute-api", headers) match {
+        val url = archiveUrl(matchmakerUrl = matchmakerUrl, matchId = matchId, action = "/read")
+        http.exchange(method = "POST", url = url, body = Some("{}"), service = "execute-api", headers = headers) match {
             case (status, answer) if status >= 200 && status < 300 =>
                 ArchiveLocation.At(read[Protocol.ArchiveDownload](answer))
             case (410, _) => ArchiveLocation.Expired
@@ -160,13 +180,17 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
     }
 
     def reportArchiveExpired(matchmakerUrl: String, matchId: String): Unit =
-        call("POST", archiveUrl(matchmakerUrl, matchId, "/expired"), Some("{}"))
+        call(
+          method = "POST",
+          url = archiveUrl(matchmakerUrl = matchmakerUrl, matchId = matchId, action = "/expired"),
+          body = Some("{}")
+        )
 
     /* A call whose answer the engine reads. Matchmaker's own refusal is raised with its reason, so
      * that the engine can tell the player what it was; anything else is matchmaker failing, and the
      * AwsError says so. */
     private def call(method: String, url: String, body: Option[String]): String =
-        http.exchange(method, url, body, "execute-api", headers) match {
+        http.exchange(method = method, url = url, body = body, service = "execute-api", headers = headers) match {
             case (status, answer) if status >= 200 && status < 300 => answer
             case (status, answer) if status >= 400 && status < 500 =>
                 throw MatchmakerRefusal(status, MatchmakerRefusal.reason(answer))
@@ -251,7 +275,12 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
             heldBuffer.toList
                 .collect {
                     case (id, c) if c.ownerExternalId == ownerExternalId =>
-                        Protocol.OwnedCharacter(id, c.name, c.description, c.state)
+                        Protocol.OwnedCharacter(
+                          characterId = id,
+                          name = c.name,
+                          description = c.description,
+                          state = c.state
+                        )
                 }
                 .sortBy(_.name)
         }
@@ -316,10 +345,10 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
                 Protocol.ArchiveUploadAnswer(upload =
                     Some(
                       Protocol.ArchiveUpload(
-                        archiveStore.urlOf(matchId),
-                        "PUT",
-                        Map("content-type" -> "application/json", "x-amz-checksum-sha256" -> request.sha256),
-                        java.time.Instant.now().plusSeconds(300)
+                        url = archiveStore.urlOf(matchId),
+                        method = "PUT",
+                        headers = Map("content-type" -> "application/json", "x-amz-checksum-sha256" -> request.sha256),
+                        expiresAt = java.time.Instant.now().plusSeconds(300)
                       )
                     )
                 )

@@ -35,7 +35,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                     created.incrementAndGet()
                     lastRequest = Some(request)
                     IO.pure(
-                      CreateGameResponse(s"https://engine/status/${request.matchId}", "https://engine/play", None)
+                      CreateGameResponse(
+                        statusUrl = s"https://engine/status/${request.matchId}",
+                        playUrl = "https://engine/play",
+                        publicUrl = None
+                      )
                     )
                 }
             }
@@ -49,7 +53,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         def ended(gameId: GameId, matchId: MatchId): IO[Unit] = services.ending.settle(gameId, matchId).void
         def ratingsChanged(gameId: GameId): IO[Unit] = services.ending.rank(gameId).void
         override def tournamentMatchDue(g: GameId, t: TournamentId, m: MatchId): IO[Unit] =
-            services.rounds.createMatch(g, t, m).void
+            services.rounds.createMatch(gameId = g, tournamentId = t, matchId = m).void
         override def tournamentRoundDue(g: GameId, t: TournamentId): IO[Unit] = services.rounds.autoStart(g, t).void
         override def tournamentRoundCheck(g: GameId, t: TournamentId, at: Instant): IO[Unit] =
             services.rounds.runCheck(g, t).void
@@ -62,13 +66,13 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         val endings = SyncEndings()
         val mail = RecordingNotifier()
         val services = TestServices.servicesWith(
-          engine,
+          engine = engine,
           notifier = mail,
           mail = TestServices.mailSettings,
           matchEndings = Some(endings)
         )
         endings.services = services
-        World(services, engine, mail)
+        World(services = services, engine = engine, mail = mail)
     }
 
     private def unique(prefix: String) = s"$prefix-${java.util.UUID.randomUUID()}"
@@ -91,21 +95,43 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                   .create(Generators.genGame(GameType.Plain).sample.get.copy(hasUnimportantRoles = !roles))
             )
             // Only the owner has an address, so the only mail sent is to them.
-            owner <- s.registration.register(unique("owner"), unique("sub"), Some(s"${unique("owner")}@example.com"))
-            players <- (1 to n).toList.traverse(_ => s.registration.register(unique("p"), unique("sub")))
+            owner <- s.registration.register(
+              nickname = unique("owner"),
+              externalId = unique("sub"),
+              email = Some(s"${unique("owner")}@example.com")
+            )
+            players <- (1 to n).toList.traverse(_ =>
+                s.registration.register(nickname = unique("p"), externalId = unique("sub"))
+            )
             model <- TestSession.resource.use(TournamentFixtures.model(_, game, design))
             t <- s.tournaments.create(
-              game.gameId,
-              TournamentRequest("Cup", model.tournamentModelId, settings = settings),
-              owner.externalId
+              gameId = game.gameId,
+              request =
+                  TournamentRequest(name = "Cup", tournamentModelId = model.tournamentModelId, settings = settings),
+              callerExternalId = owner.externalId
             )
-            _ <- s.tournaments.open(game.gameId, t.tournamentId, owner.externalId)
-            _ <- players.traverse(p => s.tournaments.enter(game.gameId, t.tournamentId, None, p.externalId))
+            _ <- s.tournaments.open(
+              gameId = game.gameId,
+              tournamentId = t.tournamentId,
+              callerExternalId = owner.externalId
+            )
+            _ <- players.traverse(p =>
+                s.tournaments.enter(
+                  gameId = game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = None,
+                  callerExternalId = p.externalId
+                )
+            )
             // Each entry was mailed to the owner. What these specs read is what the rounds send, so the record
             // starts again here.
             _ <- IO(w.mail.clear())
-            running <- s.tournaments.start(game.gameId, t.tournamentId, owner.externalId)
-        } yield Fixture(w, game, owner, players, running)
+            running <- s.tournaments.start(
+              gameId = game.gameId,
+              tournamentId = t.tournamentId,
+              callerExternalId = owner.externalId
+            )
+        } yield Fixture(w = w, game = game, owner = owner, players = players, t = running)
     }
 
     private def round(f: Fixture): IO[List[TournamentMatch]] =
@@ -114,7 +140,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         )
 
     private def detail(f: Fixture) =
-        f.w.services.tournaments.detail(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+        f.w.services.tournaments
+            .detail(gameId = f.game.gameId, tournamentId = f.t.tournamentId, callerExternalId = f.owner.externalId)
 
     /** Every seat that is to choose, chooses the first role left, until no match of the round is choosing. */
     private def chooseAll(f: Fixture): IO[Unit] =
@@ -131,11 +158,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                         taken = m.seats.flatMap(_.gameRoleId).toSet
                         role = f.game.roles.map(_.gameRoleId).find(r => !taken(r)).get
                         _ <- f.w.services.rounds.chooseRole(
-                          f.game.gameId,
-                          f.t.tournamentId,
-                          m.matchId,
-                          role,
-                          who.externalId
+                          gameId = f.game.gameId,
+                          tournamentId = f.t.tournamentId,
+                          matchId = m.matchId,
+                          role = role,
+                          callerExternalId = who.externalId
                         )
                     } yield ()
                 } *> chooseAll(f)
@@ -150,9 +177,19 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             _ <- matches.filter(_.status == TournamentMatchStatus.Started).traverse_ { m =>
                 val ordered = m.seats.sortBy(s => seedOf.getOrElse(s.entrantId.value, Int.MaxValue))
                 val results = ordered.zipWithIndex.map((s, i) =>
-                    ReportedResult(s.participantId, i + 1, Map("score" -> (10 - i).toDouble), isWinner = i == 0)
+                    ReportedResult(
+                      participantId = s.participantId,
+                      rank = i + 1,
+                      scores = Map("score" -> (10 - i).toDouble),
+                      isWinner = i == 0
+                    )
                 )
-                f.w.services.engine.recordResults(f.game.gameId, m.matchId, results, f.game.externalId)
+                f.w.services.engine.recordResults(
+                  gameId = f.game.gameId,
+                  matchId = m.matchId,
+                  results = results,
+                  callerExternalId = f.game.externalId
+                )
             }
         } yield ()
 
@@ -162,16 +199,30 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
       "a single elimination of four is played to its end: roles chosen, matches created and reported, rounds begun"
     ) {
         val (firstRound, afterChoosing, finalDetail, request) = run(for {
-            f <- started(4)
-            first <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 4)
+            first <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             firstRound <- round(f)
             _ <- chooseAll(f)
             afterChoosing <- round(f)
             _ <- reportAll(f)
-            second <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            second <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             _ <- chooseAll(f)
             _ <- reportAll(f)
-            last <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
+            last <- f.w.services.rounds
+                .startRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
             d <- detail(f)
         } yield ((first, firstRound), afterChoosing, (second, d, last), f.w.engine.lastRequest))
         val (first, matches) = firstRound
@@ -194,13 +245,21 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("the owner is mailed when every match of a round is over, and its summary says the round waits on them") {
         val (afterFirst, summaryAfterFirst, afterLast, ownerAddress) = run(for {
-            f <- started(4)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 4)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             _ <- chooseAll(f)
             _ <- reportAll(f)
             afterFirst = f.w.mail.messages
             d <- detail(f)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             _ <- chooseAll(f)
             _ <- reportAll(f)
         } yield (afterFirst, d.summary, f.w.mail.messages, f.owner.email))
@@ -213,12 +272,16 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("an owner who has turned the round mail off is not sent it") {
         val sent = run(for {
-            f <- started(4, roles = false)
+            f <- started(n = 4, roles = false)
             _ <- f.w.services.notifications.updateMine(
-              f.owner.externalId,
-              NotificationPreferences(isNotifiedOfTournamentRoundDone = Some(false))
+              callerExternalId = f.owner.externalId,
+              preferences = NotificationPreferences(isNotifiedOfTournamentRoundDone = Some(false))
             )
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             _ <- reportAll(f)
             d <- detail(f)
         } yield (f.w.mail.messages, d.summary.tournament.status))
@@ -227,12 +290,26 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("a round cannot begin before the last is finished, and only its owner may begin one") {
         val (stranger, early) = run(for {
-            f <- started(4, roles = false)
+            f <- started(n = 4, roles = false)
             stranger <- f.w.services.rounds
-                .startRound(f.game.gameId, f.t.tournamentId, f.players.head.externalId)
+                .startRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.players.head.externalId
+                )
                 .attempt
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
-            early <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            early <- f.w.services.rounds
+                .startRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
         } yield (stranger, early))
         assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]))
         assert(early.left.exists(_.isInstanceOf[ConflictError]))
@@ -241,7 +318,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
     test("where roles do not matter nobody chooses, and with automatic rounds the next begins as the last ends") {
         val (statuses, finalState) = run(for {
             f <- started(
-              4,
+              n = 4,
               roles = false,
               settings = TournamentSettings(
                 isInvitational = false,
@@ -265,8 +342,12 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("only the seat whose turn it is may choose, and only a role still free") {
         val (notTheirs, wrongRole) = run(for {
-            f <- started(2)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 2)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             m <- round(f).map(_.head)
             d <- detail(f)
             chooser = com.vivi.matchmaker.service.TournamentRounds.nextChooser(m.seats).get.entrantId
@@ -279,20 +360,20 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 .get
             notTheirs <- f.w.services.rounds
                 .chooseRole(
-                  f.game.gameId,
-                  f.t.tournamentId,
-                  m.matchId,
-                  f.game.roles.head.gameRoleId,
-                  otherPlayer.externalId
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  matchId = m.matchId,
+                  role = f.game.roles.head.gameRoleId,
+                  callerExternalId = otherPlayer.externalId
                 )
                 .attempt
             wrongRole <- f.w.services.rounds
                 .chooseRole(
-                  f.game.gameId,
-                  f.t.tournamentId,
-                  m.matchId,
-                  GameRoleId(-1),
-                  chooserPlayer.externalId
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  matchId = m.matchId,
+                  role = GameRoleId(-1),
+                  callerExternalId = chooserPlayer.externalId
                 )
                 .attempt
         } yield (notTheirs, wrongRole))
@@ -302,17 +383,21 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("the owner decides a match by hand: the match is called off, its seats ranked, and the tournament moves on") {
         val (cancelled, d) = run(for {
-            f <- started(2, roles = false)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 2, roles = false)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             m <- round(f).map(_.head)
             loser = m.seats.head.entrantId
             winner = m.seats(1).entrantId
             _ <- f.w.services.rounds.decide(
-              f.game.gameId,
-              f.t.tournamentId,
-              m.matchId,
-              Map(winner -> 1, loser -> 2),
-              f.owner.externalId
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              matchId = m.matchId,
+              ranks = Map(winner -> 1, loser -> 2),
+              callerExternalId = f.owner.externalId
             )
             played <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, m.matchId))
             d <- detail(f)
@@ -325,8 +410,12 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("a seat whose time to choose has run out forfeits at Check round, and the match is decided without it") {
         val d = run(for {
-            f <- started(2)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 2)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             m <- round(f).map(_.head)
             // A week ago: long past a chooser's whole clock.
             _ <- TestSession.resource.use(
@@ -336,8 +425,18 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 f.t.tournamentId.value
               )
             )
-            checked <- f.w.services.rounds.checkRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
-            again <- f.w.services.rounds.checkRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
+            checked <- f.w.services.rounds.checkRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            again <- f.w.services.rounds
+                .checkRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
             d <- detail(f)
         } yield (m, checked, again, d))
         val (m, _, again, detailNow) = d
@@ -349,12 +448,16 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("a check forfeits nobody whose time to choose has not run out, however often it is delivered") {
         val after = run(for {
-            f <- started(4)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            f <- started(n = 4)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             _ <- f.w.services.rounds.runCheck(f.game.gameId, f.t.tournamentId)
             _ <- f.w.services.rounds.runCheck(f.game.gameId, f.t.tournamentId)
             matches <- TestSession.resource.use(
-              new TournamentMatchRepo(_).listRound(f.game.gameId, f.t.tournamentId, 1)
+              new TournamentMatchRepo(_).listRound(game = f.game.gameId, tournament = f.t.tournamentId, round = 1)
             )
         } yield matches)
         assertEquals(after.size, 2)
@@ -364,11 +467,21 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("only a tournament's owner may check its round") {
         val (stranger, owner) = run(for {
-            f <- started(4, roles = false)
+            f <- started(n = 4, roles = false)
             stranger <- f.w.services.rounds
-                .checkRound(f.game.gameId, f.t.tournamentId, f.players.head.externalId)
+                .checkRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.players.head.externalId
+                )
                 .attempt
-            ok <- f.w.services.rounds.checkRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
+            ok <- f.w.services.rounds
+                .checkRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
         } yield (stranger, ok))
         assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]))
         assert(owner.isRight)
@@ -376,11 +489,16 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("an engine that cannot create the match leaves it due, and it is created when asked again") {
         val (owed, statusBefore, settled, statusAfter) = run(for {
-            f <- started(2, roles = false)
+            f <- started(n = 2, roles = false)
             _ = f.w.engine.refusals.set(1)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             before <- round(f).map(_.head)
-            settled <- f.w.services.rounds.createMatch(f.game.gameId, f.t.tournamentId, before.matchId)
+            settled <- f.w.services.rounds
+                .createMatch(gameId = f.game.gameId, tournamentId = f.t.tournamentId, matchId = before.matchId)
             after <- round(f).map(_.head)
         } yield (f.w.engine.created.get, before.status, settled, after.status))
         assertEquals(statusBefore, TournamentMatchStatus.Due)
@@ -391,11 +509,20 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     test("a withdrawn entrant's seat forfeits, and their opponent wins without a match") {
         val d = run(for {
-            f <- started(2, roles = false)
+            f <- started(n = 2, roles = false)
             entries <- detail(f).map(_.entries)
             _ <- f.w.services.tournaments
-                .withdraw(f.game.gameId, f.t.tournamentId, entries.head.entrantId, f.players.head.externalId)
-            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+                .withdraw(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  entrantId = entries.head.entrantId,
+                  callerExternalId = f.players.head.externalId
+                )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
             d <- detail(f)
         } yield (entries, d, f.w.engine.created.get))
         val (entries, detailNow, created) = d

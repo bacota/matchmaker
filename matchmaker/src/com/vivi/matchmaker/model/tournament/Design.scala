@@ -135,9 +135,11 @@ case class TournamentGame(
 object TournamentGame {
     def of(game: com.vivi.matchmaker.model.Game): TournamentGame =
         TournamentGame(
-          game.roles.toList
+          roles = game.roles.toList
               .sortBy(_.gameRoleId.value)
-              .map(r => TournamentRole(r.gameRoleId.value, r.roleType, r.preferenceLevel)),
+              .map(r =>
+                  TournamentRole(id = r.gameRoleId.value, roleType = r.roleType, preferenceLevel = r.preferenceLevel)
+              ),
           hasSignificantRoles = !game.hasUnimportantRoles,
           moveType = game.moveType,
           maxTurns = game.maxTurns
@@ -172,27 +174,33 @@ object Validation {
         val gameProblems =
             List(
               Option.when(game.requiredSeats == 0)(
-                Problem("", "the game has no required role, so no match could start")
+                Problem(where = "", message = "the game has no required role, so no match could start")
               ),
               Option.when(
                 game.moveType == com.vivi.matchmaker.model.MoveType.Simultaneous && game.maxTurns.isEmpty &&
                     maxTurns.isEmpty
               )(
                 Problem(
-                  "",
-                  "this game's players move at once and it has no maximum number of turns, so the " +
+                  where = "",
+                  message = "this game's players move at once and it has no maximum number of turns, so the " +
                       "tournament must give one"
                 )
               )
             ).flatten
-        gameProblems ++ designProblems(design, game, defaultPoolSize)
+        gameProblems ++ designProblems(design = design, game = game, defaultPoolSize = defaultPoolSize)
     }
 
     /** Everything wrong with a design itself, as a model holds it: before any tournament gives it a default pool size,
       * a stage that sets none is checked as pools of the game's R.
       */
     def designProblems(design: TournamentDesign, game: TournamentGame, defaultPoolSize: Option[Int]): List[Problem] =
-        check(design, game, "", defaultPoolSize.getOrElse(game.poolSeats), 1)
+        check(
+          design = design,
+          game = game,
+          path = "",
+          defaultPoolSize = defaultPoolSize.getOrElse(game.poolSeats),
+          depth = 1
+        )
 
     private def check(
         design: TournamentDesign,
@@ -202,16 +210,16 @@ object Validation {
         depth: Int
     ): List[Problem] = {
         val here = if (path.isEmpty) "" else path
-        if (depth > MaxDepth) List(Problem(here, s"designs may nest at most $MaxDepth deep"))
-        else if (design.stages.isEmpty) List(Problem(here, "a design needs at least one stage"))
+        if (depth > MaxDepth) List(Problem(where = here, message = s"designs may nest at most $MaxDepth deep"))
+        else if (design.stages.isEmpty) List(Problem(where = here, message = "a design needs at least one stage"))
         // Every match of a round is played in one stage (round.stage_id), and the pools of a nesting stage play
         // their designs side by side: with more than one stage, one pool could be in another stage than the next.
         else if (depth > 1 && design.stages.sizeIs > 1)
-            List(Problem(here, "a design played in a stage's pools may have only one stage"))
+            List(Problem(where = here, message = "a design played in a stage's pools may have only one stage"))
         else
             design.stages.zipWithIndex.flatMap { (stage, i) =>
                 val where = (if (path.isEmpty) "" else s"$path, ") + s"stage ${i + 1}"
-                stageProblems(stage, game, where, defaultPoolSize) ++
+                stageProblems(stage = stage, game = game, where = where, defaultPoolSize = defaultPoolSize) ++
                     stage.design.toList.flatMap(check(_, game, s"$where's pools", defaultPoolSize, depth + 1))
             }
     }
@@ -223,8 +231,8 @@ object Validation {
         defaultPoolSize: Int
     ): List[Problem] = {
         val n = stage.poolSizeOr(defaultPoolSize)
-        def p(message: String) = Problem(where, message)
-        def w(message: String) = Problem(where, message, isWarning = true)
+        def p(message: String) = Problem(where = where, message = message)
+        def w(message: String) = Problem(where = where, message = message, isWarning = true)
         List(
           stage.repeat match {
               case Repetition.Fixed(k) if k < 1 => Some(p("a stage must be played at least once"))
@@ -255,7 +263,7 @@ object Validation {
                       else None
               },
           if (stage.design.isEmpty) {
-              val matches = Schedule.matchCount(n, game, stage.isRotatingRoles)
+              val matches = Schedule.matchCount(n = n, game = game, rotateRoles = stage.isRotatingRoles)
               Option.when(matches > MaxMatchesPerPool)(
                 p(s"a pool of $n would play $matches matches; the most a pool may play is $MaxMatchesPerPool")
               )

@@ -41,10 +41,10 @@ class StoredMatchSpec extends FunSuite {
         val store = InMemoryMatchStore[Bout]()
         val engine =
             Engine(
-              store,
-              RecordingMatchmaker(),
-              "http://engine.test",
-              () => Instant.parse("2026-01-01T00:00:00Z").plusSeconds(tick.getAndIncrement())
+              store = store,
+              matchmaker = RecordingMatchmaker(),
+              baseUrl = "http://engine.test",
+              now = () => Instant.parse("2026-01-01T00:00:00Z").plusSeconds(tick.getAndIncrement())
             )
         val average = Fighter(strength = 5, speed = 5, agility = 5, workrate = 5, chin = 5)
         engine.createGame(
@@ -56,16 +56,40 @@ class StoredMatchSpec extends FunSuite {
             settings = "{}",
             timeLimitSeconds = Some(600),
             players = List(
-              Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some(Fighter.toState(average))),
-              Protocol.EnginePlayer("sub-bob", 22L, Some("Blue"), Some(202L), Some(Fighter.toState(average)))
+              Protocol.EnginePlayer(
+                cognitoId = "sub-alice",
+                participantId = 11L,
+                role = Some("Red"),
+                characterId = Some(101L),
+                characterState = Some(Fighter.toState(average))
+              ),
+              Protocol.EnginePlayer(
+                cognitoId = "sub-bob",
+                participantId = 22L,
+                role = Some("Blue"),
+                characterId = Some(202L),
+                characterState = Some(Fighter.toState(average))
+              )
             ),
             moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
             resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
           )
         )
-        engine.plan("m-1", "sub-alice", Allocation(5, 0, 0))
-        engine.plan("m-1", "sub-bob", Allocation(0, 5, 0))
-        engine.plan("m-1", "sub-alice", Allocation(2, 2, 1))
+        engine.plan(
+          matchId = "m-1",
+          cognitoId = "sub-alice",
+          allocation = Allocation(offense = 5, defense = 0, power = 0)
+        )
+        engine.plan(
+          matchId = "m-1",
+          cognitoId = "sub-bob",
+          allocation = Allocation(offense = 0, defense = 5, power = 0)
+        )
+        engine.plan(
+          matchId = "m-1",
+          cognitoId = "sub-alice",
+          allocation = Allocation(offense = 2, defense = 2, power = 1)
+        )
         store.get("m-1").get
     }
 

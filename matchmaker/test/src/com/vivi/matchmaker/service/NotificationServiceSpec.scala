@@ -30,18 +30,18 @@ class NotificationServiceSpec extends PropertySuite {
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Plain,
-                s"game-$seed",
-                s"game-$seed",
-                "description",
-                "https://engine.example.com/games",
+                gameId = GameId.unassigned,
+                gameType = GameType.Plain,
+                name = s"game-$seed",
+                displayName = s"game-$seed",
+                description = "description",
+                url = "https://engine.example.com/games",
                 isActive = true,
                 Seq(
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "player",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "player",
                     roleType = RoleType.Required,
                     displayName = "player"
                   )
@@ -58,7 +58,7 @@ class NotificationServiceSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val caller = s"quiet-$seed"
             val result = for {
-                _ <- services.registration.register(s"quiet-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"quiet-$seed", externalId = caller, email = None)
                 settings <- services.notifications.mine(caller)
             } yield settings.player == NotificationPreferences.unset &&
                 settings.player.unsaid.length == NotificationType.values.length &&
@@ -75,13 +75,16 @@ class NotificationServiceSpec extends PropertySuite {
                 .updated(NotificationType.MatchStarted, Some(true))
 
             val result = for {
-                _ <- services.registration.register(s"overall-$seed", caller, None)
-                _ <- services.notifications.updateMine(caller, said)
+                _ <- services.registration.register(nickname = s"overall-$seed", externalId = caller, email = None)
+                _ <- services.notifications.updateMine(callerExternalId = caller, preferences = said)
                 settings <- services.notifications.mine(caller)
                 // And a second save replaces the first rather than merging into it: clearing an answer
                 // back to "Use Default" is a thing the form can do, and a write that only ever set
                 // values could not express it.
-                _ <- services.notifications.updateMine(caller, NotificationPreferences.unset)
+                _ <- services.notifications.updateMine(
+                  callerExternalId = caller,
+                  preferences = NotificationPreferences.unset
+                )
                 cleared <- services.notifications.mine(caller)
             } yield settings.player == said && cleared.player == NotificationPreferences.unset
             result.timeout(caseTimeout).unsafeRunSync()
@@ -98,16 +101,28 @@ class NotificationServiceSpec extends PropertySuite {
             val second = NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(true))
 
             val result = for {
-                _ <- services.registration.register(s"pergame-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"pergame-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
                 other <- makeGame(s"other-$seed")
-                _ <- services.notifications.updateForGame(caller, game.gameId, first)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = first
+                )
                 afterFirst <- services.notifications.mine(caller)
-                _ <- services.notifications.updateForGame(caller, game.gameId, second)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = second
+                )
                 afterSecond <- services.notifications.mine(caller)
                 // A second game the player has said nothing about stays absent: the table holds
                 // answers, not a row per game in existence.
-                _ <- services.notifications.updateForGame(caller, other.gameId, NotificationPreferences.unset)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = other.gameId,
+                  preferences = NotificationPreferences.unset
+                )
                 withOther <- services.notifications.mine(caller)
             } yield afterFirst.games == Seq(GameNotificationPreferences(game.gameId, first)) &&
                 afterSecond.games == Seq(GameNotificationPreferences(game.gameId, second)) &&
@@ -129,11 +144,19 @@ class NotificationServiceSpec extends PropertySuite {
                 .updated(NotificationType.MatchStarted, Some(false))
                 .updated(NotificationType.TurnTaken, Some(true))
             val result = for {
-                _ <- services.registration.register(s"cascader-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"cascader-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
-                _ <- services.notifications.updateForGame(caller, game.gameId, forGame)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = forGame
+                )
                 defaults = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
-                _ <- services.notifications.updateMine(caller, defaults, applyToGames = true)
+                _ <- services.notifications.updateMine(
+                  callerExternalId = caller,
+                  preferences = defaults,
+                  applyToGames = true
+                )
                 settings <- services.notifications.mine(caller)
             } yield settings.player == defaults &&
                 // match-started was the question that changed, so the game now agrees about it;
@@ -150,11 +173,23 @@ class NotificationServiceSpec extends PropertySuite {
             val caller = s"withdrawn-$seed"
             val said = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
             val result = for {
-                _ <- services.registration.register(s"withdrawn-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"withdrawn-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
-                _ <- services.notifications.updateMine(caller, said, applyToGames = true)
-                _ <- services.notifications.updateForGame(caller, game.gameId, said)
-                _ <- services.notifications.updateMine(caller, NotificationPreferences.unset, applyToGames = true)
+                _ <- services.notifications.updateMine(
+                  callerExternalId = caller,
+                  preferences = said,
+                  applyToGames = true
+                )
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = said
+                )
+                _ <- services.notifications.updateMine(
+                  callerExternalId = caller,
+                  preferences = NotificationPreferences.unset,
+                  applyToGames = true
+                )
                 settings <- services.notifications.mine(caller)
             } yield settings.player == NotificationPreferences.unset &&
                 settings.games.map(_.preferences) == Seq(NotificationPreferences.unset)
@@ -181,14 +216,20 @@ class NotificationServiceSpec extends PropertySuite {
             val first = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
             val second = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
             val result = for {
-                _ <- services.registration.register(s"racer-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"racer-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
                 // Something for the cascade to write to: aligning deliberately creates no row for a
                 // game the player has never said anything about, so this is what makes one.
-                _ <- services.notifications.updateForGame(caller, game.gameId, NotificationPreferences.unset)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = NotificationPreferences.unset
+                )
                 _ <- IO.both(
-                  services.notifications.updateMine(caller, first, applyToGames = true),
-                  services.notifications.updateMine(caller, second, applyToGames = true)
+                  services.notifications
+                      .updateMine(callerExternalId = caller, preferences = first, applyToGames = true),
+                  services.notifications
+                      .updateMine(callerExternalId = caller, preferences = second, applyToGames = true)
                 )
                 settings <- services.notifications.mine(caller)
             } yield settings.games.map(_.preferences) == Seq(settings.player)
@@ -203,12 +244,16 @@ class NotificationServiceSpec extends PropertySuite {
             val caller = s"nocascade-$seed"
             val forGame = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
             val result = for {
-                _ <- services.registration.register(s"nocascade-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"nocascade-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
-                _ <- services.notifications.updateForGame(caller, game.gameId, forGame)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = caller,
+                  gameId = game.gameId,
+                  preferences = forGame
+                )
                 _ <- services.notifications.updateMine(
-                  caller,
-                  NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
+                  callerExternalId = caller,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
                 )
                 settings <- services.notifications.mine(caller)
             } yield settings.games.map(_.preferences) == Seq(forGame)
@@ -223,11 +268,15 @@ class NotificationServiceSpec extends PropertySuite {
             val said = NotificationPreferences.unset.updated(NotificationType.MatchEnded, Some(false))
 
             val result = for {
-                _ <- services.registration.register(s"mine-$seed", mine, None)
-                _ <- services.registration.register(s"theirs-$seed", theirs, None)
+                _ <- services.registration.register(nickname = s"mine-$seed", externalId = mine, email = None)
+                _ <- services.registration.register(nickname = s"theirs-$seed", externalId = theirs, email = None)
                 game <- makeGame(seed)
-                _ <- services.notifications.updateMine(mine, said)
-                _ <- services.notifications.updateForGame(mine, game.gameId, said)
+                _ <- services.notifications.updateMine(callerExternalId = mine, preferences = said)
+                _ <- services.notifications.updateForGame(
+                  callerExternalId = mine,
+                  gameId = game.gameId,
+                  preferences = said
+                )
                 ours <- services.notifications.mine(mine)
                 other <- services.notifications.mine(theirs)
             } yield ours.player == said && other.player == NotificationPreferences.unset && other.games.isEmpty
@@ -241,9 +290,13 @@ class NotificationServiceSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val caller = s"nogame-$seed"
             val result = for {
-                _ <- services.registration.register(s"nogame-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"nogame-$seed", externalId = caller, email = None)
                 outcome <- services.notifications
-                    .updateForGame(caller, GameId(-1), NotificationPreferences.unset)
+                    .updateForGame(
+                      callerExternalId = caller,
+                      gameId = GameId(-1),
+                      preferences = NotificationPreferences.unset
+                    )
                     .attempt
             } yield outcome.left.exists(_.isInstanceOf[NotFoundError])
             result.timeout(caseTimeout).unsafeRunSync()
@@ -257,17 +310,21 @@ class NotificationServiceSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val caller = s"noseat-$seed"
             val result = for {
-                _ <- services.registration.register(s"noseat-$seed", caller, None)
+                _ <- services.registration.register(nickname = s"noseat-$seed", externalId = caller, email = None)
                 game <- makeGame(seed)
                 read <- services.notifications
-                    .forMatch(caller, game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId())
+                    .forMatch(
+                      callerExternalId = caller,
+                      gameId = game.gameId,
+                      matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
+                    )
                     .attempt
                 written <- services.notifications
                     .updateForMatch(
-                      caller,
-                      game.gameId,
-                      com.vivi.matchmaker.persistence.Generators.newMatchId(),
-                      SeatNotifications.all(true)
+                      callerExternalId = caller,
+                      gameId = game.gameId,
+                      matchId = com.vivi.matchmaker.persistence.Generators.newMatchId(),
+                      preferences = SeatNotifications.all(true)
                     )
                     .attempt
             } yield read.left.exists(_.isInstanceOf[NotFoundError]) &&

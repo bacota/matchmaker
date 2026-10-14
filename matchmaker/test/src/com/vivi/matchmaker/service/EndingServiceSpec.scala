@@ -22,7 +22,8 @@ import com.vivi.matchmaker.persistence.{ArchiveRepo, GameRepo, MatchRepo, TestSe
 class EndingServiceSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private val store = LocalArchiveStore(Files.createTempDirectory("ending-spec"), "http://localhost:0")
+    private val store =
+        LocalArchiveStore(dir = Files.createTempDirectory("ending-spec"), baseUrl = "http://localhost:0")
 
     /** An engine that answers a status call by archiving the match, as a real one does for a finished match it still
       * holds — through matchmaker's own archive service, so what it does is recorded where settling reads it back.
@@ -42,10 +43,22 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                     case (Some((matchId, externalId)), Some(s)) if isArchivingOnStatus =>
                         val body = """{"matchId":"m"}""".getBytes
                         s.archives
-                            .requestUpload(matchId, body.length.toLong, ArchiveStore.sha256(body), None, externalId)
+                            .requestUpload(
+                              matchId = matchId,
+                              size = body.length.toLong,
+                              sha256 = ArchiveStore.sha256(body),
+                              formatVersion = None,
+                              callerExternalId = externalId
+                            )
                             .flatMap {
                                 case UploadAnswer.Upload(signed) =>
-                                    IO(store.put(signed.url.split("/local-archive/")(1), body, signed.headers))
+                                    IO(
+                                      store.put(
+                                        path = signed.url.split("/local-archive/")(1),
+                                        body = body,
+                                        headers = signed.headers
+                                      )
+                                    )
                                 case _ => IO.unit
                             } *> s.archives.confirm(matchId, externalId).void
                     case _ => IO.unit
@@ -65,18 +78,24 @@ class EndingServiceSpec extends FunSuite with QuietTests {
     ): IO[(Game, MatchId)] =
         TestSession.resource.use { session =>
             for {
-                player <- services.registration.register(unique("ended"), unique("sub"))
+                player <- services.registration.register(nickname = unique("ended"), externalId = unique("sub"))
                 game <- new GameRepo[String](session).create(
                   Game(
-                    GameId.unassigned,
-                    GameType.Plain,
-                    "tictactoe",
-                    "Tic-tac-toe",
-                    "description",
-                    "url",
+                    gameId = GameId.unassigned,
+                    gameType = GameType.Plain,
+                    name = "tictactoe",
+                    displayName = "Tic-tac-toe",
+                    description = "description",
+                    url = "url",
                     isActive = true,
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
+                      GameRole(
+                        gameRoleId = GameRoleId(0),
+                        gameId = GameId.unassigned,
+                        name = "X",
+                        roleType = RoleType.Required,
+                        displayName = "X"
+                      )
                     ),
                     Seq.empty,
                     unique("engine")
@@ -84,17 +103,17 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                 )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
-                  game.gameId,
-                  matchId,
-                  TournamentId.unassigned,
-                  "d",
-                  finishedAgo.map(ago => Instant.now().minus(ago)),
-                  Some(Instant.ofEpochSecond(1000)),
-                  None,
-                  "{}",
+                  gameId = game.gameId,
+                  matchId = matchId,
+                  tournamentId = TournamentId.unassigned,
+                  description = "d",
+                  completedAt = finishedAgo.map(ago => Instant.now().minus(ago)),
+                  start = Some(Instant.ofEpochSecond(1000)),
+                  timeLimit = None,
+                  settings = "{}",
                   isCancelled = cancelled
                 )
-                _ <- TestMatches.writeMatch(session, m, player.playerId)
+                _ <- TestMatches.writeMatch(session = session, m = m, owner = player.playerId)
                 _ <- new MatchRepo(session).setUrls(
                   m.copy(statusUrl = Some(s"https://engine/matches/${matchId.value}/status")),
                   Option.when(cancelled)(s"https://engine/matches/${matchId.value}/cancel")
@@ -103,7 +122,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         }
 
     private def endingOf(engine: Engine, now: Instant = Instant.now()) =
-        EndingService(TestServices.pool, engine, now = () => now)
+        EndingService(sessionPool = TestServices.pool, engine = engine, now = () => now)
 
     private def run[A](io: IO[A]): A = io.timeout(30.seconds).unsafeRunSync()
 
@@ -113,9 +132,9 @@ class EndingServiceSpec extends FunSuite with QuietTests {
 
     test("a completed match never archived is prompted through its engine's status, which archives it") {
         val engine = Engine()
-        val services = TestServices.servicesWith(engine, archiveStore = store)
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
         engine.services = Some(services)
-        val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = Some(Duration.ofHours(2))))
         engine.archiving = Some(matchId -> game.externalId)
 
         assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
@@ -129,8 +148,8 @@ class EndingServiceSpec extends FunSuite with QuietTests {
 
     test("one the engine does not archive is still owed, and asked about again each time") {
         val engine = Engine(isArchivingOnStatus = false)
-        val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = Some(Duration.ofHours(2))))
 
         assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
@@ -139,16 +158,16 @@ class EndingServiceSpec extends FunSuite with QuietTests {
 
     test("a match that has only just finished is left to its engine, which is archiving it already") {
         val engine = Engine()
-        val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, Some(Duration.ofMinutes(1))))
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = Some(Duration.ofMinutes(1))))
         assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assertEquals(engine.asked, Nil)
     }
 
     test("a cancel the engine has not acknowledged is sent, and recorded once it is") {
         val engine = Engine()
-        val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, None, cancelled = true))
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = None, cancelled = true))
 
         assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(engine.cancelled, List(s"https://engine/matches/${matchId.value}/cancel"))
@@ -162,8 +181,8 @@ class EndingServiceSpec extends FunSuite with QuietTests {
             override def cancel(url: String, key: Option[String]): IO[Unit] =
                 IO.raiseError(new IllegalStateException("engine is down"))
         }
-        val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, None, cancelled = true))
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = None, cancelled = true))
 
         assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assert(!run(TestSession.resource.use(session => new ArchiveRepo(session).isReleased(game.gameId, matchId))))
@@ -171,8 +190,8 @@ class EndingServiceSpec extends FunSuite with QuietTests {
 
     test("a match still being played, or one that does not exist, owes nothing") {
         val engine = Engine()
-        val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, None))
+        val services = TestServices.servicesWith(engine = engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = None))
         assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(
           run(endingOf(engine).settle(game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId())),
@@ -186,22 +205,25 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         // then would wait for that connection forever.
         val pool = TestServices.poolOf(1)
         val engine = Engine(isArchivingOnStatus = false)
-        val ending = EndingService(pool, engine)
+        val ending = EndingService(sessionPool = pool, engine = engine)
         @volatile var settled = List.empty[Settlement]
         val services = Services.fromPool[String](
-          pool,
-          engine,
+          pool = pool,
+          engineClient = engine,
           archiveStore = store,
           matchEndings = Some(
             MatchEndings.inline(
-              (gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s),
-              ending.rank(_).void
+              settle = (gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s),
+              rank = ending.rank(_).void
             )
           )
         )
-        val (game, matchId) = run(matchOf(services, None))
+        val (game, matchId) = run(matchOf(services = services, finishedAgo = None))
 
-        run(services.engine.recordResults(game.gameId, matchId, Nil, game.externalId))
+        run(
+          services.engine
+              .recordResults(gameId = game.gameId, matchId = matchId, results = Nil, callerExternalId = game.externalId)
+        )
         assert(
           run(TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId)))
               .exists(_.isCompleted)

@@ -41,22 +41,22 @@ class EngineSpec extends FunSuite with QuietTests {
           timeLimitSeconds = Some(600),
           players = List(
             Protocol.EnginePlayer(
-              alice,
-              11L,
-              roles.head,
-              Some(101L),
-              Some(red.map(Fighter.toState).getOrElse("")),
-              Some("Alice"),
-              Some("Iron Mike")
+              cognitoId = alice,
+              participantId = 11L,
+              role = roles.head,
+              characterId = Some(101L),
+              characterState = Some(red.map(Fighter.toState).getOrElse("")),
+              nickname = Some("Alice"),
+              characterName = Some("Iron Mike")
             ),
             Protocol.EnginePlayer(
-              bob,
-              22L,
-              roles(1),
-              Some(202L),
-              Some(blue.map(Fighter.toState).getOrElse("")),
-              Some("Bob"),
-              Some("Sugar Ray")
+              cognitoId = bob,
+              participantId = 22L,
+              role = roles(1),
+              characterId = Some(202L),
+              characterState = Some(blue.map(Fighter.toState).getOrElse("")),
+              nickname = Some("Bob"),
+              characterName = Some("Sugar Ray")
             )
           ),
           moveCallbackUrl = Some(moveUrl),
@@ -74,7 +74,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val store = InMemoryMatchStore[Bout]()
         val recorder = RecordingMatchmaker()
         val clock = Clock(created)
-        val engine = Engine(store, recorder, "http://engine.test", () => clock.now)
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test", now = () => clock.now)
         val response = engine.createGame(request)
         (engine, recorder, store, clock, response)
     }
@@ -164,7 +164,9 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(recorder.characterStates, Nil)
 
         // State this engine could not have built is not a fighter either.
-        val (_, _, _, _, overBudget) = fixture(createRequest(red = Some(Fighter(10, 10, 10, 10, 10))))
+        val (_, _, _, _, overBudget) = fixture(
+          createRequest(red = Some(Fighter(strength = 10, speed = 10, agility = 10, workrate = 10, chin = 10)))
+        )
         assertEquals(
           overBudget,
           Left(Refusal.Invalid("every fighter must be built before a bout; character(s) 101 are not"))
@@ -183,9 +185,9 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(opening.participants.forall(_.prevMoveAt.contains(created)))
 
         clock.advance(60)
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val roundOver = clock.advance(30)
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
 
         val second = engine.status("m-1").toOption.get
         assertEquals(second.participants.filter(_.isPending).map(_.participantId), List(11L, 22L))
@@ -196,9 +198,9 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, clock, _) = fixture()
 
         val first = clock.advance(60)
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
         val second = clock.advance(30)
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
 
         val notifications = recorder.moves.map(_._2)
         assertEquals(notifications.map(_.participantId), List(22L, 11L))
@@ -213,26 +215,30 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, _, _, _, _) = fixture()
 
         assertEquals(
-          engine.plan("m-1", alice, Allocation(2, 2, 2)),
+          engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 2, defense = 2, power = 2)),
           Left(Refusal.Invalid("a round is planned with exactly your workrate of 5; these add up to 6"))
         )
-        assert(engine.plan("m-1", alice, Allocation(5, 0, 0)).isRight)
+        assert(
+          engine
+              .plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
+              .isRight
+        )
         assertEquals(
-          engine.plan("m-1", alice, Allocation(0, 0, 5)),
+          engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 5)),
           Left(Refusal.Invalid("you have already planned round 1; a plan cannot be changed"))
         )
     }
 
     test("neither corner, nor the public, sees a plan until the round resolves") {
         val (engine, _, store, _, _) = fixture(createRequest(isPublic = true))
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
 
         val m = bout(store)
         val asAlice = engine.stateOf(m, m.cornerOf(Side.Red))
         val asBob = engine.stateOf(m, m.cornerOf(Side.Blue))
         val asPublic = engine.stateOf(m, None)
 
-        assertEquals(asAlice.yourPlan, Some(Protocol.PlanRequest(5, 0, 0)))
+        assertEquals(asAlice.yourPlan, Some(Protocol.PlanRequest(offense = 5, defense = 0, power = 0)))
         assertEquals(asBob.yourPlan, None)
         assertEquals(asPublic.yourPlan, None)
         // What everyone may know is that Red has planned.
@@ -241,17 +247,26 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(List(asAlice, asBob, asPublic).forall(_.rounds.isEmpty))
         assert(!upickle.default.write(asBob)(using Protocol.given_ReadWriter_StateResponse).contains("\"offense\":5"))
 
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
         val resolved = engine.stateOf(bout(store), None)
         assertEquals(resolved.round, 2)
     }
 
     test("once a round resolves, its totals are everyone's but each corner sees only its own tactics") {
-        val (engine, _, store, _, _) = fixture(createRequest(blue = Some(Fighter(8, 4, 3, 5, 5)), isPublic = true))
+        val (engine, _, store, _, _) = fixture(
+          createRequest(
+            blue = Some(Fighter(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5)),
+            isPublic = true
+          )
+        )
         // All three rounds, so what is checked is a finished bout: finishing it gives nothing more away.
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(5, 0, 0))
-            engine.plan("m-1", bob, Allocation(0, 2, 3))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 5, defense = 0, power = 0)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 2, power = 3))
         }
 
         val m = bout(store)
@@ -261,15 +276,24 @@ class EngineSpec extends FunSuite with QuietTests {
         views.foreach(v =>
             assertEquals(
               v.rounds.map(r => (r.redNumbers, r.blueNumbers)),
-              List.fill(3)(Protocol.Numbers(15, 10, 10) -> Protocol.Numbers(8, 8, 19))
+              List.fill(3)(
+                Protocol.Numbers(offense = 15, defense = 10, power = 10) -> Protocol.Numbers(
+                  offense = 8,
+                  defense = 8,
+                  power = 19
+                )
+              )
             )
         )
         val List(asAlice, asBob, asPublic) = views: @unchecked
         assertEquals(
           asAlice.rounds.map(r => (r.red, r.blue)),
-          List.fill(3)(Some(Protocol.PlanRequest(5, 0, 0)) -> None)
+          List.fill(3)(Some(Protocol.PlanRequest(offense = 5, defense = 0, power = 0)) -> None)
         )
-        assertEquals(asBob.rounds.map(r => (r.red, r.blue)), List.fill(3)(None -> Some(Protocol.PlanRequest(0, 2, 3))))
+        assertEquals(
+          asBob.rounds.map(r => (r.red, r.blue)),
+          List.fill(3)(None -> Some(Protocol.PlanRequest(offense = 0, defense = 2, power = 3)))
+        )
         assertEquals(asPublic.rounds.map(r => (r.red, r.blue)), List.fill(3)(None -> None))
         // Bob's plan is nowhere in what Alice is sent.
         assert(!upickle.default.write(asAlice)(using Protocol.given_ReadWriter_StateResponse).contains("\"power\":3"))
@@ -281,35 +305,64 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("an opponent is seen by the words for their highest and lowest characteristics, never by the numbers") {
         // Strength alone is highest, agility alone lowest.
-        assertEquals(Fighter(8, 4, 3, 5, 5).impression, List("powerful", "short"))
+        assertEquals(
+          Fighter(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5).impression,
+          List("powerful", "short")
+        )
         // Strength alone is lowest of the four; chin's equal value plays no part.
-        assertEquals(Fighter(3, 5, 8, 6, 3).impression, List("tall", "not very muscular"))
-        assertEquals(Fighter(4, 3, 4, 9, 5).impression, List("fit", "sluggish"))
-        assertEquals(Fighter(6, 6, 6, 2, 5).impression, List("flabby"))
+        assertEquals(
+          Fighter(strength = 3, speed = 5, agility = 8, workrate = 6, chin = 3).impression,
+          List("tall", "not very muscular")
+        )
+        assertEquals(
+          Fighter(strength = 4, speed = 3, agility = 4, workrate = 9, chin = 5).impression,
+          List("fit", "sluggish")
+        )
+        assertEquals(Fighter(strength = 6, speed = 6, agility = 6, workrate = 2, chin = 5).impression, List("flabby"))
     }
 
     test("two characteristics tied at an end are both described; three or more, and that end says nothing") {
-        assertEquals(Fighter(7, 7, 3, 4, 4).impression, List("powerful", "fast", "short"))
-        assertEquals(Fighter(2, 9, 2, 6, 6).impression, List("fast", "not very muscular", "short"))
+        assertEquals(
+          Fighter(strength = 7, speed = 7, agility = 3, workrate = 4, chin = 4).impression,
+          List("powerful", "fast", "short")
+        )
+        assertEquals(
+          Fighter(strength = 2, speed = 9, agility = 2, workrate = 6, chin = 6).impression,
+          List("fast", "not very muscular", "short")
+        )
         // Three share the lowest, so only the highest is described.
-        assertEquals(Fighter(10, 3, 3, 3, 6).impression, List("powerful"))
+        assertEquals(
+          Fighter(strength = 10, speed = 3, agility = 3, workrate = 3, chin = 6).impression,
+          List("powerful")
+        )
         // Everything the same: nothing stands out at either end.
-        assertEquals(Fighter(5, 5, 5, 5, 5).impression, Nil)
+        assertEquals(Fighter(strength = 5, speed = 5, agility = 5, workrate = 5, chin = 5).impression, Nil)
     }
 
     test("chin is left out: the highest and lowest are found among the other four") {
         // Chin is the highest of all five, and strength the highest of the four.
-        assertEquals(Fighter(5, 4, 4, 2, 10).impression, List("powerful", "flabby"))
+        assertEquals(
+          Fighter(strength = 5, speed = 4, agility = 4, workrate = 2, chin = 10).impression,
+          List("powerful", "flabby")
+        )
         // Chin is the lowest of all five, and workrate the lowest of the four.
-        assertEquals(Fighter(9, 5, 5, 4, 2).impression, List("powerful", "flabby"))
+        assertEquals(
+          Fighter(strength = 9, speed = 5, agility = 5, workrate = 4, chin = 2).impression,
+          List("powerful", "flabby")
+        )
         // Chin tied with speed at the top of all five does not make a tie among the four.
-        assertEquals(Fighter(3, 8, 3, 3, 8).impression, List("fast"))
+        assertEquals(Fighter(strength = 3, speed = 8, agility = 3, workrate = 3, chin = 8).impression, List("fast"))
     }
 
     test("each corner sees its own fighter's numbers and only an impression of the other's; the public, neither") {
-        val (engine, _, store, _, _) = fixture(createRequest(blue = Some(Fighter(8, 4, 3, 5, 5)), isPublic = true))
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        val (engine, _, store, _, _) = fixture(
+          createRequest(
+            blue = Some(Fighter(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5)),
+            isPublic = true
+          )
+        )
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
 
         val m = bout(store)
         val asAlice = engine.stateOf(m, m.cornerOf(Side.Red))
@@ -331,8 +384,12 @@ class EngineSpec extends FunSuite with QuietTests {
         // Every round: Red all offense (15 against Blue's 10), Blue all defense. Nothing lands on
         // either side, so Red takes each round 10–9 on activity.
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(5, 0, 0))
-            engine.plan("m-1", bob, Allocation(0, 5, 0))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 5, defense = 0, power = 0)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
         }
 
         val m = bout(store)
@@ -363,7 +420,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(recorder.moves.last._2.next, Nil)
 
         assertEquals(
-          engine.plan("m-1", alice, Allocation(5, 0, 0)),
+          engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0)),
           Left(Refusal.Invalid("this bout is already over"))
         )
     }
@@ -373,8 +430,8 @@ class EngineSpec extends FunSuite with QuietTests {
             fixture(createRequest(red = Some(slugger), parameters = Map("rounds" -> "12")))
 
         // Red's power is 10 + 20 = 30, over Blue's effective chin of 10 + 15 = 25.
-        engine.plan("m-1", alice, Allocation(0, 0, 10))
-        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 10))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
 
         val m = bout(store)
         assert(m.isOver)
@@ -395,8 +452,12 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a bout level on points after the last round is a draw, and both corners rank first") {
         val (engine, recorder, store, _, _) = fixture()
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(2, 2, 1))
-            engine.plan("m-1", bob, Allocation(2, 2, 1))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 2, defense = 2, power = 1)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 2, defense = 2, power = 1))
         }
 
         val m = bout(store)
@@ -416,8 +477,12 @@ class EngineSpec extends FunSuite with QuietTests {
     ) {
         val (engine, recorder, store, _, _) = fixture(createRequest().copy(canTie = Some(false)))
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(2, 2, 1))
-            engine.plan("m-1", bob, Allocation(2, 2, 1))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 2, defense = 2, power = 1)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 2, defense = 2, power = 1))
         }
         val level = bout(store)
         assert(!level.isOver, "a bout that may not be drawn goes on when the cards are level")
@@ -427,8 +492,8 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(recorder.results, Nil)
 
         // Red outworks Blue in the extra round, 10-9.
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
         val m = bout(store)
         assert(m.isOver)
         assertEquals(m.winner.map(_.side), Some(Side.Red))
@@ -447,8 +512,12 @@ class EngineSpec extends FunSuite with QuietTests {
     test("an extra round that is level too is decided by lot, the same way every time the bout is read") {
         val (engine, recorder, store, _, _) = fixture(createRequest().copy(canTie = Some(false)))
         (1 to 4).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(2, 2, 1))
-            engine.plan("m-1", bob, Allocation(2, 2, 1))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 2, defense = 2, power = 1)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 2, defense = 2, power = 1))
         }
         val m = bout(store)
         assert(m.isOver)
@@ -467,8 +536,8 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a knockout adds 25 to the winner's score, and a bout that allows ties is stored without the flag") {
         val (engine, recorder, store, _, _) =
             fixture(createRequest(red = Some(slugger), parameters = Map("rounds" -> "12")))
-        engine.plan("m-1", alice, Allocation(0, 0, 10))
-        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 10))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val results = recorder.results.head._2.results
         assertEquals(results.find(_.participantId == 11L).map(_.scores("score").num), Some(25.0))
         assertEquals(results.find(_.participantId == 22L).map(_.scores("score").num), Some(0.0))
@@ -479,8 +548,12 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a bout stored before fighters' names were kept is summed up by the players' nicknames") {
         val (engine, _, store, _, _) = fixture()
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(2, 2, 1))
-            engine.plan("m-1", bob, Allocation(2, 2, 1))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 2, defense = 2, power = 1)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 2, defense = 2, power = 1))
         }
         val unnamed = bout(store).copy(corners = bout(store).corners.map(_.copy(fighterName = None)))
         assertEquals(
@@ -496,8 +569,12 @@ class EngineSpec extends FunSuite with QuietTests {
         // effective chin of 25. Blue's power of 10 does beat Red's defense of 2 + 5 = 7, but a telling
         // blow is only looked at when there was no knockdown.
         (1 to 3).foreach { _ =>
-            engine.plan("m-1", alice, Allocation(0, 5, 5))
-            engine.plan("m-1", bob, Allocation(5, 0, 0))
+            engine.plan(
+              matchId = "m-1",
+              cognitoId = alice,
+              allocation = Allocation(offense = 0, defense = 5, power = 5)
+            )
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         }
 
         val m = bout(store)
@@ -510,11 +587,11 @@ class EngineSpec extends FunSuite with QuietTests {
     test("status reports every plan after `since`, with when its round began") {
         val (engine, _, _, clock, _) = fixture()
         val a = clock.advance(10)
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val b = clock.advance(10)
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
         val c = clock.advance(10)
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
 
         val all = engine.status("m-1").toOption.get.turns
         assertEquals(
@@ -526,9 +603,9 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("every callback numbers its plan and states the whole of who is to plan now") {
         val (engine, recorder, _, clock, _) = fixture()
-        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val roundTwo = clock.advance(30)
-        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 0, defense = 5, power = 0))
 
         val states = recorder.moves.map(_._2.state.get)
         assertEquals(states.map(_.sequence), List(1L, 2L))
@@ -541,8 +618,8 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("the plan that ends the bout leaves nobody to plan") {
         val (engine, recorder, _, _, _) = fixture(createRequest(red = Some(slugger)))
-        engine.plan("m-1", alice, Allocation(0, 0, 10))
-        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 10))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         assertEquals(recorder.moves.last._2.state.map(_.pending), Some(Nil))
     }
 
@@ -550,9 +627,14 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, store, _, _) = fixture(createRequest(red = Some(slugger)))
         recorder.isFailingCallbacks = true
 
-        assert(engine.plan("m-1", alice, Allocation(0, 0, 10)).isRight)
+        assert(
+          engine
+              .plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 10))
+              .isRight
+        )
         // The knockout: its move callback fails, and the results are attempted all the same.
-        val finishing = engine.plan("m-1", bob, Allocation(5, 0, 0))
+        val finishing =
+            engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         assert(finishing.isRight, s"the plan was committed, so it must not be reported as failing: $finishing")
         assert(bout(store).isOver)
         assertEquals(recorder.moves.size, 2)
@@ -563,13 +645,13 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, clock, _) =
             fixture(createRequest(red = Some(slugger), parameters = Map("rounds" -> "3")))
         val first = clock.advance(10)
-        engine.plan("m-1", alice, Allocation(0, 5, 5))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 5, power = 5))
         val second = clock.advance(10)
-        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val third = clock.advance(10)
-        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        engine.plan(matchId = "m-1", cognitoId = bob, allocation = Allocation(offense = 5, defense = 0, power = 0))
         val last = clock.advance(10)
-        engine.plan("m-1", alice, Allocation(0, 0, 10))
+        engine.plan(matchId = "m-1", cognitoId = alice, allocation = Allocation(offense = 0, defense = 0, power = 10))
 
         val turns = recorder.results.head._2.turns.get
         assertEquals(

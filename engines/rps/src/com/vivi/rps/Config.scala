@@ -18,13 +18,18 @@ object Config {
     ): Routes = {
         val baseUrl = EngineConfig.requiredBaseUrl(env, defaultBaseUrl)
         Routes(
-          engine(env, baseUrl, announce),
-          EngineConfig.playAuth(env, baseUrl),
-          EngineConfig.matchmakerKey(env),
-          live.orElse(EngineConfig.live(env, baseUrl))
+          engine = engine(env = env, baseUrl = baseUrl, announce = announce),
+          playAuth = EngineConfig.playAuth(env, baseUrl),
+          matchmakerKey = EngineConfig.matchmakerKey(env),
+          live = live.orElse(EngineConfig.live(env, baseUrl))
         )
     }
 
     def engine(env: String => Option[String], baseUrl: String, announce: RpsMatch => Unit = _ => ()): Engine =
-        Engine(EngineConfig.matchStore[RpsMatch](env), EngineConfig.matchmaker(env), baseUrl, announce = announce)
+        Engine(
+          store = EngineConfig.matchStore[RpsMatch](env),
+          matchmaker = EngineConfig.matchmaker(env),
+          baseUrl = baseUrl,
+          announce = announce
+        )
 }

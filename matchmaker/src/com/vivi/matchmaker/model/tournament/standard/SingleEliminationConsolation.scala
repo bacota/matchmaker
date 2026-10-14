@@ -3,11 +3,11 @@ package standard
 
 object SingleEliminationConsolation
     extends StandardModel(
-      "single-elimination-consolation",
-      1,
-      "Single Elimination with Consolation",
-      "Single elimination, with a match for third place.",
-      "Elimination"
+      id = "single-elimination-consolation",
+      version = 1,
+      name = "Single Elimination with Consolation",
+      description = "Single elimination, with a match for third place.",
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

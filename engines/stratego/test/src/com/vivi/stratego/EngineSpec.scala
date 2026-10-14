@@ -33,8 +33,20 @@ class EngineSpec extends FunSuite with QuietTests {
           settings = "{}",
           timeLimitSeconds = Some(600),
           players = List(
-            Protocol.EnginePlayer(alice, 11L, roles.head, None, None),
-            Protocol.EnginePlayer(bob, 22L, roles(1), None, None)
+            Protocol.EnginePlayer(
+              cognitoId = alice,
+              participantId = 11L,
+              role = roles.head,
+              characterId = None,
+              characterState = None
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = bob,
+              participantId = 22L,
+              role = roles(1),
+              characterId = None,
+              characterState = None
+            )
           ),
           moveCallbackUrl = Some(moveUrl),
           resultsCallbackUrl = Some(resultsUrl)
@@ -44,7 +56,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val clock = AtomicReference(start)
         val store = InMemoryMatchStore[StrategoMatch]()
         val recorder = RecordingMatchmaker()
-        val engine = Engine(store, recorder, "http://engine.test", () => clock.get)
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test", now = () => clock.get)
         val created = engine.createGame(request).toOption.get
         def m: StrategoMatch = store.get("m-1").get
         def advance(seconds: Long): Instant = clock.updateAndGet(_.plusSeconds(seconds))
@@ -55,8 +67,16 @@ class EngineSpec extends FunSuite with QuietTests {
     /** A red scout on a4 (square 30) with an open file to a7 (square 60), where blue has put `blueOnA7`. */
     private def deployed(blueOnA7: Rank = Rank.Sergeant, request: Protocol.CreateGameRequest = createRequest()) = {
         val f = Fixture(request)
-        assert(f.engine.deploy("m-1", alice, names(setup(Side.Red, Map(30 -> Rank.Scout)))).isRight)
-        assert(f.engine.deploy("m-1", bob, names(setup(Side.Blue, Map(60 -> blueOnA7)))).isRight)
+        assert(
+          f.engine
+              .deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red, Map(30 -> Rank.Scout))))
+              .isRight
+        )
+        assert(
+          f.engine
+              .deploy(matchId = "m-1", cognitoId = bob, ranks = names(setup(Side.Blue, Map(60 -> blueOnA7))))
+              .isRight
+        )
         f
     }
 
@@ -88,7 +108,11 @@ class EngineSpec extends FunSuite with QuietTests {
     }
 
     test("a game for anything but two different players, or with an unusable move cap, is refused") {
-        val engine = Engine(InMemoryMatchStore[StrategoMatch](), RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(
+          store = InMemoryMatchStore[StrategoMatch](),
+          matchmaker = RecordingMatchmaker(),
+          baseUrl = "http://engine.test"
+        )
         val solo = createRequest().copy(players = createRequest().players.take(1))
         assertEquals(
           engine.createGame(solo),
@@ -112,7 +136,7 @@ class EngineSpec extends FunSuite with QuietTests {
           List(11L, 22L)
         )
 
-        assert(f.engine.deploy("m-1", bob, names(setup(Side.Blue))).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = bob, ranks = names(setup(Side.Blue))).isRight)
         // Nobody named: Red was already waiting, on a clock that has not restarted.
         assertEquals(f.recorder.moves.map(_._2.next), List(Nil))
         assertEquals(
@@ -121,7 +145,7 @@ class EngineSpec extends FunSuite with QuietTests {
         )
 
         f.advance(30)
-        assert(f.engine.deploy("m-1", alice, names(setup(Side.Red))).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red))).isRight)
         // Now the game proper: Red to move, from the moment the second army went down.
         assertEquals(f.recorder.moves.last._2.next, List(11L))
         assertEquals(f.recorder.moves.last._2.state.get.pending, List(Protocol.PendingSeat(11L, start.plusSeconds(30))))
@@ -133,30 +157,30 @@ class EngineSpec extends FunSuite with QuietTests {
         val f = Fixture()
         val red = setup(Side.Red, Map(30 -> Rank.Scout))
         val blue = setup(Side.Blue, Map(60 -> Rank.Sergeant))
-        assert(f.engine.deploy("m-1", bob, names(blue)).isRight)
-        assert(f.engine.deploy("m-1", alice, names(red)).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = bob, ranks = names(blue)).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(red)).isRight)
         assertEquals(f.m.turns.map(t => (t.side, t.setup)), List((Side.Blue, Some(blue)), (Side.Red, Some(red))))
         // What was kept is what the board was given, square by square.
         for (t <- f.m.turns; s <- t.setup)
             assertEquals(t.side.homeSquares.zip(s), t.side.homeSquares.map(sq => sq -> f.m.board(sq).get.rank))
         // And a move keeps no army.
-        assert(f.engine.move("m-1", alice, 30, 40).isRight)
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40).isRight)
         assertEquals(f.m.turns.last.setup, None)
     }
 
     test("a setup must be one whole army, made once") {
         val f = Fixture()
         assertEquals(
-          f.engine.deploy("m-1", alice, names(setup(Side.Red)).tail),
+          f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red)).tail),
           Left(Refusal.Invalid("a setup places 40 pieces, not 39"))
         )
         assertEquals(
-          f.engine.deploy("m-1", alice, "Admiral" :: names(setup(Side.Red)).tail),
+          f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = "Admiral" :: names(setup(Side.Red)).tail),
           Left(Refusal.Invalid("'Admiral' is not a rank"))
         )
-        assert(f.engine.deploy("m-1", alice, names(setup(Side.Red))).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red))).isRight)
         assertEquals(
-          f.engine.deploy("m-1", alice, names(setup(Side.Red))),
+          f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red))),
           Left(Refusal.Invalid("you have already deployed; a setup cannot be changed"))
         )
         assertEquals(f.recorder.moves.size, 1)
@@ -164,23 +188,38 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("nobody moves before both armies are down, and then Red moves first and the sides alternate") {
         val f = Fixture()
-        assertEquals(f.engine.move("m-1", alice, 30, 40), Left(Refusal.Invalid("deploy your army before moving")))
-        f.engine.deploy("m-1", alice, names(setup(Side.Red, Map(30 -> Rank.Scout))))
-        assertEquals(f.engine.move("m-1", alice, 30, 40), Left(Refusal.Invalid("Blue has not deployed yet")))
-        f.engine.deploy("m-1", bob, names(setup(Side.Blue)))
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40),
+          Left(Refusal.Invalid("deploy your army before moving"))
+        )
+        f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red, Map(30 -> Rank.Scout))))
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40),
+          Left(Refusal.Invalid("Blue has not deployed yet"))
+        )
+        f.engine.deploy(matchId = "m-1", cognitoId = bob, ranks = names(setup(Side.Blue)))
 
-        assertEquals(f.engine.move("m-1", bob, 60, 50), Left(Refusal.Invalid("it is Red's turn, not Blue's")))
-        assert(f.engine.move("m-1", alice, 30, 40).isRight)
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = bob, from = 60, to = 50),
+          Left(Refusal.Invalid("it is Red's turn, not Blue's"))
+        )
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40).isRight)
         assertEquals(f.recorder.moves.last._2.next, List(22L))
-        assertEquals(f.engine.move("m-1", alice, 40, 41), Left(Refusal.Invalid("it is Blue's turn, not Red's")))
-        assert(f.engine.move("m-1", bob, 60, 50).isRight)
-        assertEquals(f.engine.move("m-1", alice, 1, 11), Left(Refusal.Invalid("a bomb cannot move")))
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 40, to = 41),
+          Left(Refusal.Invalid("it is Blue's turn, not Red's"))
+        )
+        assert(f.engine.move(matchId = "m-1", cognitoId = bob, from = 60, to = 50).isRight)
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 1, to = 11),
+          Left(Refusal.Invalid("a bomb cannot move"))
+        )
     }
 
     test("someone with no seat in the match may not deploy or move in it") {
         val f = Fixture()
         assertEquals(
-          f.engine.deploy("m-1", "sub-carol", names(setup(Side.Red))),
+          f.engine.deploy(matchId = "m-1", cognitoId = "sub-carol", ranks = names(setup(Side.Red))),
           Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
         )
         assertEquals(f.recorder.moves, Nil)
@@ -188,7 +227,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("during setup a player sees their own army and only the fact of the other's") {
         val f = Fixture(createRequest(isPublic = true))
-        f.engine.deploy("m-1", alice, names(setup(Side.Red)))
+        f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red)))
 
         val red = f.state(Some(alice))
         assertEquals(red.phase, "setup")
@@ -216,13 +255,20 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a battle reveals both pieces to everyone, and nothing else") {
         val f = deployed(blueOnA7 = Rank.Sergeant)
         // The scout runs up the file into the sergeant, and loses.
-        assert(f.engine.move("m-1", alice, 30, 60).isRight)
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 60).isRight)
 
         val public = f.state(None)
         assertEquals(public.pieces.filter(_.rank.isDefined).map(p => (p.square, p.rank.get)), List(60 -> "Sergeant"))
         assertEquals(
           public.lastMove,
-          Some(Protocol.LastMove("Red", 30, 60, Some(Protocol.BattleView("Scout", "Sergeant", "DefenderWins"))))
+          Some(
+            Protocol.LastMove(
+              side = "Red",
+              from = 30,
+              to = 60,
+              battle = Some(Protocol.BattleView(attacker = "Scout", defender = "Sergeant", result = "DefenderWins"))
+            )
+          )
         )
         assertEquals(public.lost.map(l => l.side -> l.ranks), List("Red" -> List("Scout"), "Blue" -> Nil))
         assertEquals(
@@ -234,7 +280,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a scout that runs more than one square is revealed by it") {
         val f = deployed()
-        f.engine.move("m-1", alice, 30, 50)
+        f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 50)
         assertEquals(f.state(Some(bob)).pieces.find(_.square == 50).flatMap(_.rank), Some("Scout"))
     }
 
@@ -248,11 +294,11 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a move from a square off the board is refused, not a failure of the engine") {
         val f = deployed()
         assertEquals(
-          f.engine.move("m-1", alice, 100, 0),
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 100, to = 0),
           Left(Refusal.Invalid("square 100 is not on the board; squares are numbered 0 to 99"))
         )
         assertEquals(
-          f.engine.move("m-1", alice, -1, 0),
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = -1, to = 0),
           Left(Refusal.Invalid("square -1 is not on the board; squares are numbered 0 to 99"))
         )
     }
@@ -267,18 +313,20 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a fourth consecutive move between the same two squares is refused") {
         val f = deployed()
         List((alice, 30, 40), (bob, 69, 59), (alice, 40, 30), (bob, 59, 69), (alice, 30, 40), (bob, 69, 59))
-            .foreach((who, from, to) => assert(f.engine.move("m-1", who, from, to).isRight, s"$from to $to"))
+            .foreach((who, from, to) =>
+                assert(f.engine.move(matchId = "m-1", cognitoId = who, from = from, to = to).isRight, s"$from to $to")
+            )
         assertEquals(
-          f.engine.move("m-1", alice, 40, 30),
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 40, to = 30),
           Left(Refusal.Invalid("that would be a fourth move in a row between a5 and a4"))
         )
         assert(!f.state(Some(alice)).legalMoves.contains(List(40, 30)))
-        assert(f.engine.move("m-1", alice, 40, 41).isRight)
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 40, to = 41).isRight)
     }
 
     test("taking the flag wins, and matchmaker gets the move and then the results") {
         val f = deployed(blueOnA7 = Rank.Flag)
-        assert(f.engine.move("m-1", alice, 30, 60).isRight)
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 60).isRight)
 
         val m = f.m
         assert(m.isCompleted)
@@ -298,7 +346,10 @@ class EngineSpec extends FunSuite with QuietTests {
         // By side: these players were seated without nicknames, as a match from before them was.
         assertEquals(results.summary, Some("<strong>Red</strong> captured <strong>Blue</strong>'s flag in 1 move."))
 
-        assertEquals(f.engine.move("m-1", bob, 61, 51), Left(Refusal.Invalid("this match is already over")))
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = bob, from = 61, to = 51),
+          Left(Refusal.Invalid("this match is already over"))
+        )
     }
 
     test("a player may concede when it is not their turn; the other side wins, and matchmaker is told") {
@@ -333,7 +384,10 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(results.turns.get.map(_.participantId), List(11L, 22L, 22L))
         assertEquals(results.summary, Some("<strong>Blue</strong> surrendered to <strong>Red</strong>."))
 
-        assertEquals(f.engine.move("m-1", alice, 30, 40), Left(Refusal.Invalid("this match is already over")))
+        assertEquals(
+          f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40),
+          Left(Refusal.Invalid("this match is already over"))
+        )
         assertEquals(f.engine.concede("m-1", alice), Left(Refusal.Invalid("this match is already over")))
     }
 
@@ -344,7 +398,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.m.winner, Some(Side.Blue))
         assertEquals(f.state(Some(bob)).phase, "over")
         assertEquals(
-          f.engine.deploy("m-1", bob, names(setup(Side.Blue, Map.empty))),
+          f.engine.deploy(matchId = "m-1", cognitoId = bob, ranks = names(setup(Side.Blue, Map.empty))),
           Left(Refusal.Invalid("this match is already over"))
         )
     }
@@ -359,7 +413,7 @@ class EngineSpec extends FunSuite with QuietTests {
       "a finished match hides what it hid in play: a player sees their own army, the public only what was revealed"
     ) {
         val f = deployed(blueOnA7 = Rank.Flag, request = createRequest(isPublic = true))
-        f.engine.move("m-1", alice, 30, 60)
+        f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 60)
         val public = f.state(None)
         assertEquals(public.phase, "over")
         assertEquals(public.winner, Some("Red"))
@@ -378,9 +432,9 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("the move cap ends the match as a draw") {
         val f = deployed(request = createRequest(parameters = Map("maxMoves" -> "2")))
-        f.engine.move("m-1", alice, 30, 40)
+        f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40)
         assert(!f.m.isOver)
-        f.engine.move("m-1", bob, 69, 59)
+        f.engine.move(matchId = "m-1", cognitoId = bob, from = 69, to = 59)
         assert(f.m.isOver)
         assert(f.m.isDrawn)
         assert(f.recorder.results.head._2.results.forall(r => r.rank == 1 && !r.isWinner))
@@ -389,7 +443,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("status counts every turn, setups included, and says whose turn it is") {
         val f = deployed()
-        f.engine.move("m-1", alice, 30, 40)
+        f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 40)
         val status = f.engine.status("m-1").toOption.get
         assertEquals(status.sequence, Some(3L))
         assertEquals(status.participants.filter(_.isPending).map(_.participantId), List(22L))
@@ -398,14 +452,14 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a stored match round-trips through its json, which is how DynamoDB holds it") {
         val f = deployed()
-        f.engine.move("m-1", alice, 30, 60)
+        f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 60)
         assertEquals(read[StrategoMatch](write(f.m)), f.m)
     }
 
     test("a callback that fails does not fail the move, which stands, and the results are still sent".tag(Quiet)) {
         val f = deployed(blueOnA7 = Rank.Flag)
         f.recorder.isFailingCallbacks = true
-        assert(f.engine.move("m-1", alice, 30, 60).isRight)
+        assert(f.engine.move(matchId = "m-1", cognitoId = alice, from = 30, to = 60).isRight)
         assert(f.m.isCompleted)
         assertEquals(f.recorder.results.size, 1)
     }
@@ -414,7 +468,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val f = Fixture(createRequest().copy(live = Some(Protocol.LiveTerms(30, "PER_TURN"))))
         f.m.seats.foreach(seat => f.engine.core.opened("m-1", seat))
         f.advance(10)
-        assert(f.engine.deploy("m-1", alice, names(setup(Side.Red))).isRight)
+        assert(f.engine.deploy(matchId = "m-1", cognitoId = alice, ranks = names(setup(Side.Red))).isRight)
         f.advance(19)
         assert(!f.engine.read("m-1").toOption.get.isOver)
         f.advance(2)

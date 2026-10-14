@@ -44,14 +44,18 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
     /** A two-player game offering World Cup and not Ladder, an admin of it, and a player who is not one. */
     private def fixture: IO[(Game, Player, Player)] =
         for {
-            admin <- services.registration.register(unique("admin"), unique("sub"))
-            player <- services.registration.register(unique("player"), unique("sub"))
+            admin <- services.registration.register(nickname = unique("admin"), externalId = unique("sub"))
+            player <- services.registration.register(nickname = unique("player"), externalId = unique("sub"))
             game <- TestSession.resource.use { session =>
                 for {
                     game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
-                    _ <- new GameAdminRepo(session).grant(admin.playerId, game.gameId, admin.playerId)
-                    _ <- TournamentFixtures.model(session, game, "world-cup")
-                    _ <- TournamentFixtures.model(session, game, "ladder")
+                    _ <- new GameAdminRepo(session).grant(
+                      player = admin.playerId,
+                      game = game.gameId,
+                      grantedBy = admin.playerId
+                    )
+                    _ <- TournamentFixtures.model(session = session, game = game, key = "world-cup")
+                    _ <- TournamentFixtures.model(session = session, game = game, key = "ladder")
                     _ <- new TournamentModelRepo(session).withdraw(game.gameId, ladder)
                 } yield game
             }
@@ -59,7 +63,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
     private def siteAdmin: IO[Player] =
         for {
-            p <- services.registration.register(unique("overall"), unique("sub"))
+            p <- services.registration.register(nickname = unique("overall"), externalId = unique("sub"))
             _ <- TestSession.resource.use(new PlayerRepo(_).update(p.copy(isAdmin = true)))
         } yield p
 
@@ -68,9 +72,9 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             f <- fixture
             (game, admin, player) = f
             before <- models.list(game.gameId, player.externalId)
-            offered <- models.offer(game.gameId, ladder, admin.externalId)
+            offered <- models.offer(gameId = game.gameId, id = ladder, callerExternalId = admin.externalId)
             seen <- models.list(game.gameId, player.externalId)
-            withdrawn <- models.withdraw(game.gameId, worldCup, admin.externalId)
+            withdrawn <- models.withdraw(gameId = game.gameId, id = worldCup, callerExternalId = admin.externalId)
         } yield (before, offered, seen, withdrawn))
         assertEquals(before.map(_.tournamentModelId), List(worldCup))
         assertEquals(offered.map(_.tournamentModelId).toSet, Set(ladder, worldCup))
@@ -88,8 +92,10 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         val outcome = run(for {
             f <- fixture
             (game, admin, player) = f
-            offer <- models.offer(game.gameId, ladder, player.externalId).attempt
-            withdraw <- models.withdraw(game.gameId, worldCup, player.externalId).attempt
+            offer <- models.offer(gameId = game.gameId, id = ladder, callerExternalId = player.externalId).attempt
+            withdraw <- models
+                .withdraw(gameId = game.gameId, id = worldCup, callerExternalId = player.externalId)
+                .attempt
             // Administering a game is not enough to change every game's models.
             sync <- models.sync(admin.externalId).attempt
         } yield List(offer, withdraw, sync))
@@ -100,8 +106,20 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         val outcome = run(for {
             f <- fixture
             (game, admin, _) = f
-            unknown <- models.offer(game.gameId, TournamentModelId("no-such-model"), admin.externalId).attempt
-            inner <- models.offer(game.gameId, TournamentModelId("world-cup/stage-2"), admin.externalId).attempt
+            unknown <- models
+                .offer(
+                  gameId = game.gameId,
+                  id = TournamentModelId("no-such-model"),
+                  callerExternalId = admin.externalId
+                )
+                .attempt
+            inner <- models
+                .offer(
+                  gameId = game.gameId,
+                  id = TournamentModelId("world-cup/stage-2"),
+                  callerExternalId = admin.externalId
+                )
+                .attempt
         } yield List(unknown, inner))
         assert(outcome.forall(_.left.exists(_.isInstanceOf[NotFoundError])), outcome.toString)
     }
@@ -130,12 +148,12 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
     /** A model the code does not define, with a classification, so that a sync takes it for one the code dropped. */
     private def dropped: TournamentModel =
         TournamentModel(
-          TournamentModelId(unique("test-dropped")),
-          1,
-          "Dropped",
-          "",
-          Some("Round robin"),
-          None,
+          tournamentModelId = TournamentModelId(unique("test-dropped")),
+          version = 1,
+          name = "Dropped",
+          description = "",
+          classification = Some("Round robin"),
+          poolSize = None,
           hasLateEntries = false,
           TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
         )
@@ -151,9 +169,9 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
     private def tournamentFrom(game: Game, model: TournamentModel, owner: Player): IO[Tournament] =
         services.tournaments.create(
-          game.gameId,
-          TournamentRequest(unique("t"), model.tournamentModelId),
-          owner.externalId
+          gameId = game.gameId,
+          request = TournamentRequest(name = unique("t"), tournamentModelId = model.tournamentModelId),
+          callerExternalId = owner.externalId
         )
 
     private def count(table: String, t: Tournament): IO[Long] =
@@ -171,10 +189,11 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             f <- fixture
             (game, admin, player) = f
             _ <- offering(game, model)
-            draft <- tournamentFrom(game, model, admin)
+            draft <- tournamentFrom(game = game, model = model, owner = admin)
             // Invited, but not entered.
             _ <- TestSession.resource.use(
-              new InvitationRepo(_).invite(game.gameId, draft.tournamentId, player.playerId)
+              new InvitationRepo(_)
+                  .invite(game = game.gameId, tournament = draft.tournamentId, player = player.playerId)
             )
             synced <- siteAdmin.flatMap(a => models.sync(a.externalId))
             left <- TestSession.resource.use(new TournamentRepo(_).read(game.gameId, draft.tournamentId))
@@ -195,10 +214,17 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             f <- fixture
             (game, admin, player) = f
             _ <- offering(game, model)
-            entered <- tournamentFrom(game, model, admin)
-            draft <- tournamentFrom(game, model, player)
+            entered <- tournamentFrom(game = game, model = model, owner = admin)
+            draft <- tournamentFrom(game = game, model = model, owner = player)
             _ <- TestSession.resource.use(
-              new EntrantRepo(_).create(game.gameId, GameType.Plain, entered.tournamentId, player.playerId, None, 1500)
+              new EntrantRepo(_).create(
+                game = game.gameId,
+                gt = GameType.Plain,
+                tournament = entered.tournamentId,
+                player = player.playerId,
+                character = None,
+                rating = 1500
+              )
             )
             synced <- siteAdmin.flatMap(a => models.sync(a.externalId))
             offered <- models.list(game.gameId, player.externalId)
@@ -206,13 +232,13 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             kept <- List(entered, draft).traverse(t =>
                 TestSession.resource.use(new TournamentRepo(_).read(game.gameId, t.tournamentId))
             )
-            fresh <- tournamentFrom(game, model, player).attempt
+            fresh <- tournamentFrom(game = game, model = model, owner = player).attempt
             // A draft made from it before keeps it through an edit.
             edited <- services.tournaments.update(
-              game.gameId,
-              draft.tournamentId,
-              TournamentRequest("renamed", model.tournamentModelId),
-              player.externalId
+              gameId = game.gameId,
+              tournamentId = draft.tournamentId,
+              request = TournamentRequest(name = "renamed", tournamentModelId = model.tournamentModelId),
+              callerExternalId = player.externalId
             )
         } yield (synced, offered, stored, kept, fresh, edited))
         assert(synced.deactivated.contains(model.tournamentModelId), synced)
@@ -239,8 +265,8 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             _ <- held.get
             creating <- services.games
                 .createOrUpdate(
-                  admin.externalId,
-                  Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
+                  externalUserId = admin.externalId,
+                  game = Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
                 )
                 .start
             // Still waiting a second later.
@@ -258,14 +284,18 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             admin <- siteAdmin
             _ <- models.sync(admin.externalId)
             made <- services.games.createOrUpdate(
-              admin.externalId,
-              Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
+              externalUserId = admin.externalId,
+              game = Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
             )
             offered <- models.list(made.gameId, admin.externalId)
         } yield (offered, made))
         val standard = offered.map(_.tournamentModelId.value).filter(id => StandardModels.find(id).isDefined)
         val expected = StandardModels.all
-            .filter(m => Validation.designProblems(m.design, TournamentGame.of(game), m.poolSize).forall(_.isWarning))
+            .filter(m =>
+                Validation
+                    .designProblems(design = m.design, game = TournamentGame.of(game), defaultPoolSize = m.poolSize)
+                    .forall(_.isWarning)
+            )
             .map(_.id)
         assertEquals(standard.sorted, expected.sorted)
     }

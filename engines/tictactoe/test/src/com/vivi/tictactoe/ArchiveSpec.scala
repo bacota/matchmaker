@@ -26,8 +26,8 @@ class ArchiveSpec extends FunSuite with QuietTests {
         val live = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         val store = ArchivingMatchStore(live, recorder, matchmakerUrl, recorder.archiveStore)
-        val engine = Engine(store, recorder, "http://engine.test")
-        val routes = Routes(engine, PlayAuth.Trusted, None)
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test")
+        val routes = Routes(engine = engine, playAuth = PlayAuth.Trusted, matchmakerKey = None)
         val create = Protocol.CreateGameRequest(
           matchId = "m-1",
           gameName = "tic-tac-toe",
@@ -36,8 +36,20 @@ class ArchiveSpec extends FunSuite with QuietTests {
           settings = "{}",
           timeLimitSeconds = None,
           players = List(
-            Protocol.EnginePlayer("sub-alice", 1L, Some("X"), None, None),
-            Protocol.EnginePlayer("sub-bob", 2L, Some("O"), None, None)
+            Protocol.EnginePlayer(
+              cognitoId = "sub-alice",
+              participantId = 1L,
+              role = Some("X"),
+              characterId = None,
+              characterState = None
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = "sub-bob",
+              participantId = 2L,
+              role = Some("O"),
+              characterId = None,
+              characterState = None
+            )
           ),
           moveCallbackUrl = Some(s"$matchmakerUrl/games/1/matches/m-1/moves"),
           resultsCallbackUrl = Some(s"$matchmakerUrl/games/1/matches/m-1/results")
@@ -49,7 +61,8 @@ class ArchiveSpec extends FunSuite with QuietTests {
     /** X takes the top row: the match ends on the fifth move. */
     private def playToTheEnd(engine: Engine): Unit =
         List(("sub-alice", 0), ("sub-bob", 3), ("sub-alice", 1), ("sub-bob", 4), ("sub-alice", 2)).foreach {
-            (player, cell) => assert(engine.move("m-1", player, cell).isRight, s"cell $cell")
+            (player, cell) =>
+                assert(engine.move(matchId = "m-1", cognitoId = player, cell = cell).isRight, s"cell $cell")
         }
 
     test("a finished match is archived after its results, and its live copy deleted only once that is confirmed") {
@@ -73,16 +86,22 @@ class ArchiveSpec extends FunSuite with QuietTests {
 
         assertEquals(engine.read("m-1").map(_.winner), Right(Some(Mark.X)))
         assertEquals(engine.read("m-1", archived = true).map(_.winner), Right(Some(Mark.X)))
-        assert(engine.move("m-1", "sub-bob", 8).isLeft)
+        assert(engine.move(matchId = "m-1", cognitoId = "sub-bob", cell = 8).isLeft)
     }
 
     test("the play page, the board and the state are all served from the archive") {
         val (engine, routes, _, _) = fixture()
         playToTheEnd(engine)
 
-        assertEquals(routes(EngineRequest("GET", "/matches/m-1/play", Map("archived" -> "1"))).status, 200)
-        assertEquals(routes(EngineRequest("GET", "/matches/m-1/board", Map("archived" -> "1"))).status, 200)
-        val state = routes(EngineRequest("GET", "/matches/m-1/state", Map("as" -> "sub-bob")))
+        assertEquals(
+          routes(EngineRequest(method = "GET", path = "/matches/m-1/play", query = Map("archived" -> "1"))).status,
+          200
+        )
+        assertEquals(
+          routes(EngineRequest(method = "GET", path = "/matches/m-1/board", query = Map("archived" -> "1"))).status,
+          200
+        )
+        val state = routes(EngineRequest(method = "GET", path = "/matches/m-1/state", query = Map("as" -> "sub-bob")))
         assertEquals(state.status, 200)
         assertEquals(read[Protocol.StateResponse](state.body).winner, Some("X"))
     }
@@ -92,12 +111,15 @@ class ArchiveSpec extends FunSuite with QuietTests {
         playToTheEnd(engine)
         recorder.expiredArchives = Set("m-1")
 
-        val page = routes(EngineRequest("GET", "/matches/m-1/play", Map("archived" -> "1")))
+        val page = routes(EngineRequest(method = "GET", path = "/matches/m-1/play", query = Map("archived" -> "1")))
         assertEquals(page.status, 410)
         assert(page.contentType.startsWith("text/html"), page.contentType)
         assert(page.body.contains("kept for 30 days"), page.body)
 
-        assertEquals(routes(EngineRequest("GET", "/matches/m-1/state", Map("as" -> "sub-bob"))).status, 410)
+        assertEquals(
+          routes(EngineRequest(method = "GET", path = "/matches/m-1/state", query = Map("as" -> "sub-bob"))).status,
+          410
+        )
     }
 
     test("an archive that has gone from the store is reported to matchmaker, which decides it has expired") {
@@ -105,7 +127,7 @@ class ArchiveSpec extends FunSuite with QuietTests {
         playToTheEnd(engine)
         recorder.archiveStore.expire("m-1")
 
-        assertEquals(routes(EngineRequest("GET", "/matches/m-1/board")).status, 410)
+        assertEquals(routes(EngineRequest(method = "GET", path = "/matches/m-1/board")).status, 410)
         assertEquals(recorder.reportedExpired, List("m-1"))
     }
 
@@ -117,7 +139,7 @@ class ArchiveSpec extends FunSuite with QuietTests {
         assert(!recorder.isArchived("m-1"))
 
         recorder.isRefusingArchiving = false
-        val status = routes(EngineRequest("GET", "/matches/m-1/status"))
+        val status = routes(EngineRequest(method = "GET", path = "/matches/m-1/status"))
         assertEquals(read[Protocol.GameStatusResponse](status.body).isCompleted, true)
         assert(recorder.isArchived("m-1"))
         assertEquals(live.get("m-1"), None)
@@ -133,8 +155,8 @@ class ArchiveSpec extends FunSuite with QuietTests {
 
     test("a match still being played is not archived by a status call") {
         val (engine, routes, live, recorder) = fixture()
-        assert(engine.move("m-1", "sub-alice", 0).isRight)
-        routes(EngineRequest("GET", "/matches/m-1/status"))
+        assert(engine.move(matchId = "m-1", cognitoId = "sub-alice", cell = 0).isRight)
+        routes(EngineRequest(method = "GET", path = "/matches/m-1/status"))
         assert(!recorder.isArchived("m-1"))
         assert(live.get("m-1").isDefined)
     }
@@ -146,7 +168,7 @@ class ArchiveSpec extends FunSuite with QuietTests {
         val archived = engine.read("m-1").toOption.get
         live.create(archived)
 
-        routes(EngineRequest("GET", "/matches/m-1/status"))
+        routes(EngineRequest(method = "GET", path = "/matches/m-1/status"))
         assertEquals(live.get("m-1"), None)
     }
 
@@ -158,10 +180,10 @@ class ArchiveSpec extends FunSuite with QuietTests {
 
     test("matchmaker cancelling a match drops it here, and saying so twice is harmless") {
         val (engine, routes, live, _) = fixture()
-        assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
+        assertEquals(routes(EngineRequest(method = "POST", path = "/matches/m-1/cancel")).status, 204)
         assertEquals(live.get("m-1"), None)
         assertEquals(engine.read("m-1").left.map(_.status), Left(404))
-        assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
+        assertEquals(routes(EngineRequest(method = "POST", path = "/matches/m-1/cancel")).status, 204)
     }
 
     test("an archive that runs out of time keeps its live copy, for matchmaker to prompt again".tag(Quiet)) {
@@ -176,21 +198,33 @@ class ArchiveSpec extends FunSuite with QuietTests {
           recorder.archiveStore,
           now = () => clock.updateAndGet(_.plusSeconds(60))
         )
-        val engine = Engine(store, recorder, "http://engine.test")
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test")
         engine.createGame(
           Protocol.CreateGameRequest(
-            "m-1",
-            "tic-tac-toe",
-            false,
-            Map.empty,
-            "{}",
-            None,
-            List(
-              Protocol.EnginePlayer("sub-alice", 1L, Some("X"), None, None),
-              Protocol.EnginePlayer("sub-bob", 2L, Some("O"), None, None)
+            matchId = "m-1",
+            gameName = "tic-tac-toe",
+            isPublic = false,
+            parameters = Map.empty,
+            settings = "{}",
+            timeLimitSeconds = None,
+            players = List(
+              Protocol.EnginePlayer(
+                cognitoId = "sub-alice",
+                participantId = 1L,
+                role = Some("X"),
+                characterId = None,
+                characterState = None
+              ),
+              Protocol.EnginePlayer(
+                cognitoId = "sub-bob",
+                participantId = 2L,
+                role = Some("O"),
+                characterId = None,
+                characterState = None
+              )
             ),
-            Some(s"$matchmakerUrl/games/1/matches/m-1/moves"),
-            Some(s"$matchmakerUrl/games/1/matches/m-1/results")
+            moveCallbackUrl = Some(s"$matchmakerUrl/games/1/matches/m-1/moves"),
+            resultsCallbackUrl = Some(s"$matchmakerUrl/games/1/matches/m-1/results")
           )
         )
         playToTheEnd(engine)

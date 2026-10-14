@@ -22,24 +22,28 @@ class ResultRepoSpec extends PropertySuite {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
                         owner <- Generators.ownerIn(session, createdGame)
                         matchId = mid
-                        _ <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
+                        _ <- TestMatches.writeMatch(
+                          session = session,
+                          m = Generators.matchFrom(createdGame.gameId, matchId),
+                          owner = owner
+                        )
                         createdPlayer <- playerRepo.create(player)
                         createdCharacter <- characterRepo.create(
                           Generators.genCharacter(createdGame.gameId, None).sample.get
                         )
                         createdParticipant <- TestMatches.writeSeat(
-                          session,
-                          Generators
+                          session = session,
+                          p = Generators
                               .genParticipant(
-                                createdGame.gameId,
-                                matchId,
-                                createdPlayer.playerId,
-                                createdCharacter.characterId,
-                                createdGame.roles.head.gameRoleId
+                                gameId = createdGame.gameId,
+                                matchId = matchId,
+                                playerId = createdPlayer.playerId,
+                                characterId = createdCharacter.characterId,
+                                gameRoleId = createdGame.roles.head.gameRoleId
                               )
                               .sample
                               .get,
-                          EloRating.initial
+                          eloStart = EloRating.initial
                         )
                         result <- IO.pure(
                           Generators.genResult(createdGame.gameId, createdParticipant.participantId).sample.get

@@ -35,7 +35,7 @@ object SeedAdmin {
         }
 
         val connection = DriverManager.getConnection(url, user, password)
-        try println(seed(connection, externalId, nickname))
+        try println(seed(connection = connection, externalId = externalId, nickname = nickname))
         finally connection.close()
     }
 
@@ -44,8 +44,8 @@ object SeedAdmin {
       */
     def seed(connection: Connection, externalId: String, nickname: String): String =
         existingNickname(connection, externalId) match {
-            case Some(existing) => grantAdmin(connection, externalId, existing)
-            case None           => insert(connection, externalId, nickname)
+            case Some(existing) => grantAdmin(connection = connection, externalId = externalId, nickname = existing)
+            case None           => insert(connection = connection, externalId = externalId, nickname = nickname)
         }
 
     private def existingNickname(connection: Connection, externalId: String): Option[String] = {

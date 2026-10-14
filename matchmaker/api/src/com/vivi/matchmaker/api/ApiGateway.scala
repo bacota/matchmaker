@@ -93,7 +93,7 @@ object ApiGateway {
             }
             .getOrElse(Map.empty[String, String])
 
-        Request(method, path, headers, query, body, claims)
+        Request(method = method, path = path, headers = headers, query = query, body = body, claims = claims)
     }
 
     def encodeResponse(response: Response): String =

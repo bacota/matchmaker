@@ -3,11 +3,11 @@ package standard
 
 object BrazilianRepechage
     extends StandardModel(
-      "brazilian-repechage",
-      1,
-      "Brazilian Repechage",
-      "Single elimination down to eight, then modified double elimination.",
-      "Elimination"
+      id = "brazilian-repechage",
+      version = 1,
+      name = "Brazilian Repechage",
+      description = "Single elimination down to eight, then modified double elimination.",
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

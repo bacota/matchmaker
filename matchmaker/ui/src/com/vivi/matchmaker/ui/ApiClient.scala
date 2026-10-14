@@ -35,13 +35,17 @@ object ApiClient {
       * player can be written to from the moment they exist rather than only after they have changed their address once.
       */
     def register(nickname: String, email: Option[String]): Future[Player] =
-        send[Player](HttpMethod.POST, "/register", Some(write(Json.RegisterRequest(nickname, email))))
+        send[Player](
+          method = HttpMethod.POST,
+          path = "/register",
+          body = Some(write(Json.RegisterRequest(nickname, email)))
+        )
 
     /** Renames the caller. The server takes the player from the token, so there is no id to send and no way to rename
       * anyone else.
       */
     def updateNickname(nickname: String): Future[Player] =
-        send[Player](HttpMethod.PUT, "/me", Some(write(Json.NicknameRequest(nickname))))
+        send[Player](method = HttpMethod.PUT, path = "/me", body = Some(write(Json.NicknameRequest(nickname))))
 
     /** Records the address the token says the player signs in with, so that matchmaker's copy — what it sends
       * notifications to — matches Cognito's.
@@ -51,7 +55,7 @@ object ApiClient {
       * an hour-old token, are both things no one can check.
       */
     def updateEmail(email: String): Future[Player] =
-        send[Player](HttpMethod.PUT, "/me/email", Some(write(Json.EmailRequest(email))))
+        send[Player](method = HttpMethod.PUT, path = "/me/email", body = Some(write(Json.EmailRequest(email))))
 
     def dueMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/due")
 
@@ -126,7 +130,8 @@ object ApiClient {
       * the button when [[com.vivi.matchmaker.model.EmailSuppression.Notice.canRetry]] is false gets a 400 rather than a
       * surprise.
       */
-    def retryNotifications(): Future[Unit] = sendUnit(HttpMethod.POST, "/me/notifications/retry", None)
+    def retryNotifications(): Future[Unit] =
+        sendUnit(method = HttpMethod.POST, path = "/me/notifications/retry", body = None)
 
     /** Saves the caller's defaults. `applyToGames` copies them into every game they have answered separately;
       * `applyToMatches` carries the result into the matches they are still playing. Both are the offers the form makes
@@ -138,9 +143,17 @@ object ApiClient {
         applyToMatches: Boolean = false
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.PUT,
-          "/me/notifications",
-          Some(write(Json.PreferencesRequest(preferences, applyToGames, applyToMatches)))
+          method = HttpMethod.PUT,
+          path = "/me/notifications",
+          body = Some(
+            write(
+              Json.PreferencesRequest(
+                preferences = preferences,
+                isAppliedToGames = applyToGames,
+                isAppliedToMatches = applyToMatches
+              )
+            )
+          )
         )
 
     /** Saves the caller's answers for one game. `applyToMatches` carries them into the matches of that game they are
@@ -152,9 +165,9 @@ object ApiClient {
         applyToMatches: Boolean = false
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.PUT,
-          s"/me/notifications/games/${gameId.value}",
-          Some(write(Json.PreferencesRequest(preferences, isAppliedToMatches = applyToMatches)))
+          method = HttpMethod.PUT,
+          path = s"/me/notifications/games/${gameId.value}",
+          body = Some(write(Json.PreferencesRequest(preferences = preferences, isAppliedToMatches = applyToMatches)))
         )
 
     /** The caller's answers for one match. Every kind answered, because a seat's own columns are what decides and they
@@ -170,9 +183,9 @@ object ApiClient {
         preferences: SeatNotifications
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.PUT,
-          s"/games/${gameId.value}/matches/${matchId.value}/notifications",
-          Some(write(preferences))
+          method = HttpMethod.PUT,
+          path = s"/games/${gameId.value}/matches/${matchId.value}/notifications",
+          body = Some(write(preferences))
         )
 
     def characters(gameId: GameId): Future[Seq[Character[String]]] =
@@ -195,9 +208,9 @@ object ApiClient {
     /** Says whether a match is friendly — a game's admin's to say. */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean): Future[Match] =
         send[Match](
-          HttpMethod.PUT,
-          s"/games/${gameId.value}/matches/${matchId.value}/friendly",
-          Some(write(Json.FriendlyRequest(friendly)))
+          method = HttpMethod.PUT,
+          path = s"/games/${gameId.value}/matches/${matchId.value}/friendly",
+          body = Some(write(Json.FriendlyRequest(friendly)))
         )
 
     /* `role=` for one role's ratings, after whatever else the query asks; nothing for the overall ones. */
@@ -225,9 +238,9 @@ object ApiClient {
     /** Sets a player's Elo rating in a game outright — a game's admin's to do. */
     def setRating(gameId: GameId, playerId: PlayerId, rating: Int): Future[EloRating] =
         send[EloRating](
-          HttpMethod.PUT,
-          s"/games/${gameId.value}/ratings/${playerId.value}",
-          Some(write(Json.RatingRequest(rating)))
+          method = HttpMethod.PUT,
+          path = s"/games/${gameId.value}/ratings/${playerId.value}",
+          body = Some(write(Json.RatingRequest(rating)))
         )
 
     def games(activeOnly: Boolean): Future[Seq[Game]] =
@@ -243,7 +256,7 @@ object ApiClient {
     def createGame(game: Game, apiKey: Option[String] = None): Future[Game] = {
         val body = upickle.default.writeJs(game).obj
         apiKey.foreach(key => body("apiKey") = ujson.Str(key))
-        send[Game](HttpMethod.POST, "/games", Some(ujson.write(ujson.Obj(body))))
+        send[Game](method = HttpMethod.POST, path = "/games", body = Some(ujson.write(ujson.Obj(body))))
     }
 
     def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
@@ -254,7 +267,11 @@ object ApiClient {
       * that is a tournament call: entering, withdrawing, starting, cancelling, inviting and choosing a role.
       */
     def createChallenge(gameId: GameId, request: ChallengeRequest): Future[Tournament] =
-        send[Tournament](HttpMethod.POST, s"/games/${gameId.value}/challenges", Some(write(request)))
+        send[Tournament](
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/challenges",
+          body = Some(write(request))
+        )
 
     /** How every finished match turned out, in one call — see `MatchService.results`. */
     def results(): Future[Seq[Json.ParticipantResultView]] =
@@ -267,13 +284,21 @@ object ApiClient {
       * matchmaker's idea of whose turn it is has fallen behind.
       */
     def refreshMatch(gameId: GameId, matchId: MatchId): Future[Match] =
-        send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/refresh", None)
+        send[Match](
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/matches/${matchId.value}/refresh",
+          body = None
+        )
 
     /** Calls a match off. Only its tournament's owner may, which the server checks — the button that leads here is
       * shown only to them, but that is a courtesy, not the rule.
       */
     def cancelMatch(gameId: GameId, matchId: MatchId): Future[Match] =
-        send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/cancel", None)
+        send[Match](
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/matches/${matchId.value}/cancel",
+          body = None
+        )
 
     // ---- tournaments ------------------------------------------------------------------------
 
@@ -294,24 +319,36 @@ object ApiClient {
         get[TournamentDetail](tournamentPath(gameId, tournamentId))
 
     def createTournament(gameId: GameId, request: TournamentRequest): Future[Tournament] =
-        send[Tournament](HttpMethod.POST, s"/games/${gameId.value}/tournaments", Some(write(request)))
+        send[Tournament](
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/tournaments",
+          body = Some(write(request))
+        )
 
     def updateTournament(gameId: GameId, tournamentId: TournamentId, request: TournamentRequest): Future[Tournament] =
-        send[Tournament](HttpMethod.PUT, tournamentPath(gameId, tournamentId), Some(write(request)))
+        send[Tournament](
+          method = HttpMethod.PUT,
+          path = tournamentPath(gameId, tournamentId),
+          body = Some(write(request))
+        )
 
     /** One of the owner's steps through a tournament's life: `open`, `start` or `cancel`. */
     def tournamentStep(gameId: GameId, tournamentId: TournamentId, step: String): Future[Tournament] =
-        send[Tournament](HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/$step", None)
+        send[Tournament](method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/$step", body = None)
 
     def inviteToTournament(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
         sendUnit(
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/invitations",
-          Some(write(TournamentJson.TournamentInvite(playerId)))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/invitations",
+          body = Some(write(TournamentJson.TournamentInvite(playerId)))
         )
 
     def revokeTournamentInvitation(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
-        sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/invitations/${playerId.value}", None)
+        sendUnit(
+          method = HttpMethod.DELETE,
+          path = s"${tournamentPath(gameId, tournamentId)}/invitations/${playerId.value}",
+          body = None
+        )
 
     /** Invites a character, in a character game: whoever owns it when they answer may enter with it. */
     def inviteCharacterToTournament(
@@ -320,9 +357,9 @@ object ApiClient {
         characterId: CharacterId
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/character-invitations",
-          Some(write(TournamentJson.TournamentCharacterInvite(characterId)))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/character-invitations",
+          body = Some(write(TournamentJson.TournamentCharacterInvite(characterId)))
         )
 
     /** Takes a character's invitation back, or -- for the character's owner -- turns it down. */
@@ -332,20 +369,24 @@ object ApiClient {
         characterId: CharacterId
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.DELETE,
-          s"${tournamentPath(gameId, tournamentId)}/character-invitations/${characterId.value}",
-          None
+          method = HttpMethod.DELETE,
+          path = s"${tournamentPath(gameId, tournamentId)}/character-invitations/${characterId.value}",
+          body = None
         )
 
     def enterTournament(gameId: GameId, tournamentId: TournamentId, characterId: Option[CharacterId]): Future[Entrant] =
         send[Entrant](
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/entries",
-          Some(write(TournamentJson.EnterRequest(characterId)))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/entries",
+          body = Some(write(TournamentJson.EnterRequest(characterId)))
         )
 
     def withdrawFromTournament(gameId: GameId, tournamentId: TournamentId, entrantId: EntrantId): Future[Unit] =
-        sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/entries/${entrantId.value}", None)
+        sendUnit(
+          method = HttpMethod.DELETE,
+          path = s"${tournamentPath(gameId, tournamentId)}/entries/${entrantId.value}",
+          body = None
+        )
 
     /** Begins the next round: for `duration` if given, and otherwise for the tournament's round duration. */
     def startRound(
@@ -354,16 +395,16 @@ object ApiClient {
         duration: Option[java.time.Duration] = None
     ): Future[TournamentJson.RoundStarted] =
         send[TournamentJson.RoundStarted](
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/rounds",
-          Some(write(TournamentJson.StartRoundRequest(duration.map(_.getSeconds))))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/rounds",
+          body = Some(write(TournamentJson.StartRoundRequest(duration.map(_.getSeconds))))
         )
 
     def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
-        sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/check", None)
+        sendUnit(method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/check", body = None)
 
     def stopTournamentStage(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
-        sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/stop", None)
+        sendUnit(method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/stop", body = None)
 
     def chooseRole(
         gameId: GameId,
@@ -372,9 +413,9 @@ object ApiClient {
         role: GameRoleId
     ): Future[TournamentMatchView] =
         send[TournamentMatchView](
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/role",
-          Some(write(TournamentJson.ChooseRoleRequest(role)))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/role",
+          body = Some(write(TournamentJson.ChooseRoleRequest(role)))
         )
 
     def decideMatch(
@@ -384,9 +425,9 @@ object ApiClient {
         ranks: List[EntrantRank]
     ): Future[Unit] =
         sendUnit(
-          HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/result",
-          Some(write(TournamentJson.DecideRequest(ranks)))
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/result",
+          body = Some(write(TournamentJson.DecideRequest(ranks)))
         )
 
     /** The models a game's tournaments are made from. */
@@ -399,15 +440,15 @@ object ApiClient {
 
     /** Offers a model in a game: the models the game now offers. */
     def offerTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
-        send[Seq[TournamentModel]](HttpMethod.PUT, modelPath(gameId, modelId), None)
+        send[Seq[TournamentModel]](method = HttpMethod.PUT, path = modelPath(gameId, modelId), body = None)
 
     /** Stops offering a model in a game: the models the game now offers. */
     def withdrawTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
-        send[Seq[TournamentModel]](HttpMethod.DELETE, modelPath(gameId, modelId), None)
+        send[Seq[TournamentModel]](method = HttpMethod.DELETE, path = modelPath(gameId, modelId), body = None)
 
     /** A site admin's sync of the stored models with those the code defines: what it did. */
     def syncTournamentModels(): Future[TournamentModelSync] =
-        send[TournamentModelSync](HttpMethod.POST, "/tournament-models/sync", None)
+        send[TournamentModelSync](method = HttpMethod.POST, path = "/tournament-models/sync", body = None)
 
     private def modelPath(gameId: GameId, modelId: TournamentModelId): String =
         s"/games/${gameId.value}/tournament-models/${scalajs.js.URIUtils.encodeURIComponent(modelId.value)}"
@@ -415,15 +456,15 @@ object ApiClient {
     private def tournamentPath(gameId: GameId, tournamentId: TournamentId): String =
         s"/games/${gameId.value}/tournaments/${tournamentId.value}"
 
-    private def get[A: ReadWriter](path: String): Future[A] = send[A](HttpMethod.GET, path, None)
+    private def get[A: ReadWriter](path: String): Future[A] = send[A](method = HttpMethod.GET, path = path, body = None)
 
     private def send[A: ReadWriter](method: HttpMethod, path: String, body: Option[String]): Future[A] =
-        request(method, path, body).flatMap { case (status, text) =>
-            Future.fromTry(decode[A](status, text, path))
+        request(method = method, path = path, body = body).flatMap { case (status, text) =>
+            Future.fromTry(decode[A](status = status, text = text, path = path))
         }
 
     private def sendUnit(method: HttpMethod, path: String, body: Option[String]): Future[Unit] =
-        request(method, path, body).map(_ => ())
+        request(method = method, path = path, body = body).map(_ => ())
 
     private def decode[A: ReadWriter](status: Int, text: String, path: String): Try[A] =
         Try(read[A](text)).recover { case error =>
@@ -442,8 +483,8 @@ object ApiClient {
         // the header; the gateway reads the token and verifies it before the function is reached.
         // Asking for the token before every call is what lets an expired one be refreshed here,
         // rather than becoming a 401 the player has to sign in again to clear.
-        if (Config.current.isHeaderAuth) send(method, path, body, None)
-        else Auth.freshIdToken().flatMap(token => send(method, path, body, token))
+        if (Config.current.isHeaderAuth) send(method = method, path = path, body = body, idToken = None)
+        else Auth.freshIdToken().flatMap(token => send(method = method, path = path, body = body, idToken = token))
 
     private def send(
         method: HttpMethod,

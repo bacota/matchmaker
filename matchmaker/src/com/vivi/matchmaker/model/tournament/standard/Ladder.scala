@@ -3,11 +3,11 @@ package standard
 
 object Ladder
     extends StandardModel(
-      "ladder",
-      1,
-      "Ladder",
-      "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
-      "Ladder"
+      id = "ladder",
+      version = 1,
+      name = "Ladder",
+      description = "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
+      classification = "Ladder"
     ) {
     val design: TournamentDesign = TournamentDesign(
       List(

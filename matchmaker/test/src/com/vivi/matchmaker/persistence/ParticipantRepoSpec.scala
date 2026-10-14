@@ -24,7 +24,11 @@ class ParticipantRepoSpec extends PropertySuite {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
                         owner <- Generators.ownerIn(session, createdGame)
                         matchId = mid
-                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
+                        m <- TestMatches.writeMatch(
+                          session = session,
+                          m = Generators.matchFrom(createdGame.gameId, matchId),
+                          owner = owner
+                        )
                         createdPlayer <- playerRepo.create(player)
                         createdCharacter <- characterRepo.create(
                           Generators.genCharacter(createdGame.gameId, None).sample.get
@@ -32,16 +36,20 @@ class ParticipantRepoSpec extends PropertySuite {
                         participant <- IO.pure(
                           Generators
                               .genParticipant(
-                                createdGame.gameId,
-                                matchId,
-                                createdPlayer.playerId,
-                                createdCharacter.characterId,
-                                createdGame.roles.head.gameRoleId
+                                gameId = createdGame.gameId,
+                                matchId = matchId,
+                                playerId = createdPlayer.playerId,
+                                characterId = createdCharacter.characterId,
+                                gameRoleId = createdGame.roles.head.gameRoleId
                               )
                               .sample
                               .get
                         )
-                        created <- TestMatches.writeSeat(session, participant, EloRating.initial)
+                        created <- TestMatches.writeSeat(
+                          session = session,
+                          p = participant,
+                          eloStart = EloRating.initial
+                        )
                         found <- participantRepo.read(created.gameId, created.participantId)
                     } yield found == Some(created)
                 }
@@ -68,27 +76,31 @@ class ParticipantRepoSpec extends PropertySuite {
                     game <- new GameRepo[String](session).create(Generators.genGameWithRole.sample.get)
                     owner <- Generators.ownerIn(session, game)
                     matchId = Generators.newMatchId()
-                    _ <- TestMatches.writeMatch(session, Generators.matchFrom(game.gameId, matchId), owner)
+                    _ <- TestMatches.writeMatch(
+                      session = session,
+                      m = Generators.matchFrom(game.gameId, matchId),
+                      owner = owner
+                    )
                     player <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                     character <- new CharacterRepo[String](session).create(
                       Generators.genCharacter(game.gameId, None).sample.get
                     )
                     seat <- TestMatches.writeSeat(
-                      session,
-                      finished(
+                      session = session,
+                      p = finished(
                         Generators
                             .genParticipant(
-                              game.gameId,
-                              matchId,
-                              player.playerId,
-                              character.characterId,
-                              game.roles.head.gameRoleId
+                              gameId = game.gameId,
+                              matchId = matchId,
+                              playerId = player.playerId,
+                              characterId = character.characterId,
+                              gameRoleId = game.roles.head.gameRoleId
                             )
                             .sample
                             .get,
                         done = false
                       ),
-                      EloRating.initial
+                      eloStart = EloRating.initial
                     )
                     before <- stamp(seat)
                     _ <- participantRepo.update(finished(seat, done = true))

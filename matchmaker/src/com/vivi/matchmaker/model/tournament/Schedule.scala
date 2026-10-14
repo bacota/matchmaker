@@ -59,11 +59,17 @@ object Schedule {
                 (0 until passes).toList.flatMap { pass =>
                     subsets.map { subset =>
                         if (rotate)
-                            subset.zipWithIndex.map((e, i) => SeatPlan(e, Some(seating((i + pass) % size).id)))
-                        else roles(subset, seating.take(size), game)
+                            subset.zipWithIndex.map((e, i) =>
+                                SeatPlan(entrant = e, role = Some(seating((i + pass) % size).id))
+                            )
+                        else roles(subset = subset, seating = seating.take(size), game = game)
                     }
                 }
-            pack(unpacked, concurrent, if (size == 2 && concurrent == 1) Some(subsets.size, n) else None)
+            pack(
+              matches = unpacked,
+              concurrent = concurrent,
+              circleOf = if (size == 2 && concurrent == 1) Some(subsets.size, n) else None
+            )
         }
     }
 
@@ -73,13 +79,15 @@ object Schedule {
       * Roles"). `subset` is in seed order. A match of one seat has nothing to choose between.
       */
     def roles(subset: List[Long], seating: List[TournamentRole], game: TournamentGame): List[SeatPlan] =
-        if (game.hasRoleChoice && subset.sizeIs > 1) subset.zipWithIndex.map((e, i) => SeatPlan(e, None, Some(i)))
-        else if (!game.hasSignificantRoles) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
+        if (game.hasRoleChoice && subset.sizeIs > 1)
+            subset.zipWithIndex.map((e, i) => SeatPlan(entrant = e, role = None, chooseOrder = Some(i)))
+        else if (!game.hasSignificantRoles)
+            subset.zip(seating).map((e, role) => SeatPlan(entrant = e, role = Some(role.id)))
         else if (seating.exists(_.preferenceLevel.isDefined)) {
             val preferred = seating.zipWithIndex.sortBy((role, i) => (-role.preferenceLevel.getOrElse(Int.MinValue), i))
-            subset.zip(preferred).map { case (e, (role, _)) => SeatPlan(e, Some(role.id)) }
-        } else if (subset.sizeIs == 1) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
-        else subset.zipWithIndex.map((e, i) => SeatPlan(e, None, Some(i)))
+            subset.zip(preferred).map { case (e, (role, _)) => SeatPlan(entrant = e, role = Some(role.id)) }
+        } else if (subset.sizeIs == 1) subset.zip(seating).map((e, role) => SeatPlan(entrant = e, role = Some(role.id)))
+        else subset.zipWithIndex.map((e, i) => SeatPlan(entrant = e, role = None, chooseOrder = Some(i)))
 
     /** The pairs of a round robin by the circle method, round after round: `n − 1` rounds of `n / 2` pairs for an even
       * `n`, and `n` rounds with one member sitting each out for an odd one. Each pair is in seed order.
@@ -119,7 +127,7 @@ object Schedule {
                     val inPass = i % pairsPerPass
                     // Rounds within a pass, by the circle's own numbering; an odd pool sits one out each round.
                     val roundsPerPass = if (n % 2 == 0) n - 1 else n
-                    PlannedMatch(i, pass * roundsPerPass + inPass / math.max(perRound, 1), seats)
+                    PlannedMatch(no = i, slot = pass * roundsPerPass + inPass / math.max(perRound, 1), seats = seats)
                 }
             case None =>
                 val (planned, _) =
@@ -129,7 +137,7 @@ object Schedule {
                             val slot =
                                 Iterator.from(0).find(s => who.forall(e => load.getOrElse((s, e), 0) < concurrent)).get
                             (
-                              acc :+ PlannedMatch(i, slot, seats),
+                              acc :+ PlannedMatch(no = i, slot = slot, seats = seats),
                               load ++ who.map(e => (slot, e) -> (load.getOrElse((slot, e), 0) + 1))
                             )
                     }

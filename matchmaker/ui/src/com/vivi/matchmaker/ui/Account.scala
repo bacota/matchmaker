@@ -247,14 +247,16 @@ object Account {
             passwordOutcome.set(Some(Outcome(true, "Enter your current password and the new one.")))
         else
             withAccessToken(passwordOutcome, busy) { token =>
-                CognitoIdp.changePassword(token, currentPassword.now(), newPassword.now()).map { _ =>
-                    currentPassword.set("")
-                    newPassword.set("")
-                    // The session is not ended: Cognito leaves the existing tokens valid, and signing the
-                    // user out of the tab they are working in would be a surprising cost for a change they
-                    // made deliberately.
-                    passwordOutcome.set(Some(Outcome(false, "Your password has been changed.")))
-                }
+                CognitoIdp
+                    .changePassword(accessToken = token, previous = currentPassword.now(), proposed = newPassword.now())
+                    .map { _ =>
+                        currentPassword.set("")
+                        newPassword.set("")
+                        // The session is not ended: Cognito leaves the existing tokens valid, and signing the
+                        // user out of the tab they are working in would be a surprising cost for a change they
+                        // made deliberately.
+                        passwordOutcome.set(Some(Outcome(false, "Your password has been changed.")))
+                    }
             }
 
     /** Runs a Cognito account operation with an access token, obtaining one first.
@@ -431,12 +433,12 @@ object Account {
          * Both say "the answers you change here" rather than "these answers", because that is what
          * they do: a question this save leaves alone is left alone all the way down. */
         val allGames = Notifications.Cascade(
-          "Use the answers I change here for all my games too",
-          "Only the questions you change. Anything a game answers differently stays as it is."
+          label = "Use the answers I change here for all my games too",
+          detail = "Only the questions you change. Anything a game answers differently stays as it is."
         )
         val allMatches = Notifications.Cascade(
-          "And in the matches I am playing now",
-          "Only the questions you change. Matches you have already finished are left alone.",
+          label = "And in the matches I am playing now",
+          detail = "Only the questions you change. Matches you have already finished are left alone.",
           shown = allGames.chosen.signal
         )
 
@@ -481,13 +483,13 @@ object Account {
                   case Some(gameId) =>
                       val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
                       val alsoMatches = Notifications.Cascade(
-                        "Use the answers I change here in the matches of this game I am playing now",
-                        "Only the questions you change. Matches you have already finished are left alone."
+                        label = "Use the answers I change here in the matches of this game I am playing now",
+                        detail = "Only the questions you change. Matches you have already finished are left alone."
                       )
                       Notifications.form(
-                        Store.games.now().find(_.gameId == gameId).map(_.displayName).getOrElse("This game"),
-                        "Leave a question on \"Use Default\" to answer it from your settings above.",
-                        forGame,
+                        heading = Store.games.now().find(_.gameId == gameId).map(_.displayName).getOrElse("This game"),
+                        explanation = "Leave a question on \"Use Default\" to answer it from your settings above.",
+                        preferences = forGame,
                         saveLabel = "Save for this game",
                         cascades = Seq(alsoMatches)
                       ) { preferences =>
@@ -495,7 +497,11 @@ object Account {
                           // player's answers into a store the next player may already be reading.
                           val signIn = Store.currentSignIn
                           ApiClient
-                              .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
+                              .updateGameNotifications(
+                                gameId = gameId,
+                                preferences = preferences,
+                                applyToMatches = alsoMatches.chosen.now()
+                              )
                               .map { _ =>
                                   if (Store.isStillSignedInAs(signIn)) {
                                       perGame.update(_.updated(gameId, preferences))
@@ -515,10 +521,10 @@ object Account {
         div(
           suppressionNotice(settings.suppressed),
           Notifications.form(
-            "Notification Preferences",
-            "What we email you about, unless you say otherwise for a particular game or match. " +
+            heading = "Notification Preferences",
+            explanation = "What we email you about, unless you say otherwise for a particular game or match. " +
                 "Anything left on \"Use Default\" is sent.",
-            overall,
+            preferences = overall,
             saveLabel = "Save notifications",
             cascades = Seq(allGames, allMatches),
             deferred = Some(Notifications.Deferred("Saving your notification preferences", Seq(oneGame)))
@@ -536,7 +542,7 @@ object Account {
               // nothing would ever correct it and they could save it back as their own.
               val signIn = Store.currentSignIn
               ApiClient
-                  .updateNotifications(preferences, applyToGames = games, applyToMatches = matches)
+                  .updateNotifications(preferences = preferences, applyToGames = games, applyToMatches = matches)
                   .flatMap { _ =>
                       if (games)
                           // The cascade rewrote the per-game rows this panel holds copies of, and only
@@ -584,7 +590,7 @@ object Account {
               controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
             )
           ),
-          submit("Save nickname", busy),
+          submit(label = "Save nickname", busy = busy),
           report(nicknameOutcome)
         )
     }
@@ -678,8 +684,12 @@ object Account {
           },
           child <-- emailStage.signal.map {
               case EmailStage.Idle =>
-                  submit("Send verification code", busy, blocked = email.signal.map(!isPlausibleEmail(_)))
-              case EmailStage.Sent(_) => submit("Confirm new address", busy)
+                  submit(
+                    label = "Send verification code",
+                    busy = busy,
+                    blocked = email.signal.map(!isPlausibleEmail(_))
+                  )
+              case EmailStage.Sent(_) => submit(label = "Confirm new address", busy = busy)
           },
           report(emailOutcome)
         )
@@ -708,7 +718,7 @@ object Account {
               controlled(value <-- newPassword.signal, onInput.mapToValue --> newPassword)
             )
           ),
-          submit("Change password", busy),
+          submit(label = "Change password", busy = busy),
           report(passwordOutcome)
         )
     }

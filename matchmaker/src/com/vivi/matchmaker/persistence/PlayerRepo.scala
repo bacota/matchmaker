@@ -77,14 +77,14 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayer)(id)
             .map(_.map { case (nickname, isAdmin, externalId, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     def readByExternalId(externalId: String): IO[Option[Player]] =
         session
             .option(selectPlayerByExternalId)(externalId)
             .map(_.map { case (id, nickname, isAdmin, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /** As `read`, but holding the player row against concurrent modification until the transaction ends.
@@ -93,7 +93,7 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayerForShare)(id)
             .map(_.map { case (nickname, isAdmin, externalId, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /** As `readByExternalId`, but holding the player row against concurrent modification until the transaction ends.
@@ -102,7 +102,7 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayerByExternalIdForShare)(externalId)
             .map(_.map { case (id, nickname, isAdmin, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /** The player with exactly this nickname, held against concurrent modification until the transaction ends — for
@@ -112,7 +112,7 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayerByNicknameForShare)(nickname)
             .map(_.map { case (id, isAdmin, externalId, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /** As `readByExternalId`, but taking the row's exclusive lock: for a caller whose write is derived from what it
@@ -122,7 +122,7 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayerByExternalIdForUpdate)(externalId)
             .map(_.map { case (id, nickname, isAdmin, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /* Players whose nickname begins with a prefix, for the search box.
@@ -190,7 +190,7 @@ class PlayerRepo(session: Session[IO]) {
         session
             .execute(selectPlayersForMatch)((gameId, matchId))
             .map(_.map { case (id, nickname, isAdmin, externalId, email) =>
-                Player(id, nickname, isAdmin, externalId, email)
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
     /** Writes everything about a player except their address. See `updatePlayer` for why the exception, and

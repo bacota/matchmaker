@@ -84,7 +84,11 @@ class ParticipantRepo(session: Session[IO]) {
         session
             .execute(selectOverdueForMatch)((gameId, matchId))
             .map(_.map { case (id, gt, playerId, pending, completed, due, roleId, characterIdValue) =>
-                toParticipant(id, gameId, (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue))
+                toParticipant(
+                  id = id,
+                  gameId = gameId,
+                  row = (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue)
+                )
             })
 
     private val updateParticipant
@@ -110,14 +114,35 @@ class ParticipantRepo(session: Session[IO]) {
                     s"participant ${id.value} is game_type 'C' but has no character_participant row"
                   )
                 )
-                CharacterParticipant(id, gameId, matchId, playerId, pending, completed, due, CharacterId(cid), roleId)
+                CharacterParticipant(
+                  participantId = id,
+                  gameId = gameId,
+                  matchId = matchId,
+                  playerId = playerId,
+                  isPending = pending,
+                  isCompleted = completed,
+                  due = due,
+                  characterId = CharacterId(cid),
+                  gameRoleId = roleId
+                )
             case GameType.Plain =>
-                PlainParticipant(id, gameId, matchId, playerId, pending, completed, due, roleId)
+                PlainParticipant(
+                  participantId = id,
+                  gameId = gameId,
+                  matchId = matchId,
+                  playerId = playerId,
+                  isPending = pending,
+                  isCompleted = completed,
+                  due = due,
+                  gameRoleId = roleId
+                )
         }
     }
 
     def read(gameId: GameId, id: ParticipantId): IO[Option[Participant]] =
-        session.option(selectParticipant)((gameId, id)).map(_.map(row => toParticipant(id, gameId, row)))
+        session
+            .option(selectParticipant)((gameId, id))
+            .map(_.map(row => toParticipant(id = id, gameId = gameId, row = row)))
 
     def update(p: Participant): IO[Unit] =
         session
@@ -165,9 +190,9 @@ class ParticipantRepo(session: Session[IO]) {
             .map(_.map {
                 case (id, gt, playerId, externalId, pending, completed, due, roleId, roleName, characterIdValue) =>
                     val participant = toParticipant(
-                      id,
-                      gameId,
-                      (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue)
+                      id = id,
+                      gameId = gameId,
+                      row = (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue)
                     )
                     (participant, externalId, roleName)
             })

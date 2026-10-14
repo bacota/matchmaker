@@ -62,7 +62,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .option(selectCharacter)(id)
             .map(_.map { case (gameId, name, description, state, playerId) =>
-                Character(id, gameId, name, description, state, playerId)
+                Character(
+                  characterId = id,
+                  gameId = gameId,
+                  name = name,
+                  description = description,
+                  state = state,
+                  playerId = playerId
+                )
             })
 
     private val selectCharacterForShare: Query[CharacterId, (GameId, String, String, T, Option[PlayerId])] =
@@ -79,7 +86,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .option(selectCharacterForShare)(id)
             .map(_.map { case (gameId, name, description, state, playerId) =>
-                Character(id, gameId, name, description, state, playerId)
+                Character(
+                  characterId = id,
+                  gameId = gameId,
+                  name = name,
+                  description = description,
+                  state = state,
+                  playerId = playerId
+                )
             })
 
     private val selectCharacterNamesForPlayerAndGame: Query[(PlayerId, GameId), (CharacterId, String)] =
@@ -93,7 +107,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     def listNamesForPlayerAndGame(playerId: PlayerId, gameId: GameId): IO[List[CharacterName]] =
         session
             .execute(selectCharacterNamesForPlayerAndGame)((playerId, gameId))
-            .map(_.map((id, name) => CharacterName(id, gameId, name)))
+            .map(_.map((id, name) => CharacterName(characterId = id, gameId = gameId, name = name)))
 
     /* Everything its page shows, in one read. The owner over a LEFT JOIN, since a character may have
      * none -- unlike `readWithOwnerAndGame`, which wants one and finds nothing without. */
@@ -112,10 +126,10 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             .option(selectProfile)((game, id))
             .map(_.map { (name, gameName, description, ownerId, nickname) =>
                 CharacterProfile(
-                  CharacterName(id, game, name),
-                  gameName,
-                  description,
-                  ownerId.zip(nickname).map((owner, nick) => PublicPlayer(PlayerId(owner), nick))
+                  character = CharacterName(characterId = id, gameId = game, name = name),
+                  gameName = gameName,
+                  description = description,
+                  owner = ownerId.zip(nickname).map((owner, nick) => PublicPlayer(PlayerId(owner), nick))
                 )
             })
 
@@ -141,7 +155,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .execute(selectRatedPlacings)((game, id))
             .map(_.foldLeft(MatchRecord()) { case (record, (rank, forfeit, ranks)) =>
-                record + MatchRecord.of(rank, ranks.flattenTo(List), forfeit)
+                record + MatchRecord.of(rank = rank, ranks = ranks.flattenTo(List), forfeit = forfeit)
             })
 
     private val withOwnerAndGameRow: Codec[
@@ -285,21 +299,34 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               gameActive,
               gameExternalId
             ) =>
-            val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
-            val player = Player(charPlayerId, nickname, isAdmin, externalId, email)
-            val game = Game(
-              charGameId,
-              gameType,
-              gameName,
-              gameDisplayName,
-              gameDescription,
-              gameUrl,
-              gameActive,
-              Seq.empty,
-              Seq.empty,
-              gameExternalId
+            val character = Character(
+              characterId = id,
+              gameId = charGameId,
+              name = name,
+              description = description,
+              state = state,
+              playerId = Some(charPlayerId)
             )
-            CharacterWithOwnerAndGame(character, player, game)
+            val player = Player(
+              playerId = charPlayerId,
+              nickname = nickname,
+              isAdmin = isAdmin,
+              externalId = externalId,
+              email = email
+            )
+            val game = Game(
+              gameId = charGameId,
+              gameType = gameType,
+              name = gameName,
+              displayName = gameDisplayName,
+              description = gameDescription,
+              url = gameUrl,
+              isActive = gameActive,
+              roles = Seq.empty,
+              parameters = Seq.empty,
+              externalId = gameExternalId
+            )
+            CharacterWithOwnerAndGame(character = character, owner = player, game = game)
     }
 
     private val withGameRow: Codec[
@@ -359,18 +386,25 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               gameActive,
               gameExternalId
             ) =>
-            val character = Character(id, charGameId, name, description, state, charPlayerId)
+            val character = Character(
+              characterId = id,
+              gameId = charGameId,
+              name = name,
+              description = description,
+              state = state,
+              playerId = charPlayerId
+            )
             val game = Game(
-              charGameId,
-              gameType,
-              gameName,
-              gameDisplayName,
-              gameDescription,
-              gameUrl,
-              gameActive,
-              Seq.empty,
-              Seq.empty,
-              gameExternalId
+              gameId = charGameId,
+              gameType = gameType,
+              name = gameName,
+              displayName = gameDisplayName,
+              description = gameDescription,
+              url = gameUrl,
+              isActive = gameActive,
+              roles = Seq.empty,
+              parameters = Seq.empty,
+              externalId = gameExternalId
             )
             CharacterWithGame(character, game)
     }
@@ -393,7 +427,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .execute(selectCharactersForPlayerAndGame)((playerId, gameId))
             .map(_.map { case (id, name, state, description) =>
-                Character(id, gameId, name, description, state, Some(playerId))
+                Character(
+                  characterId = id,
+                  gameId = gameId,
+                  name = name,
+                  description = description,
+                  state = state,
+                  playerId = Some(playerId)
+                )
             })
 
     def update(character: Character[T]): IO[Unit] =

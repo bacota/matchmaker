@@ -62,7 +62,17 @@ class EntrantRepo(session: Session[IO]) {
             case (GameType.Character, Some(c)) => session.unique(insertCharacter)((game, tournament, rating, c))
             case (GameType.Plain, None)        => session.unique(insertPlayer)((game, tournament, rating, player))
             case _ => IO.raiseError(IllegalArgumentException(s"a ${gt} game's entry with character $character"))
-        }).map(made => Entrant(game, tournament, made.head, Some(player), character, rating, made.tail.head))
+        }).map(made =>
+            Entrant(
+              gameId = game,
+              tournamentId = tournament,
+              entrantId = made.head,
+              playerId = Some(player),
+              characterId = character,
+              ratingAtEntry = rating,
+              enteredAt = made.tail.head
+            )
+        )
 
     // Who plays each entry now, with their nickname, and for a character entry the character and its name.
     private val selectAll: Query[
@@ -89,16 +99,16 @@ class EntrantRepo(session: Session[IO]) {
             .execute(selectAll)((game, tournament))
             .map(_.map { case (id, player, character, rating, at, withdrawn, nickname, characterName) =>
                 Entrant(
-                  game,
-                  tournament,
-                  id,
-                  player.map(PlayerId(_)),
-                  character.map(CharacterId(_)),
-                  rating,
-                  at,
-                  withdrawn,
-                  nickname.getOrElse(""),
-                  characterName
+                  gameId = game,
+                  tournamentId = tournament,
+                  entrantId = id,
+                  playerId = player.map(PlayerId(_)),
+                  characterId = character.map(CharacterId(_)),
+                  ratingAtEntry = rating,
+                  enteredAt = at,
+                  withdrawnAt = withdrawn,
+                  nickname = nickname.getOrElse(""),
+                  characterName = characterName
                 )
             })
 

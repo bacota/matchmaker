@@ -12,8 +12,14 @@ import com.vivi.matchmaker.notify.{MailMessage => Queued}
   */
 class ProtocolSpec extends FunSuite {
 
-    private val fields = MailMessage("matchmaker@example.com", "alice@example.com", "subject", "body")
-    private val queued = Queued("matchmaker@example.com", "alice@example.com", "subject", "body")
+    private val fields = MailMessage(
+      sender = "matchmaker@example.com",
+      recipient = "alice@example.com",
+      subject = "subject",
+      body = "body"
+    )
+    private val queued =
+        Queued(sender = "matchmaker@example.com", recipient = "alice@example.com", subject = "subject", body = "body")
 
     test("a mail matchmaker enqueues is read by the mailer with every field intact") {
         val read = upickle.default.read[MailMessage](upickle.default.write(queued))

@@ -59,7 +59,7 @@ class TurnRepo(session: Session[IO]) {
         session
             .execute(selectForMatch)((gameId, matchId))
             .map(_.map { case (id, takenAt, startedAt) =>
-                Turn(gameId, matchId, id, takenAt, startedAt)
+                Turn(gameId = gameId, matchId = matchId, participantId = id, takenAt = takenAt, startedAt = startedAt)
             })
 
     /* Summed in the database rather than by folding the rows in Scala: what is wanted is one

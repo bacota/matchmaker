@@ -12,5 +12,5 @@ class Handler extends LambdaHandler {
 object Handler {
 
     /** Built on first use and kept for the life of the container. */
-    lazy val routes: Routes = Config.routes(k => Option(System.getenv(k)))
+    lazy val routes: Routes = Config.routes(env = k => Option(System.getenv(k)))
 }

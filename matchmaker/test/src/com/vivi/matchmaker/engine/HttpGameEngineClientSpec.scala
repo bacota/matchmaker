@@ -25,7 +25,11 @@ class HttpGameEngineClientSpec extends FunSuite {
 
     test("a call to a deployed engine with no key is refused before it is sent") {
         val outcome = client
-            .createGame("https://abc123.execute-api.us-east-1.amazonaws.com/games", None, request)
+            .createGame(
+              gameUrl = "https://abc123.execute-api.us-east-1.amazonaws.com/games",
+              apiKey = None,
+              request = request
+            )
             .attempt
             .unsafeRunSync()
 
@@ -40,7 +44,10 @@ class HttpGameEngineClientSpec extends FunSuite {
     test("a call to an engine that is not on AWS is made without a key, because a local stub needs none") {
         // Nothing is listening on this port; reaching a connection failure is what shows the request
         // was attempted rather than refused for want of a key.
-        val outcome = client.createGame("http://localhost:1/games", None, request).attempt.unsafeRunSync()
+        val outcome = client
+            .createGame(gameUrl = "http://localhost:1/games", apiKey = None, request = request)
+            .attempt
+            .unsafeRunSync()
 
         val error = outcome.swap.getOrElse(fail("the call unexpectedly succeeded"))
         assert(!error.getMessage.contains("no API key"))
@@ -49,7 +56,7 @@ class HttpGameEngineClientSpec extends FunSuite {
 
     test("the key is never in the message of a failure") {
         val outcome = client
-            .createGame("http://localhost:1/games", Some("s3cret"), request)
+            .createGame(gameUrl = "http://localhost:1/games", apiKey = Some("s3cret"), request = request)
             .attempt
             .unsafeRunSync()
 

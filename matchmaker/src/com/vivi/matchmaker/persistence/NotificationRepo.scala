@@ -501,7 +501,7 @@ class NotificationRepo(session: Session[IO]) {
             .execute(selectLevelsForTournament)((gameId, tournament, gameId, tournament))
             .map(_.map { case (id, nickname, isAdmin, externalId, email, perGame, overall) =>
                 EntrantNotifications(
-                  Player(id, nickname, isAdmin, externalId, email),
+                  Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email),
                   NotificationLevels(playerGame = perGame, player = overall)
                 )
             })
@@ -553,6 +553,16 @@ class NotificationRepo(session: Session[IO]) {
         session
             .execute(selectSeatPreferences)((gameId, matchId))
             .map(_.map { case (participant, id, nickname, isAdmin, externalId, email, seat) =>
-                Seat(participant, Player(id, nickname, isAdmin, externalId, email), seat)
+                Seat(
+                  participantId = participant,
+                  player = Player(
+                    playerId = id,
+                    nickname = nickname,
+                    isAdmin = isAdmin,
+                    externalId = externalId,
+                    email = email
+                  ),
+                  preferences = seat
+                )
             })
 }

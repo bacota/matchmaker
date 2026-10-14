@@ -43,7 +43,7 @@ class StageRepo(session: Session[IO]) {
                     val byId = rows.map(r => r.id -> r).toMap
                     def chain(from: Long, depth: Int): TournamentDesign =
                         if (depth > 8) throw new IllegalStateException(s"tournament $tournament nests inside itself")
-                        else StageRows.chain(byId, from, inner => chain(inner, depth + 1))
+                        else StageRows.chain(rows = byId, first = from, inner = inner => chain(inner, depth + 1))
                     Some(chain(first, 0))
                 }
         }
@@ -59,7 +59,7 @@ class StageRepo(session: Session[IO]) {
                     val byId = rows.map(r => r.id -> r).toMap
                     def chain(from: Long, depth: Int): TournamentDesign =
                         if (depth > 8) throw new IllegalStateException(s"tournament $tournament nests inside itself")
-                        else StageRows.chain(byId, from, inner => chain(inner, depth + 1))
+                        else StageRows.chain(rows = byId, first = from, inner = inner => chain(inner, depth + 1))
                     // The ids along a chain, the same way the chain is followed.
                     def ids(from: Long, prefix: List[Int]): Map[List[Int], Long] = {
                         val along = Iterator
@@ -97,7 +97,9 @@ class StageRepo(session: Session[IO]) {
       * tournament from a model does with the model's design.
       */
     def copy(game: GameId, tournament: TournamentId, design: TournamentDesign): IO[Unit] =
-        write(game, tournament, design).flatMap(first => session.execute(setFirst)((first, game, tournament)).void)
+        write(game = game, tournament = tournament, design = design).flatMap(first =>
+            session.execute(setFirst)((first, game, tournament)).void
+        )
 
     /* A chain written last first, so that each stage names the one after it as it is written. A nesting stage's
      * inner chain is written before it, so that it can name the inner chain's first stage. */
@@ -107,7 +109,7 @@ class StageRepo(session: Session[IO]) {
                 stage.design match {
                     case Some(inner) =>
                         for {
-                            innerFirst <- write(game, tournament, inner)
+                            innerFirst <- write(game = game, tournament = tournament, design = inner)
                             id <- session.unique(insertStage)((game, tournament, (stage, next)))
                             _ <- session.execute(insertNesting)((game, tournament, id, innerFirst))
                         } yield Some(id)

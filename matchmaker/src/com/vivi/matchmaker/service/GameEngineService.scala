@@ -114,14 +114,21 @@ class GameEngineService[T](
               ),
               canTie = Option.when(!tiesAllowed)(false)
             )
-            response <- engine.createGame(game.url, apiKey, request).onError(_ => undo)
+            response <- engine.createGame(gameUrl = game.url, apiKey = apiKey, request = request).onError(_ => undo)
             withUrls = saved.copy(
               statusUrl = Some(response.statusUrl),
               playUrl = Some(response.playUrl),
               publicUrl = response.publicUrl
             )
-            started <- retrying(finish(session, withUrls, response.cancelUrl).as(withUrls))
-            _ <- applyEngineStatus(session, saved.gameId, saved.matchId, response.statusUrl).attempt
+            started <- retrying(io =
+                finish(session = session, withUrls = withUrls, cancelUrl = response.cancelUrl).as(withUrls)
+            )
+            _ <- applyEngineStatus(
+              session = session,
+              gameId = saved.gameId,
+              matchId = saved.matchId,
+              statusUrl = response.statusUrl
+            ).attempt
             // Nobody pressed anything: everyone in the match hears that it has begun.
             _ <- notifications.matchStarted(session, started)
         } yield started
@@ -152,7 +159,7 @@ class GameEngineService[T](
     private[service] def enforceNow(gameId: GameId, matchId: MatchId): IO[Unit] =
         sessionPool.use { session =>
             new MatchRepo(session).read(gameId, matchId).flatMap {
-                case Some(m) => enforceTimeouts(session, gameId, matchId, m).void
+                case Some(m) => enforceTimeouts(session = session, gameId = gameId, matchId = matchId, current = m).void
                 case None    => IO.unit
             }
         }
@@ -177,10 +184,10 @@ class GameEngineService[T](
         // The key on the session already held, rather than one borrowed for the purpose.
         (turnRepo.latestTakenAt(gameId, matchId), new GameApiKeyRepo(session).forGame(gameId)).tupled
             .flatMap { (_, apiKey) =>
-                engine.status(statusUrl, apiKey, None).flatMap { status =>
+                engine.status(statusUrl = statusUrl, apiKey = apiKey, since = None).flatMap { status =>
                     session.transaction.use { _ =>
                         for {
-                            current <- requireMatchForUpdate(matchRepo, gameId, matchId)
+                            current <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                             // Re-read under the lock, and checked here rather than only by the callers:
                             // their check was made before the status call, and a cancel committing while
                             // the engine was answering must not be undone by the answer. Writing what the
@@ -195,9 +202,10 @@ class GameEngineService[T](
                                         // Before the deadlines below, which for a total limit are computed from what each seat
                                         // has spent — and what they have spent is these rows.
                                         _ <- recordTurns(
-                                          session,
-                                          current,
-                                          status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
+                                          session = session,
+                                          m = current,
+                                          turns =
+                                              status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
                                           since = None
                                         )
                                         used <- timeUsedIn(session, current)
@@ -227,20 +235,22 @@ class GameEngineService[T](
                                         liveEnded = current.isLive && status.isCompleted && current.completedAt.isEmpty
                                         _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
                                             participantRepo
-                                                .update(withTurn(p, pending = false, due = None, completed = true))
+                                                .update(withTurn(p = p, pending = false, due = None, completed = true))
                                         }
                                         _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
-                                            matchRepo.advanceMoveSequence(gameId, matchId, seq)
+                                            matchRepo
+                                                .advanceMoveSequence(gameId = gameId, matchId = matchId, sequence = seq)
                                         }
                                         _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
                                             byId.get(ParticipantId(reported.participantId)) match {
                                                 case Some(p) =>
                                                     participantRepo.update(
                                                       withTurn(
-                                                        p,
-                                                        reported.isPending,
-                                                        dueFor(current, used)(p.participantId, reported.prevMoveAt),
-                                                        reported.isCompleted
+                                                        p = p,
+                                                        pending = reported.isPending,
+                                                        due =
+                                                            dueFor(current, used)(p.participantId, reported.prevMoveAt),
+                                                        completed = reported.isCompleted
                                                       )
                                                     )
                                                 // The engine reporting a seat matchmaker does not have is the engine's
@@ -277,7 +287,10 @@ class GameEngineService[T](
                  * round again. `recordResults` sends the same notification on the ordinary path, and the
                  * two cannot both fire: whichever of them completes the match leaves the other looking at
                  * a match that was already over. */
-                val told = if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Finished) else IO.unit
+                val told =
+                    if (endedHere)
+                        notifications.matchEnded(session = session, played = updated, ending = MatchEnding.Finished)
+                    else IO.unit
                 // And its archive is owed: the engine is not told the match is over, it told matchmaker.
                 told *> IO.whenA(endedHere)(endings.ended(gameId, matchId)).as(updated)
             }
@@ -311,7 +324,13 @@ class GameEngineService[T](
                     val startedAt = reported.startedAt.getOrElse(prev)
                     turnRepo
                         .create(
-                          Turn(m.gameId, m.matchId, ParticipantId(reported.participantId), reported.takenAt, startedAt)
+                          Turn(
+                            gameId = m.gameId,
+                            matchId = m.matchId,
+                            participantId = ParticipantId(reported.participantId),
+                            takenAt = reported.takenAt,
+                            startedAt = startedAt
+                          )
                         )
                         .as(reported.takenAt)
                 }
@@ -339,7 +358,7 @@ class GameEngineService[T](
     private def retrying[A](io: IO[A], attempts: Int = 3, delay: FiniteDuration = 100.millis): IO[A] =
         io.handleErrorWith { error =>
             if (attempts <= 1) IO.raiseError(error)
-            else IO.sleep(delay) *> retrying(io, attempts - 1, delay * 2)
+            else IO.sleep(delay) *> retrying(io = io, attempts = attempts - 1, delay = delay * 2)
         }
 
     /** Step 2: a player has moved. `moved` is the participant who moved and is no longer pending; `next` are the
@@ -384,8 +403,8 @@ class GameEngineService[T](
                     for {
                         // Reads the game unlocked; see `requireGame` for why a catalogue row is
                         // not locked on the way to writing `match` and `participant`.
-                        _ <- authorizeGame(gameRepo, gameId, callerExternalId)
-                        existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
+                        _ <- authorizeGame(gameRepo = gameRepo, gameId = gameId, callerExternalId = callerExternalId)
+                        existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                         _ <- IO.raiseWhen(existing.isCompleted)(
                           ValidationError(s"match ${matchId.value} is already completed")
                         )
@@ -395,10 +414,23 @@ class GameEngineService[T](
                         _ <- IO.raiseWhen(existing.isCancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
                         )
-                        mover <- requireParticipant(participantRepo, gameId, matchId, moved)
+                        mover <- requireParticipant(
+                          repo = participantRepo,
+                          gameId = gameId,
+                          matchId = matchId,
+                          participantId = moved
+                        )
                         // The move itself, recorded as a turn: when it was made and when the mover's clock
                         // started for it, both as the engine reported them.
-                        _ <- turnRepo.create(Turn(gameId, matchId, moved, takenAt, startedAt))
+                        _ <- turnRepo.create(
+                          Turn(
+                            gameId = gameId,
+                            matchId = matchId,
+                            participantId = moved,
+                            takenAt = takenAt,
+                            startedAt = startedAt
+                          )
+                        )
                         // After the turn above is recorded, since under a total limit the next player's
                         // deadline is what is left of their budget — and the mover's turn has just spent some
                         // of theirs.
@@ -420,23 +452,32 @@ class GameEngineService[T](
                                         val clock = since.get(p.participantId)
                                         participantRepo.update(
                                           withTurn(
-                                            p,
+                                            p = p,
                                             pending = clock.isDefined,
                                             due = clock.flatMap(at => dueFor(existing, used)(p.participantId, Some(at)))
                                           )
                                         )
                                     }
-                                    _ <- matchRepo.advanceMoveSequence(gameId, matchId, st.sequence)
+                                    _ <- matchRepo.advanceMoveSequence(
+                                      gameId = gameId,
+                                      matchId = matchId,
+                                      sequence = st.sequence
+                                    )
                                 } yield ()
                             case (None, true) =>
                                 for {
-                                    _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
+                                    _ <- participantRepo.update(withTurn(p = mover, pending = false, due = None))
                                     _ <- next.traverse { id =>
-                                        requireParticipant(participantRepo, gameId, matchId, id)
+                                        requireParticipant(
+                                          repo = participantRepo,
+                                          gameId = gameId,
+                                          matchId = matchId,
+                                          participantId = id
+                                        )
                                             .flatMap(p =>
                                                 participantRepo.update(
                                                   withTurn(
-                                                    p,
+                                                    p = p,
                                                     pending = true,
                                                     due = dueFor(existing, used)(id, Some(takenAt))
                                                   )
@@ -455,7 +496,7 @@ class GameEngineService[T](
                      *
                      * Not for a move that arrived after a later one: the later one's mail has already said
                      * whose turn it is, and this one would say it again, wrongly. */
-                    if (current) notifications.turnTaken(session, played, moved) else IO.unit
+                    if (current) notifications.turnTaken(session = session, played = played, moved = moved) else IO.unit
                 }
         }
 
@@ -492,8 +533,8 @@ class GameEngineService[T](
                     for {
                         // Reads the game unlocked; see `requireGame` for why a catalogue row is
                         // not locked on the way to writing `match` and `participant`.
-                        _ <- authorizeGame(gameRepo, gameId, callerExternalId)
-                        existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
+                        _ <- authorizeGame(gameRepo = gameRepo, gameId = gameId, callerExternalId = callerExternalId)
+                        existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                         _ <- IO.raiseWhen(existing.isCancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled and can have no result")
                         )
@@ -507,7 +548,7 @@ class GameEngineService[T](
                                     s"turn(s) by participant(s) ${strangers.mkString(", ")}, who are not in match ${matchId.value}"
                                   )
                                 )
-                                _ <- recordTurns(session, existing, reported, since = None)
+                                _ <- recordTurns(session = session, m = existing, turns = reported, since = None)
                             } yield ()
                         }
                         /* Whether the results are already recorded, which is what makes a repeated
@@ -537,7 +578,7 @@ class GameEngineService[T](
                                     _ <- IO.unlessA(existing.isCompleted)(
                                       participants.traverse_((participant, _, _) =>
                                           participantRepo.update(
-                                            withTurn(participant, pending = false, due = None, completed = true)
+                                            withTurn(p = participant, pending = false, due = None, completed = true)
                                           )
                                       )
                                     )
@@ -549,24 +590,24 @@ class GameEngineService[T](
                                         if (existing.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
                                         else
                                             EloRatingService.rate(
-                                              session,
-                                              gameId,
-                                              matchId,
-                                              results.map(r => r.participantId -> r.rank).toMap,
+                                              session = session,
+                                              gameId = gameId,
+                                              matchId = matchId,
+                                              ranks = results.map(r => r.participantId -> r.rank).toMap,
                                               // An engine's own forfeit: a live match it ended on a clock.
                                               forfeit = results.exists(_.isForfeit)
                                             )
                                     _ <- results.traverse(r =>
                                         resultRepo.create(
                                           Result(
-                                            gameId,
-                                            r.participantId,
-                                            r.rank,
-                                            r.scores,
-                                            r.isWinner,
-                                            r.isForfeit,
-                                            deltas.overall.get(r.participantId),
-                                            deltas.inRole.get(r.participantId)
+                                            gameId = gameId,
+                                            participantId = r.participantId,
+                                            rank = r.rank,
+                                            scores = r.scores,
+                                            isWinner = r.isWinner,
+                                            isForfeit = r.isForfeit,
+                                            eloDelta = deltas.overall.get(r.participantId),
+                                            eloRoleDelta = deltas.inRole.get(r.participantId)
                                           )
                                         )
                                     )
@@ -589,7 +630,9 @@ class GameEngineService[T](
                     // Everyone in it, because nobody in it did this: the engine finished the game -- or,
                     // in a live match, ended it on a clock, which is told as a forfeit is.
                     val ending = if (results.exists(_.isForfeit)) MatchEnding.Forfeited else MatchEnding.Finished
-                    reconciled *> (if (ended) notifications.matchEnded(session, played, ending) else IO.unit) *>
+                    reconciled *> (if (ended)
+                                       notifications.matchEnded(session = session, played = played, ending = ending)
+                                   else IO.unit) *>
                         /* Every time, and not only when this call ended the match: settling is idempotent, so
                          * a repeated callback saying it again costs nothing, and is the one way a match whose
                          * ending failed to be queued gets another chance at its archive. */
@@ -622,17 +665,21 @@ class GameEngineService[T](
             .fold(IO.unit) { url =>
                 new GameApiKeyRepo(session)
                     .forGame(played.gameId)
-                    .flatMap(apiKey => engine.status(url, apiKey, None))
+                    .flatMap(apiKey => engine.status(statusUrl = url, apiKey = apiKey, since = None))
                     .flatMap { status =>
                         session.transaction.use { _ =>
                             for {
-                                locked <- requireMatchForUpdate(new MatchRepo(session), played.gameId, played.matchId)
+                                locked <- requireMatchForUpdate(
+                                  repo = new MatchRepo(session),
+                                  gameId = played.gameId,
+                                  matchId = played.matchId
+                                )
                                 seats <- new ParticipantRepo(session).listForMatch(played.gameId, played.matchId)
                                 known = seats.map(_._1.participantId.value).toSet
                                 _ <- recordTurns(
-                                  session,
-                                  locked,
-                                  status.turns.filter(t => known(t.participantId)),
+                                  session = session,
+                                  m = locked,
+                                  turns = status.turns.filter(t => known(t.participantId)),
                                   since = None
                                 )
                             } yield ()
@@ -662,7 +709,7 @@ class GameEngineService[T](
                 prepared <- session.transaction.use { _ =>
                     for {
                         player <- requireCaller(playerRepo, callerExternalId)
-                        existing <- requireBegunMatch(matchRepo, gameId, matchId)
+                        existing <- requireBegunMatch(repo = matchRepo, gameId = gameId, matchId = matchId)
                         participants <- participantRepo.listForMatch(gameId, matchId)
                         _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                           UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -682,7 +729,7 @@ class GameEngineService[T](
                     else
                         // The engine's answer first, then the clock: a turn that looks overdue in
                         // matchmaker's copy may have been taken since, and the status call is what says so.
-                        applyEngineStatus(session, gameId, matchId, statusUrl)
+                        applyEngineStatus(session = session, gameId = gameId, matchId = matchId, statusUrl = statusUrl)
                             .flatMap(enforceTimeouts(session, gameId, matchId, _, recheck = false))
             } yield result
         }
@@ -697,7 +744,7 @@ class GameEngineService[T](
                 val participantRepo = new ParticipantRepo(session)
                 for {
                     player <- requireCaller(playerRepo, callerExternalId)
-                    existing <- requireBegunMatch(matchRepo, gameId, matchId)
+                    existing <- requireBegunMatch(repo = matchRepo, gameId = gameId, matchId = matchId)
                     participants <- participantRepo.listForMatch(gameId, matchId)
                     _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                       UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -707,7 +754,7 @@ class GameEngineService[T](
                     // player must not be handed a board to play on in a match that has already been
                     // forfeited, and the player whose clock ran out must not be able to outrun it by
                     // clicking Play.
-                    result <- enforceTimeouts(session, gameId, matchId, existing)
+                    result <- enforceTimeouts(session = session, gameId = gameId, matchId = matchId, current = existing)
                 } yield result
             }
             // This is also how a player reaches a finished match's board -- "Review game" -- so an
@@ -743,7 +790,7 @@ class GameEngineService[T](
     ): IO[Match] =
         if (current.isCompleted || current.isCancelled || current.timeLimit.isEmpty || current.isLive) IO.pure(current)
         else
-            overdueIn(session, gameId, matchId).flatMap {
+            overdueIn(session = session, gameId = gameId, matchId = matchId).flatMap {
                 case Nil => IO.pure(current)
                 case _   =>
                     // `None` means the deadline could not be confirmed with the engine, which is not the
@@ -754,7 +801,12 @@ class GameEngineService[T](
                         else
                             current.statusUrl match {
                                 case Some(url) =>
-                                    applyEngineStatus(session, gameId, matchId, url).attempt.map(_.toOption)
+                                    applyEngineStatus(
+                                      session = session,
+                                      gameId = gameId,
+                                      matchId = matchId,
+                                      statusUrl = url
+                                    ).attempt.map(_.toOption)
                                 // Never created in the engine, so there is nothing to ask and no way to know
                                 // whether the turn was taken.
                                 case None => IO.pure(None)
@@ -765,7 +817,7 @@ class GameEngineService[T](
                         case Some(checked) =>
                             if (checked.isCompleted || checked.isCancelled) IO.pure(checked)
                             else
-                                overdueIn(session, gameId, matchId).flatMap {
+                                overdueIn(session = session, gameId = gameId, matchId = matchId).flatMap {
                                     // Taken since: the status call moved the turn on, and there is nobody left to
                                     // act against.
                                     case Nil => IO.pure(checked)
@@ -775,7 +827,8 @@ class GameEngineService[T](
                                         // admin changing it while a clock runs out is not a race.
                                         requireGame(new GameRepo[T](session), gameId).flatMap { game =>
                                             game.timeoutAction match {
-                                                case TimeoutAction.Forfeit => forfeit(session, gameId, matchId)
+                                                case TimeoutAction.Forfeit =>
+                                                    forfeit(session = session, gameId = gameId, matchId = matchId)
                                             }
                                         }
                                 }
@@ -816,9 +869,11 @@ class GameEngineService[T](
         session.transaction
             .use { _ =>
                 for {
-                    locked <- requireMatchForUpdate(matchRepo, gameId, matchId)
+                    locked <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                     // Read under the lock, so it reflects every move that committed before it was taken.
-                    overdue <- overdueIn(session, gameId, matchId).map(_.map(_.participantId).toSet)
+                    overdue <- overdueIn(session = session, gameId = gameId, matchId = matchId).map(
+                      _.map(_.participantId).toSet
+                    )
                     // Paired with whether this call is what ended the match, which is not the same
                     // question as whether it is over: finding nobody overdue under the lock is an
                     // ordinary outcome (the move landed first), and a match that was already finished
@@ -829,7 +884,9 @@ class GameEngineService[T](
                             for {
                                 participants <- participantRepo.listForMatch(gameId, matchId)
                                 _ <- participants.traverse((p, _, _) =>
-                                    participantRepo.update(withTurn(p, pending = false, due = None, completed = true))
+                                    participantRepo.update(
+                                      withTurn(p = p, pending = false, due = None, completed = true)
+                                    )
                                 )
                                 ranks = participants
                                     .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
@@ -839,7 +896,14 @@ class GameEngineService[T](
                                 // before the results that carry what it did to each rating.
                                 deltas <-
                                     if (locked.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
-                                    else EloRatingService.rate(session, gameId, matchId, ranks, forfeit = true)
+                                    else
+                                        EloRatingService.rate(
+                                          session = session,
+                                          gameId = gameId,
+                                          matchId = matchId,
+                                          ranks = ranks,
+                                          forfeit = true
+                                        )
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
                                     resultRepo.create(
@@ -864,7 +928,9 @@ class GameEngineService[T](
                  * who most needs telling, and unlike every other event here nobody pressed anything to
                  * cause it. After the commit and unable to fail the enforcement, as ever. */
                 val told =
-                    if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Forfeited) else IO.unit
+                    if (endedHere)
+                        notifications.matchEnded(session = session, played = updated, ending = MatchEnding.Forfeited)
+                    else IO.unit
                 told *> IO.whenA(endedHere)(endings.ended(gameId, matchId)).as(updated)
             }
     }
@@ -949,7 +1015,7 @@ class GameEngineService[T](
      * scheduled or with its seats still choosing roles, and is answered as no match at all -- there is
      * no board to send anyone to, and no listing names it. */
     private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
-        requireMatch(repo, gameId, matchId).flatMap { m =>
+        requireMatch(repo = repo, gameId = gameId, matchId = matchId).flatMap { m =>
             if (m.status.hasBegun) IO.pure(m)
             else IO.raiseError(NotFoundError(s"match '${matchId.value}' in game ${gameId.value} has not begun"))
         }

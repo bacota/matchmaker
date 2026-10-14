@@ -18,10 +18,15 @@ class RoutesContractSpec extends RoutesContract {
         now: () => Instant
     ): EngineRequest => EngineResponse =
         Routes(
-          Engine(InMemoryMatchStore[StrategoMatch](), matchmaker, "http://engine.test", now),
-          playAuth,
-          matchmakerKey,
-          live
+          engine = Engine(
+            store = InMemoryMatchStore[StrategoMatch](),
+            matchmaker = matchmaker,
+            baseUrl = "http://engine.test",
+            now = now
+          ),
+          playAuth = playAuth,
+          matchmakerKey = matchmakerKey,
+          live = live
         )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =
@@ -33,8 +38,20 @@ class RoutesContractSpec extends RoutesContract {
           settings = "{}",
           timeLimitSeconds = None,
           players = List(
-            Protocol.EnginePlayer("sub-alice", 1L, Some("Red"), None, None),
-            Protocol.EnginePlayer("sub-bob", 2L, Some("Blue"), None, None)
+            Protocol.EnginePlayer(
+              cognitoId = "sub-alice",
+              participantId = 1L,
+              role = Some("Red"),
+              characterId = None,
+              characterState = None
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = "sub-bob",
+              participantId = 2L,
+              role = Some("Blue"),
+              characterId = None,
+              characterState = None
+            )
           ),
           moveCallbackUrl = None,
           resultsCallbackUrl = None

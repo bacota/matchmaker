@@ -54,18 +54,18 @@ class ArchiveRepo(session: Session[IO]) {
           archiveFriendly
         ) = r
         ArchiveRow(
-          GameId(game),
-          MatchId(id),
-          gameName,
-          completedAt,
-          cancelled,
-          friendly,
-          key,
-          sha256,
-          requestedAt,
-          archivedAt,
-          expiredAt,
-          archiveFriendly
+          gameId = GameId(game),
+          matchId = MatchId(id),
+          gameName = gameName,
+          completedAt = completedAt,
+          isCancelled = cancelled,
+          isFriendly = friendly,
+          key = key,
+          sha256 = sha256,
+          requestedAt = requestedAt,
+          archivedAt = archivedAt,
+          expiredAt = expiredAt,
+          isInFriendlyBucket = archiveFriendly
         )
     }
 
@@ -173,7 +173,16 @@ class ArchiveRepo(session: Session[IO]) {
             .option(selectEnding)((game, id))
             .map(
               _.map((completedAt, cancelled, archivedAt, statusUrl, cancelUrl, released) =>
-                  EndingRow(game, id, completedAt, cancelled, archivedAt, statusUrl, cancelUrl, released)
+                  EndingRow(
+                    gameId = game,
+                    matchId = id,
+                    completedAt = completedAt,
+                    isCancelled = cancelled,
+                    archivedAt = archivedAt,
+                    statusUrl = statusUrl,
+                    cancelUrl = cancelUrl,
+                    isReleased = released
+                  )
               )
             )
 

@@ -34,7 +34,7 @@ object Router {
                     // `route` is called inside the IO rather than before it: it forces the by-name
                     // `services`, and a pool that fails to open would otherwise throw while this IO is
                     // being built — outside the `handleError` below, and so unlogged.
-                    IO(route(services, request, caller)).flatten
+                    IO(route(services = services, request = request, caller = caller)).flatten
             }
             .handleError(Errors.toResponse(_, where))
     }
@@ -55,7 +55,7 @@ object Router {
 
             case ("POST", "register" :: Nil) =>
                 body[Json.RegisterRequest](request).flatMap(r =>
-                    created(services.registration.register(r.nickname, caller, r.email))
+                    created(services.registration.register(nickname = r.nickname, externalId = caller, email = r.email))
                 )
 
             case ("GET", "me" :: Nil) =>
@@ -102,7 +102,12 @@ object Router {
             case ("PUT", "me" :: "notifications" :: Nil) =>
                 body[Json.PreferencesRequest](request).flatMap(r =>
                     noContent(
-                      services.notifications.updateMine(caller, r.preferences, r.isAppliedToGames, r.isAppliedToMatches)
+                      services.notifications.updateMine(
+                        callerExternalId = caller,
+                        preferences = r.preferences,
+                        applyToGames = r.isAppliedToGames,
+                        applyToMatches = r.isAppliedToMatches
+                      )
                     )
                 )
 
@@ -122,7 +127,12 @@ object Router {
                             )
                         else
                             noContent(
-                              services.notifications.updateForGame(caller, id, r.preferences, r.isAppliedToMatches)
+                              services.notifications.updateForGame(
+                                callerExternalId = caller,
+                                gameId = id,
+                                preferences = r.preferences,
+                                applyToMatches = r.isAppliedToMatches
+                              )
                             )
                     }
                 }
@@ -159,7 +169,9 @@ object Router {
 
             case ("GET", "players" :: playerId :: "matches" :: "completed" :: Nil) =>
                 withPlayerId(playerId)(id =>
-                    withCompletedQuery(request)(query => ok(services.matches.publicCompleted(caller, id, query)))
+                    withCompletedQuery(request)(query =>
+                        ok(services.matches.publicCompleted(callerExternalId = caller, playerId = id, query = query))
+                    )
                 )
 
             case ("GET", "games" :: Nil) =>
@@ -169,7 +181,7 @@ object Router {
                 // The engine's API key travels in the same object as the game, and is read apart from
                 // it so that the game itself never holds one.
                 (body[Game](request), body[Json.GameApiKeyField](request)).tupled.flatMap((game, key) =>
-                    ok(services.games.createOrUpdate(caller, game, key.apiKey))
+                    ok(services.games.createOrUpdate(externalUserId = caller, game = game, apiKey = key.apiKey))
                 )
 
             /* A game's admins: anybody registered may see who they are, and who made them; an
@@ -181,12 +193,16 @@ object Router {
 
             case ("PUT", "games" :: gameId :: "admins" :: playerId :: Nil) =>
                 withGameId(gameId)(gid =>
-                    withPlayerId(playerId)(pid => noContent(services.gameAdmins.grant(gid, pid, caller)))
+                    withPlayerId(playerId)(pid =>
+                        noContent(services.gameAdmins.grant(gameId = gid, playerId = pid, callerExternalId = caller))
+                    )
                 )
 
             case ("DELETE", "games" :: gameId :: "admins" :: playerId :: Nil) =>
                 withGameId(gameId)(gid =>
-                    withPlayerId(playerId)(pid => noContent(services.gameAdmins.revoke(gid, pid, caller)))
+                    withPlayerId(playerId)(pid =>
+                        noContent(services.gameAdmins.revoke(gameId = gid, playerId = pid, callerExternalId = caller))
+                    )
                 )
 
             /* Players' Elo ratings in a game: anybody registered may see its leaderboard, a page
@@ -198,12 +214,32 @@ object Router {
                     withRoleQuery(request)(role =>
                         // `?prefix=` finds the game's rated players by the start of a nickname instead.
                         (request.query.get("prefix"), request.query.get("page")) match {
-                            case (Some(prefix), _) => ok(services.ratings.findInRankings(id, prefix, caller, role))
-                            case (None, None)      => ok(services.ratings.leaderboard(id, 0, caller, role))
+                            case (Some(prefix), _) =>
+                                ok(
+                                  services.ratings.findInRankings(
+                                    gameId = id,
+                                    prefix = prefix,
+                                    callerExternalId = caller,
+                                    role = role
+                                  )
+                                )
+                            case (None, None) =>
+                                ok(
+                                  services.ratings
+                                      .leaderboard(gameId = id, page = 0, callerExternalId = caller, role = role)
+                                )
                             case (None, Some(raw)) =>
                                 raw.toIntOption.filter(_ >= 0) match {
-                                    case Some(page) => ok(services.ratings.leaderboard(id, page, caller, role))
-                                    case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
+                                    case Some(page) =>
+                                        ok(
+                                          services.ratings.leaderboard(
+                                            gameId = id,
+                                            page = page,
+                                            callerExternalId = caller,
+                                            role = role
+                                          )
+                                        )
+                                    case None => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
                                 }
                         }
                     )
@@ -212,7 +248,12 @@ object Router {
             case ("GET", "games" :: gameId :: "ratings" :: playerId :: Nil) =>
                 withGameId(gameId)(gid =>
                     withPlayerId(playerId)(pid =>
-                        withRoleQuery(request)(role => ok(services.ratings.standing(gid, pid, caller, role)))
+                        withRoleQuery(request)(role =>
+                            ok(
+                              services.ratings
+                                  .standing(gameId = gid, playerId = pid, callerExternalId = caller, role = role)
+                            )
+                        )
                     )
                 )
 
@@ -220,7 +261,10 @@ object Router {
                 withGameId(gameId)(gid =>
                     withPlayerId(playerId)(pid =>
                         body[Json.RatingRequest](request).flatMap(r =>
-                            ok(services.ratings.set(gid, pid, r.rating, caller))
+                            ok(
+                              services.ratings
+                                  .set(gameId = gid, playerId = pid, rating = r.rating, callerExternalId = caller)
+                            )
                         )
                     )
                 )
@@ -235,7 +279,9 @@ object Router {
             case ("POST", "games" :: gameId :: "challenges" :: Nil) =>
                 withGameId(gameId)(id =>
                     body[ChallengeRequest](request).flatMap(r =>
-                        created(services.tournaments.createChallenge(id, r, caller))
+                        created(
+                          services.tournaments.createChallenge(gameId = id, request = r, callerExternalId = caller)
+                        )
                     )
                 )
 
@@ -246,26 +292,39 @@ object Router {
             // challenger needs in order to invite one of them.
             case ("GET", "games" :: gameId :: "players" :: playerId :: "characters" :: Nil) =>
                 withGameId(gameId) { gid =>
-                    withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
+                    withPlayerId(playerId)(player =>
+                        ok(services.characters.namesFor(gameId = gid, playerId = player, callerExternalId = caller))
+                    )
                 }
 
             // A character's page: the character as anybody may see it, and its public matches -- the
             // same two lists as a player's page, and the same rule for which matches are on them.
             case ("GET", "games" :: gameId :: "characters" :: characterId :: Nil) =>
                 withGameId(gameId)(gid =>
-                    withCharacterId(characterId)(id => ok(services.characters.profile(gid, id, caller)))
+                    withCharacterId(characterId)(id =>
+                        ok(services.characters.profile(gameId = gid, characterId = id, callerExternalId = caller))
+                    )
                 )
 
             case ("GET", "games" :: gameId :: "characters" :: characterId :: "matches" :: Nil) =>
                 withGameId(gameId) { gid =>
-                    withCharacterId(characterId)(id => ok(services.matches.characterActive(caller, gid, id)))
+                    withCharacterId(characterId)(id =>
+                        ok(services.matches.characterActive(callerExternalId = caller, gameId = gid, characterId = id))
+                    )
                 }
 
             case ("GET", "games" :: gameId :: "characters" :: characterId :: "matches" :: "completed" :: Nil) =>
                 withGameId(gameId) { gid =>
                     withCharacterId(characterId)(id =>
                         withCompletedQuery(request)(query =>
-                            ok(services.matches.characterCompleted(caller, gid, id, query))
+                            ok(
+                              services.matches.characterCompleted(
+                                callerExternalId = caller,
+                                gameId = gid,
+                                characterId = id,
+                                query = query
+                              )
+                            )
                         )
                     )
                 }
@@ -276,7 +335,15 @@ object Router {
             // `local.engine_routes`, not `local.routes`, as is the state route below.
             case ("POST", "characters" :: Nil) =>
                 body[Json.RegisterCharacterRequest](request).flatMap { r =>
-                    created(services.characters.create(r.name, r.description, r.ownerExternalId, r.state, caller))
+                    created(
+                      services.characters.create(
+                        name = r.name,
+                        description = r.description,
+                        ownerExternalId = r.ownerExternalId,
+                        state = r.state,
+                        callerExternalId = caller
+                      )
+                    )
                 }
 
             // One player's characters in the calling engine's game, for the engine to show them: it
@@ -293,14 +360,29 @@ object Router {
             case ("PUT", "characters" :: characterId :: Nil) =>
                 withCharacterId(characterId) { id =>
                     body[Json.EditCharacterRequest](request).flatMap(r =>
-                        ok(services.characters.edit(id, r.name, r.description, r.ownerExternalId, caller))
+                        ok(
+                          services.characters.edit(
+                            characterId = id,
+                            name = r.name,
+                            description = r.description,
+                            ownerExternalId = r.ownerExternalId,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 }
 
             case ("PUT", "characters" :: characterId :: "owner" :: Nil) =>
                 withCharacterId(characterId) { id =>
                     body[Json.TransferCharacterRequest](request).flatMap(r =>
-                        ok(services.characters.transfer(id, r.toNickname, r.ownerExternalId, caller))
+                        ok(
+                          services.characters.transfer(
+                            characterId = id,
+                            toNickname = r.toNickname,
+                            ownerExternalId = r.ownerExternalId,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 }
 
@@ -310,12 +392,16 @@ object Router {
             case ("PUT", "characters" :: characterId :: "state" :: Nil) =>
                 withCharacterId(characterId) { id =>
                     body[Json.UpdateStateRequest](request).flatMap(r =>
-                        ok(services.characters.updateState(id, r.state, caller))
+                        ok(
+                          services.characters.updateState(characterId = id, state = r.state, callerExternalId = caller)
+                        )
                     )
                 }
 
             case ("GET", "games" :: gameId :: "matches" :: matchId :: Nil) =>
-                withMatch(gameId, matchId)((gid, mid) => ok(services.engine.read(gid, mid, caller)))
+                withMatch(gameId, matchId)((gid, mid) =>
+                    ok(services.engine.read(gameId = gid, matchId = mid, callerExternalId = caller))
+                )
 
             // How the caller's finished matches turned out. One call for the whole completed list:
             // it is a join over five tables, and per-match would be a request per row.
@@ -325,18 +411,18 @@ object Router {
                       .results(caller)
                       .map(_.map { r =>
                           Json.ParticipantResultView(
-                            r.gameId,
-                            r.matchId,
-                            r.participantId,
-                            r.nickname,
-                            r.roleName,
-                            r.rank,
-                            r.scores.view.mapValues(JsonValues.fromScala).toMap,
-                            r.isWinner,
-                            r.isForfeit,
-                            r.timeTaken,
-                            r.eloStart,
-                            r.eloDelta
+                            gameId = r.gameId,
+                            matchId = r.matchId,
+                            participantId = r.participantId,
+                            nickname = r.nickname,
+                            roleName = r.roleName,
+                            rank = r.rank,
+                            scores = r.scores.view.mapValues(JsonValues.fromScala).toMap,
+                            isWinner = r.isWinner,
+                            isForfeit = r.isForfeit,
+                            timeTaken = r.timeTaken,
+                            eloStart = r.eloStart,
+                            eloDelta = r.eloDelta
                           )
                       })
                 )
@@ -344,22 +430,33 @@ object Router {
             // Re-checks a running match with the game engine, for a participant who suspects the
             // state matchmaker holds has fallen behind. Player-authorized, like any other match route.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
-                withMatch(gameId, matchId)((gid, mid) => ok(services.engine.refresh(gid, mid, caller)))
+                withMatch(gameId, matchId)((gid, mid) =>
+                    ok(services.engine.refresh(gameId = gid, matchId = mid, callerExternalId = caller))
+                )
 
             // Calls a match off. Only the owner of its tournament may -- a challenge's challenger.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
-                withMatch(gameId, matchId)((gid, mid) => ok(services.matches.cancel(gid, mid, caller)))
+                withMatch(gameId, matchId)((gid, mid) =>
+                    ok(services.matches.cancel(gameId = gid, matchId = mid, callerExternalId = caller))
+                )
 
             // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
             // `?playerId=` narrows it to one player's, as an admin sees them on that player's page.
             case ("GET", "games" :: gameId :: "matches" :: Nil) =>
                 withGameId(gameId)(gid =>
                     request.query.get("playerId") match {
-                        case None => ok(services.matches.listForGame(gid, caller))
+                        case None => ok(services.matches.listForGame(gameId = gid, callerExternalId = caller))
                         case Some(raw) =>
                             raw.toLongOption match {
-                                case Some(id) => ok(services.matches.listForGame(gid, caller, Some(PlayerId(id))))
-                                case None     => IO.pure(Errors.badRequest(s"'$raw' is not a player id"))
+                                case Some(id) =>
+                                    ok(
+                                      services.matches.listForGame(
+                                        gameId = gid,
+                                        callerExternalId = caller,
+                                        player = Some(PlayerId(id))
+                                      )
+                                    )
+                                case None => IO.pure(Errors.badRequest(s"'$raw' is not a player id"))
                             }
                     }
                 )
@@ -368,7 +465,14 @@ object Router {
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
                 withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.FriendlyRequest](request).flatMap(r =>
-                        ok(services.matches.setFriendly(gid, mid, r.isFriendly, caller))
+                        ok(
+                          services.matches.setFriendly(
+                            gameId = gid,
+                            matchId = mid,
+                            friendly = r.isFriendly,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 }
 
@@ -376,7 +480,9 @@ object Router {
             // and the only one that is about a single thing they are playing. Player-authorized like
             // every other match route; the service refuses a caller with no seat in it.
             case ("GET", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
-                withMatch(gameId, matchId)((gid, mid) => ok(services.notifications.forMatch(caller, gid, mid)))
+                withMatch(gameId, matchId)((gid, mid) =>
+                    ok(services.notifications.forMatch(callerExternalId = caller, gameId = gid, matchId = mid))
+                )
 
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
                 withMatch(gameId, matchId) { (gid, mid) =>
@@ -385,7 +491,10 @@ object Router {
                     // fall through to. Four kinds -- the others, about a challenge are not a
                     // seat's to answer.
                     body[SeatNotifications](request).flatMap(p =>
-                        noContent(services.notifications.updateForMatch(caller, gid, mid, p))
+                        noContent(
+                          services.notifications
+                              .updateForMatch(callerExternalId = caller, gameId = gid, matchId = mid, preferences = p)
+                        )
                     )
                 }
 
@@ -396,14 +505,14 @@ object Router {
                     body[Json.MoveNotification](request).flatMap { r =>
                         noContent(
                           services.engine.recordMove(
-                            gid,
-                            mid,
-                            r.participantId,
-                            r.next,
-                            r.takenAt,
-                            r.startedAt,
-                            caller,
-                            r.state.map(st =>
+                            gameId = gid,
+                            matchId = mid,
+                            moved = r.participantId,
+                            next = r.next,
+                            takenAt = r.takenAt,
+                            startedAt = r.startedAt,
+                            callerExternalId = caller,
+                            state = r.state.map(st =>
                                 MoveState(st.sequence, st.pending.map(p => SeatClock(p.participantId, p.since)))
                             )
                           )
@@ -416,20 +525,31 @@ object Router {
                     body[Json.MatchResults](request).flatMap { r =>
                         val results = r.results.map(entry =>
                             ReportedResult(
-                              entry.participantId,
-                              entry.rank,
-                              entry.scores.view.mapValues(JsonValues.toScala).toMap,
-                              entry.isWinner,
-                              entry.isForfeit
+                              participantId = entry.participantId,
+                              rank = entry.rank,
+                              scores = entry.scores.view.mapValues(JsonValues.toScala).toMap,
+                              isWinner = entry.isWinner,
+                              isForfeit = entry.isForfeit
                             )
                         )
                         val turns = r.turns.map(
                           _.map(t =>
-                              com.vivi.matchmaker.engine.EngineTurn(t.participantId.value, t.takenAt, t.startedAt)
+                              com.vivi.matchmaker.engine.EngineTurn(
+                                participantId = t.participantId.value,
+                                takenAt = t.takenAt,
+                                startedAt = t.startedAt
+                              )
                           )
                         )
                         noContent(
-                          services.engine.recordResults(gid, mid, results, caller, turns, r.summary)
+                          services.engine.recordResults(
+                            gameId = gid,
+                            matchId = mid,
+                            results = results,
+                            callerExternalId = caller,
+                            turns = turns,
+                            summary = r.summary
+                          )
                         )
                     }
                 }
@@ -450,11 +570,15 @@ object Router {
             // A new tournament, in draft, made from one of the game's models.
             case ("POST", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid =>
-                    body[TournamentRequest](request).flatMap(r => created(services.tournaments.create(gid, r, caller)))
+                    body[TournamentRequest](request).flatMap(r =>
+                        created(services.tournaments.create(gameId = gid, request = r, callerExternalId = caller))
+                    )
                 )
 
             case ("GET", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.detail(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.tournaments.detail(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             // The models tournaments are made from: every game's, as the code defines them, synced into the database
             // by a site admin; each game offers those its admins choose.
@@ -468,37 +592,60 @@ object Router {
                 withGameId(gameId)(gid => ok(services.tournamentModels.list(gid, caller)))
 
             case ("PUT", "games" :: gameId :: "tournament-models" :: mid :: Nil) =>
-                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.offer(gid, m, caller)))
+                withTournamentModel(gameId, mid)((gid, m) =>
+                    ok(services.tournamentModels.offer(gameId = gid, id = m, callerExternalId = caller))
+                )
 
             case ("DELETE", "games" :: gameId :: "tournament-models" :: mid :: Nil) =>
-                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.withdraw(gid, m, caller)))
+                withTournamentModel(gameId, mid)((gid, m) =>
+                    ok(services.tournamentModels.withdraw(gameId = gid, id = m, callerExternalId = caller))
+                )
 
             case ("PUT", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    body[TournamentRequest](request).flatMap(r => ok(services.tournaments.update(gid, t, r, caller)))
+                    body[TournamentRequest](request).flatMap(r =>
+                        ok(
+                          services.tournaments
+                              .update(gameId = gid, tournamentId = t, request = r, callerExternalId = caller)
+                        )
+                    )
                 )
 
             // The owner's steps through a tournament's life: open for entries, start, call off.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "open" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.open(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.tournaments.open(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "start" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.start(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.tournaments.start(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "cancel" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.cancel(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.tournaments.cancel(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             // Inviting a player, and taking it back -- the owner's revoke or the player's decline.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "invitations" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
                     body[TournamentJson.TournamentInvite](request).flatMap(r =>
-                        noContent(services.tournaments.invite(gid, t, r.playerId, caller))
+                        noContent(
+                          services.tournaments
+                              .invite(gameId = gid, tournamentId = t, playerId = r.playerId, callerExternalId = caller)
+                        )
                     )
                 )
 
             case ("DELETE", "games" :: gameId :: "tournaments" :: tid :: "invitations" :: playerId :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    withPlayerId(playerId)(p => noContent(services.tournaments.revoke(gid, t, p, caller)))
+                    withPlayerId(playerId)(p =>
+                        noContent(
+                          services.tournaments
+                              .revoke(gameId = gid, tournamentId = t, playerId = p, callerExternalId = caller)
+                        )
+                    )
                 )
 
             // A character game's invitations, which name characters: inviting one is the owner's, and removing one
@@ -506,7 +653,14 @@ object Router {
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "character-invitations" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
                     body[TournamentJson.TournamentCharacterInvite](request).flatMap(r =>
-                        noContent(services.tournaments.inviteCharacter(gid, t, r.characterId, caller))
+                        noContent(
+                          services.tournaments.inviteCharacter(
+                            gameId = gid,
+                            tournamentId = t,
+                            characterId = r.characterId,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 )
 
@@ -516,7 +670,14 @@ object Router {
                 ) =>
                 withTournament(gameId, tid)((gid, t) =>
                     withCharacterId(characterId)(c =>
-                        noContent(services.tournaments.revokeCharacter(gid, t, c, caller))
+                        noContent(
+                          services.tournaments.revokeCharacter(
+                            gameId = gid,
+                            tournamentId = t,
+                            characterId = c,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 )
 
@@ -524,14 +685,28 @@ object Router {
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "entries" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
                     body[TournamentJson.EnterRequest](request).flatMap(r =>
-                        created(services.tournaments.enter(gid, t, r.characterId, caller))
+                        created(
+                          services.tournaments.enter(
+                            gameId = gid,
+                            tournamentId = t,
+                            characterId = r.characterId,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 )
 
             case ("DELETE", "games" :: gameId :: "tournaments" :: tid :: "entries" :: entrantId :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
                     entrantId.toLongOption.fold(IO.pure(Errors.badRequest(s"'$entrantId' is not an entry id")))(e =>
-                        noContent(services.tournaments.withdraw(gid, t, EntrantId(e), caller))
+                        noContent(
+                          services.tournaments.withdraw(
+                            gameId = gid,
+                            tournamentId = t,
+                            entrantId = EntrantId(e),
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 )
 
@@ -545,32 +720,55 @@ object Router {
                      else body[TournamentJson.StartRoundRequest](request)).flatMap(r =>
                         ok(
                           services.rounds
-                              .startRound(gid, t, caller, r.roundDurationSeconds.map(java.time.Duration.ofSeconds))
+                              .startRound(
+                                gameId = gid,
+                                tournamentId = t,
+                                callerExternalId = caller,
+                                duration = r.roundDurationSeconds.map(java.time.Duration.ofSeconds)
+                              )
                               .map(TournamentJson.RoundStarted(_))
                         )
                     )
                 )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "check" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => noContent(services.rounds.checkRound(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    noContent(services.rounds.checkRound(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) => noContent(services.rounds.stop(gid, t, caller)))
+                withTournament(gameId, tid)((gid, t) =>
+                    noContent(services.rounds.stop(gameId = gid, tournamentId = t, callerExternalId = caller))
+                )
 
             // A tournament match is a match, addressed by its id.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "role" :: Nil) =>
-                withTournamentMatch(gameId, tid, matchId)((gid, t, mid) =>
+                withTournamentMatch(rawGame = gameId, rawTournament = tid, rawMatch = matchId)((gid, t, mid) =>
                     body[TournamentJson.ChooseRoleRequest](request).flatMap(r =>
-                        ok(services.rounds.chooseRole(gid, t, mid, r.gameRoleId, caller))
+                        ok(
+                          services.rounds.chooseRole(
+                            gameId = gid,
+                            tournamentId = t,
+                            matchId = mid,
+                            role = r.gameRoleId,
+                            callerExternalId = caller
+                          )
+                        )
                     )
                 )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "result" :: Nil) =>
-                withTournamentMatch(gameId, tid, matchId)((gid, t, mid) =>
+                withTournamentMatch(rawGame = gameId, rawTournament = tid, rawMatch = matchId)((gid, t, mid) =>
                     body[TournamentJson.DecideRequest](request).flatMap(r =>
                         noContent(
                           services.rounds
-                              .decide(gid, t, mid, r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
+                              .decide(
+                                gameId = gid,
+                                tournamentId = t,
+                                matchId = mid,
+                                ranks = r.ranks.map(x => x.entrantId -> x.rank).toMap,
+                                callerExternalId = caller
+                              )
                         )
                     )
                 )
@@ -586,16 +784,22 @@ object Router {
                     body[Json.ArchiveUploadRequest](request).flatMap { r =>
                         ok(
                           services.archives
-                              .requestUpload(mid, r.size, r.sha256, r.formatVersion, caller)
+                              .requestUpload(
+                                matchId = mid,
+                                size = r.size,
+                                sha256 = r.sha256,
+                                formatVersion = r.formatVersion,
+                                callerExternalId = caller
+                              )
                               .map {
                                   case UploadAnswer.Upload(signed) =>
                                       Json.ArchiveUploadAnswer(upload =
                                           Some(
                                             Json.ArchiveUpload(
-                                              signed.url,
-                                              signed.method,
-                                              signed.headers,
-                                              signed.expiresAt
+                                              url = signed.url,
+                                              method = signed.method,
+                                              headers = signed.headers,
+                                              expiresAt = signed.expiresAt
                                             )
                                           )
                                       )
@@ -673,7 +877,12 @@ object Router {
             page <- param("page")(_.toIntOption.filter(n => n >= 0 && n <= MaxCompletedPage))
             asOf <- param("asOf")(raw => scala.util.Try(java.time.Instant.parse(raw)).toOption)
             game <- param("gameId")(_.toIntOption.map(GameId.apply))
-            window = CompletedQuery(frame.getOrElse(CompletedFrame.Day), page.getOrElse(0), asOf, game)
+            window = CompletedQuery(
+              frame = frame.getOrElse(CompletedFrame.Day),
+              page = page.getOrElse(0),
+              asOf = asOf,
+              gameId = game
+            )
             // Each part well formed is not enough: `asOf` far in the past or the future, or a page
             // far enough back, names an instant that cannot be computed or stored, and that is the
             // request's mistake to be told about rather than a 500.

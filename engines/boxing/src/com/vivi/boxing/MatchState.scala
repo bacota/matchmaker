@@ -99,7 +99,14 @@ case class Bout(
         } yield {
             val redEffective = Effective.of(redFighter, redPlan.allocation)
             val blueEffective = Effective.of(blueFighter, bluePlan.allocation)
-            Round(number, redPlan, bluePlan, redEffective, blueEffective, Rules.resolve(redEffective, blueEffective))
+            Round(
+              number = number,
+              red = redPlan,
+              blue = bluePlan,
+              redEffective = redEffective,
+              blueEffective = blueEffective,
+              outcome = Rules.resolve(redEffective, blueEffective)
+            )
         }).sortBy(_.number)
 
     def knockout: Option[Round] = rounds.find(_.outcome.decision == Decision.Knockout)
@@ -248,13 +255,13 @@ object Bout extends Game[Bout, Corner, Plan] {
                 else List(Side.Red, Side.Blue)
             Right(players.zip(sides).map { (p, side) =>
                 Corner(
-                  side,
-                  p.cognitoId,
-                  p.participantId,
-                  p.characterId.get,
-                  p.characterState.flatMap(Fighter.fromState),
-                  p.nickname,
-                  p.characterName
+                  side = side,
+                  cognitoId = p.cognitoId,
+                  participantId = p.participantId,
+                  characterId = p.characterId.get,
+                  fighter = p.characterState.flatMap(Fighter.fromState),
+                  nickname = p.nickname,
+                  fighterName = p.characterName
                 )
             })
         }

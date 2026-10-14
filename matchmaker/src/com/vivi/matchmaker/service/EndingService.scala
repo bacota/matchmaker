@@ -47,7 +47,7 @@ class EndingService(
     tournamentEnding: (GameId, MatchId) => IO[Unit] = (_, _) => IO.unit
 ) {
 
-    private val ranking = new RankingService(sessionPool)
+    private val ranking = new RankingService(sessionPool = sessionPool)
 
     def settle(gameId: GameId, matchId: MatchId): IO[Settlement] =
         sessionPool.use(session => new ArchiveRepo(session).ending(gameId, matchId)).flatMap {
@@ -86,7 +86,7 @@ class EndingService(
                     // The answer is not wanted: asking is what prompts the engine, and whether it worked is read
                     // back from the match below.
                     _ <- engine
-                        .status(url, key, None)
+                        .status(statusUrl = url, apiKey = key, since = None)
                         .void
                         .handleErrorWith(e =>
                             log(s"prompting the engine to archive match ${row.matchId.value} failed: $e")

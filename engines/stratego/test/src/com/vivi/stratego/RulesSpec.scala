@@ -9,7 +9,7 @@ class RulesSpec extends ScalaCheckSuite {
     /** A board with only the pieces named, each as `square -> (side, rank)`. */
     private def boardOf(placed: (Int, (Side, Rank))*): Board =
         Board(placed.zipWithIndex.foldLeft(Board.empty.cells) { case (cells, ((square, (side, rank)), id)) =>
-            cells.updated(square, Some(Piece(id, side, rank)))
+            cells.updated(square, Some(Piece(id = id, side = side, rank = rank)))
         })
 
     private def fight(attacker: Rank, defender: Rank): Result = Rank.attack(attacker, defender)
@@ -48,13 +48,13 @@ class RulesSpec extends ScalaCheckSuite {
     test("nothing enters a lake") {
         val board = boardOf(41 -> (Side.Red, Rank.Captain))
         assertEquals(board.targets(Side.Red, 41).sorted, List(31, 40, 51))
-        assert(board.move(Side.Red, 41, 42).isLeft)
+        assert(board.move(side = Side.Red, from = 41, to = 42).isLeft)
     }
 
     test("bombs and flags never move") {
         val board = boardOf(0 -> (Side.Red, Rank.Bomb), 1 -> (Side.Red, Rank.Flag))
         assertEquals(board.targets(Side.Red, 0), Nil)
-        assertEquals(board.move(Side.Red, 1, 11), Left("a flag cannot move"))
+        assertEquals(board.move(side = Side.Red, from = 1, to = 11), Left("a flag cannot move"))
     }
 
     test("a scout runs any distance in a straight line, attacks the first enemy and never jumps") {
@@ -69,34 +69,45 @@ class RulesSpec extends ScalaCheckSuite {
 
     test("a scout that moves more than one square is revealed; one that moves one square is not") {
         val board = boardOf(0 -> (Side.Red, Rank.Scout), 9 -> (Side.Red, Rank.Scout))
-        val far = board.move(Side.Red, 0, 30).toOption.get.board
+        val far = board.move(side = Side.Red, from = 0, to = 30).toOption.get.board
         assert(far(30).get.isRevealed)
-        val near = board.move(Side.Red, 9, 19).toOption.get.board
+        val near = board.move(side = Side.Red, from = 9, to = 19).toOption.get.board
         assert(!near(19).get.isRevealed)
         assert(near(19).get.isMoved)
     }
 
     test("a battle reveals the survivor, and removes the loser — or both") {
         val board = boardOf(30 -> (Side.Red, Rank.Major), 40 -> (Side.Blue, Rank.Captain), 31 -> (Side.Red, Rank.Scout))
-        val won = board.move(Side.Red, 30, 40).toOption.get
-        assertEquals(won.battle, Some(Battle(Rank.Major, Rank.Captain, Result.AttackerWins)))
+        val won = board.move(side = Side.Red, from = 30, to = 40).toOption.get
+        assertEquals(
+          won.battle,
+          Some(Battle(attacker = Rank.Major, defender = Rank.Captain, result = Result.AttackerWins))
+        )
         assertEquals(won.board(30), None)
         assertEquals(won.board(40).map(p => (p.rank, p.isRevealed)), Some((Rank.Major, true)))
 
-        val lost = board.move(Side.Red, 31, 41).toOption.get.board.move(Side.Blue, 40, 41).toOption.get
+        val lost = board
+            .move(side = Side.Red, from = 31, to = 41)
+            .toOption
+            .get
+            .board
+            .move(side = Side.Blue, from = 40, to = 41)
+            .toOption
+            .get
         assertEquals(lost.battle.map(_.result), Some(Result.AttackerWins))
         assertEquals(lost.board(41).map(_.side), Some(Side.Blue))
 
-        val even = boardOf(30 -> (Side.Red, Rank.Captain), 40 -> (Side.Blue, Rank.Captain)).move(Side.Red, 30, 40)
+        val even = boardOf(30 -> (Side.Red, Rank.Captain), 40 -> (Side.Blue, Rank.Captain))
+            .move(side = Side.Red, from = 30, to = 40)
         assertEquals(even.toOption.get.board.cells.flatten, Vector.empty)
     }
 
     test("a move is refused for a missing piece, an enemy piece, or a square off the board") {
         val board = boardOf(30 -> (Side.Red, Rank.Major), 60 -> (Side.Blue, Rank.Captain))
-        assertEquals(board.move(Side.Red, 31, 32), Left("there is no piece on b4"))
-        assertEquals(board.move(Side.Red, 60, 50), Left("the piece on a7 is not yours"))
-        assert(board.move(Side.Red, 30, 100).isLeft)
-        assert(board.move(Side.Red, 30, 50).isLeft)
+        assertEquals(board.move(side = Side.Red, from = 31, to = 32), Left("there is no piece on b4"))
+        assertEquals(board.move(side = Side.Red, from = 60, to = 50), Left("the piece on a7 is not yours"))
+        assert(board.move(side = Side.Red, from = 30, to = 100).isLeft)
+        assert(board.move(side = Side.Red, from = 30, to = 50).isLeft)
     }
 
     test("a setup is exactly one army") {
@@ -123,16 +134,32 @@ class RulesSpec extends ScalaCheckSuite {
     }
 
     test("a piece may not make a fourth consecutive move between the same two squares") {
-        val history = List(Step(5, 40, 50), Step(5, 50, 40), Step(5, 40, 50))
-        assert(Rules.isShuttling(history, Step(5, 50, 40)))
+        val history = List(
+          Step(pieceId = 5, from = 40, to = 50),
+          Step(pieceId = 5, from = 50, to = 40),
+          Step(pieceId = 5, from = 40, to = 50)
+        )
+        assert(Rules.isShuttling(history, Step(pieceId = 5, from = 50, to = 40)))
         // A different piece, a different square, or a break in the run are all fine.
-        assert(!Rules.isShuttling(history, Step(6, 50, 40)))
-        assert(!Rules.isShuttling(history, Step(5, 50, 60)))
-        assert(!Rules.isShuttling(Step(7, 0, 10) :: history.tail, Step(5, 50, 40)))
+        assert(!Rules.isShuttling(history, Step(pieceId = 6, from = 50, to = 40)))
+        assert(!Rules.isShuttling(history, Step(pieceId = 5, from = 50, to = 60)))
+        assert(
+          !Rules.isShuttling(
+            Step(pieceId = 7, from = 0, to = 10) :: history.tail,
+            Step(pieceId = 5, from = 50, to = 40)
+          )
+        )
 
         val board = boardOf(50 -> (Side.Red, Rank.Captain))
-        val shuttled = List(Step(0, 40, 50), Step(0, 50, 40), Step(0, 40, 50))
-        assertEquals(Rules.legalMoves(board, Side.Red, shuttled).sorted, List((50, 51), (50, 60)))
+        val shuttled = List(
+          Step(pieceId = 0, from = 40, to = 50),
+          Step(pieceId = 0, from = 50, to = 40),
+          Step(pieceId = 0, from = 40, to = 50)
+        )
+        assertEquals(
+          Rules.legalMoves(board = board, side = Side.Red, history = shuttled).sorted,
+          List((50, 51), (50, 60))
+        )
     }
 
     property("random legal play never puts a piece in a lake, and never makes a piece appear") {
@@ -148,7 +175,7 @@ class RulesSpec extends ScalaCheckSuite {
                 if (moves.isEmpty) (board, side)
                 else {
                     val (from, to) = moves(random.nextInt(moves.size))
-                    (board.move(side, from, to).toOption.get.board, side.other)
+                    (board.move(side = side, from = from, to = to).toOption.get.board, side.other)
                 }
             }
             val ids = end.cells.flatten.map(_.id)

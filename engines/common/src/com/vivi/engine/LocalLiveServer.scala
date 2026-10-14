@@ -67,30 +67,31 @@ class LocalLiveServer(port: Int) extends LiveChannel {
             val out = socket.getOutputStream
             val (target, headers) = LocalLiveServer.readHandshake(in)
             headers.get("sec-websocket-key") match {
-                case None => LocalLiveServer.refuse(out, 400, "a WebSocket handshake was expected")
+                case None =>
+                    LocalLiveServer.refuse(out = out, status = 400, body = "a WebSocket handshake was expected")
                 case Some(key) =>
                     val uri = URI.create(target)
                     val connection = Connection(out)
                     connections.put(id, connection)
                     val admitted = routes(
                       EngineRequest(
-                        "CONNECT",
-                        "/live",
-                        LocalEngineServer.queryOf(Option(uri.getRawQuery)),
+                        method = "CONNECT",
+                        path = "/live",
+                        query = LocalEngineServer.queryOf(Option(uri.getRawQuery)),
                         headers = headers,
                         connectionId = Some(id)
                       )
                     )
                     if (admitted.status / 100 != 2) {
                         connections.remove(id)
-                        LocalLiveServer.refuse(out, admitted.status, admitted.body)
+                        LocalLiveServer.refuse(out = out, status = admitted.status, body = admitted.body)
                     } else
                         try {
                             connection.accept(LocalLiveServer.acceptKey(key))
                             connection.read(in)
                         } finally {
                             connections.remove(id)
-                            routes(EngineRequest("DISCONNECT", "/live", connectionId = Some(id)))
+                            routes(EngineRequest(method = "DISCONNECT", path = "/live", connectionId = Some(id)))
                         }
             }
         } catch {

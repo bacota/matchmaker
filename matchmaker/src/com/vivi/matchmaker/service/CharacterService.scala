@@ -119,7 +119,14 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                         case None    => IO.raiseError(NotFoundError(s"no player with externalId '$ownerExternalId'"))
                     }
                     character <- characterRepo.create(
-                      Character(CharacterId(0), gameId, name.trim, description.trim, state, Some(owner.playerId))
+                      Character(
+                        characterId = CharacterId(0),
+                        gameId = gameId,
+                        name = name.trim,
+                        description = description.trim,
+                        state = state,
+                        playerId = Some(owner.playerId)
+                      )
                     )
                 } yield character
             }
@@ -161,7 +168,12 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             session.transaction.use { _ =>
                 for {
                     _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError("a character needs a name"))
-                    existing <- ownedForUpdate(characterRepo, characterId, ownerExternalId, callerExternalId)
+                    existing <- ownedForUpdate(
+                      characterRepo = characterRepo,
+                      characterId = characterId,
+                      ownerExternalId = ownerExternalId,
+                      callerExternalId = callerExternalId
+                    )
                     edited = existing.copy(name = name.trim, description = description.trim)
                     _ <- characterRepo.update(edited)
                 } yield edited
@@ -183,7 +195,12 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             val characterRepo = new CharacterRepo[T](session)
             session.transaction.use { _ =>
                 for {
-                    existing <- ownedForUpdate(characterRepo, characterId, ownerExternalId, callerExternalId)
+                    existing <- ownedForUpdate(
+                      characterRepo = characterRepo,
+                      characterId = characterId,
+                      ownerExternalId = ownerExternalId,
+                      callerExternalId = callerExternalId
+                    )
                     // For share: the character is about to reference this player, who must still exist when it does.
                     recipient <- new PlayerRepo(session).readByNicknameForShare(toNickname.trim).flatMap {
                         case Some(p) => IO.pure(p)

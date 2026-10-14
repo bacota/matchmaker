@@ -18,7 +18,7 @@ class RegistrationServiceSpec extends PropertySuite {
 
     property("register creates a non-admin player with the given nickname and externalId") {
         forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
-            service.register(nickname, externalId).unsafeRunSync() match {
+            service.register(nickname = nickname, externalId = externalId).unsafeRunSync() match {
                 case p => p.nickname == nickname && p.externalId == externalId && !p.isAdmin
             }
         }
@@ -26,7 +26,7 @@ class RegistrationServiceSpec extends PropertySuite {
 
     property("register rejects a blank nickname") {
         forAll(genUniqueString) { externalId =>
-            service.register("", externalId).attempt.unsafeRunSync() match {
+            service.register(nickname = "", externalId = externalId).attempt.unsafeRunSync() match {
                 case Left(_: ValidationError) => true
                 case _                        => false
             }
@@ -35,7 +35,7 @@ class RegistrationServiceSpec extends PropertySuite {
 
     property("register rejects a blank externalId") {
         forAll(genUniqueString) { nickname =>
-            service.register(nickname, "").attempt.unsafeRunSync() match {
+            service.register(nickname = nickname, externalId = "").attempt.unsafeRunSync() match {
                 case Left(_: ValidationError) => true
                 case _                        => false
             }
@@ -45,8 +45,8 @@ class RegistrationServiceSpec extends PropertySuite {
     property("register rejects a duplicate externalId") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname1, nickname2, externalId) =>
             val result = for {
-                _ <- service.register(nickname1, externalId)
-                second <- service.register(nickname2, externalId).attempt
+                _ <- service.register(nickname = nickname1, externalId = externalId)
+                second <- service.register(nickname = nickname2, externalId = externalId).attempt
             } yield second
             result.unsafeRunSync() match {
                 case Left(_: ConflictError) => true
@@ -58,8 +58,8 @@ class RegistrationServiceSpec extends PropertySuite {
     property("register rejects a duplicate nickname") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId1, externalId2) =>
             val result = for {
-                _ <- service.register(nickname, externalId1)
-                second <- service.register(nickname, externalId2).attempt
+                _ <- service.register(nickname = nickname, externalId = externalId1)
+                second <- service.register(nickname = nickname, externalId = externalId2).attempt
             } yield second
             result.unsafeRunSync() match {
                 case Left(_: ConflictError) => true

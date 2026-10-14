@@ -22,7 +22,7 @@ object LocalServer {
     def main(args: Array[String]): Unit =
         LocalEngineServer.run("tic-tac-toe", defaultPort = 8090) { (baseUrl, live) =>
             Config.routes(
-              sys.env.get,
+              env = sys.env.get,
               defaultBaseUrl = Some(baseUrl),
               live = Some(live),
               announce = m => {

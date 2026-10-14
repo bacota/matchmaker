@@ -30,6 +30,6 @@ object Rules {
     /** Every move `side` may make now: what the board allows, less what the two-square rule forbids. */
     def legalMoves(board: Board, side: Side, history: List[Step]): List[(Int, Int)] =
         board.moves(side).filterNot { (from, to) =>
-            board(from).exists(p => isShuttling(history, Step(p.id, from, to)))
+            board(from).exists(p => isShuttling(history, Step(pieceId = p.id, from = from, to = to)))
         }
 }

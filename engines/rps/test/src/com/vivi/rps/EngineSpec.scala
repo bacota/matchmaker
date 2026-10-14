@@ -28,8 +28,22 @@ class EngineSpec extends FunSuite with QuietTests {
           settings = "{}",
           timeLimitSeconds = Some(600),
           players = List(
-            Protocol.EnginePlayer("sub-alice", 11L, roles.head, None, None, Some("Alice")),
-            Protocol.EnginePlayer("sub-bob", 22L, roles(1), None, None, Some("Bob"))
+            Protocol.EnginePlayer(
+              cognitoId = "sub-alice",
+              participantId = 11L,
+              role = roles.head,
+              characterId = None,
+              characterState = None,
+              nickname = Some("Alice")
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = "sub-bob",
+              participantId = 22L,
+              role = roles(1),
+              characterId = None,
+              characterState = None,
+              nickname = Some("Bob")
+            )
           ),
           moveCallbackUrl = Some(moveUrl),
           resultsCallbackUrl = Some(resultsUrl)
@@ -38,7 +52,7 @@ class EngineSpec extends FunSuite with QuietTests {
     private def fixture(isPublic: Boolean = false, roles: List[Option[String]] = List(None, None)) = {
         val store = InMemoryMatchStore[RpsMatch]()
         val recorder = RecordingMatchmaker()
-        val engine = Engine(store, recorder, "http://engine.test", () => created)
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test", now = () => created)
         val response = engine.createGame(createRequest(isPublic, roles)).toOption.get
         (engine, recorder, store, response, store.get("m-1").get)
     }
@@ -70,7 +84,8 @@ class EngineSpec extends FunSuite with QuietTests {
     }
 
     test("a game for anything but two players is refused") {
-        val engine = Engine(InMemoryMatchStore(), RecordingMatchmaker(), "http://engine.test")
+        val engine =
+            Engine(store = InMemoryMatchStore(), matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         val solo = createRequest().copy(players = createRequest().players.take(1))
         assertEquals(
           engine.createGame(solo),
@@ -79,7 +94,8 @@ class EngineSpec extends FunSuite with QuietTests {
     }
 
     test("a match whose two seats are the same player is refused, since a seat is found by subject") {
-        val engine = Engine(InMemoryMatchStore(), RecordingMatchmaker(), "http://engine.test")
+        val engine =
+            Engine(store = InMemoryMatchStore(), matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         val both = createRequest()
         assertEquals(
           engine.createGame(both.copy(players = both.players.map(_.copy(cognitoId = alice)))),
@@ -102,12 +118,12 @@ class EngineSpec extends FunSuite with QuietTests {
         // Bob first here, Alice first in the fixture above: the engine has no opinion about order.
         val (engine, _, store, _, _) = fixture()
 
-        assert(engine.move("m-1", bob, Shape.Paper).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper).isRight)
         val half = store.get("m-1").get
         assert(!half.isOver)
         assertEquals(half.pending.map(_.participantId), List(11L))
 
-        val applied = engine.move("m-1", alice, Shape.Scissors).toOption.get
+        val applied = engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Scissors).toOption.get
         assert(applied.isFinished)
         assertEquals(applied.state.winner.map(_.participantId), Some(11L))
         assert(store.get("m-1").get.isCompleted)
@@ -116,13 +132,16 @@ class EngineSpec extends FunSuite with QuietTests {
     test("a player may not throw twice, and may not throw once the match is over") {
         val (engine, recorder, _, _, _) = fixture()
 
-        assert(engine.move("m-1", alice, Shape.Rock).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock).isRight)
         assertEquals(
-          engine.move("m-1", alice, Shape.Paper),
+          engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Paper),
           Left(Refusal.Invalid("you have already thrown; a throw cannot be taken back"))
         )
-        assert(engine.move("m-1", bob, Shape.Rock).isRight)
-        assertEquals(engine.move("m-1", bob, Shape.Paper), Left(Refusal.Invalid("this match is already over")))
+        assert(engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Rock).isRight)
+        assertEquals(
+          engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper),
+          Left(Refusal.Invalid("this match is already over"))
+        )
 
         // Two throws landed; the two refusals were not moves and matchmaker heard nothing of them.
         assertEquals(recorder.moves.size, 2)
@@ -131,16 +150,16 @@ class EngineSpec extends FunSuite with QuietTests {
     test("someone with no seat in the match may not throw in it") {
         val (engine, recorder, _, _, _) = fixture()
         assertEquals(
-          engine.move("m-1", "sub-carol", Shape.Rock),
+          engine.move(matchId = "m-1", cognitoId = "sub-carol", shape = Shape.Rock),
           Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
         )
-        assert(engine.move("m-1", "", Shape.Rock).isLeft)
+        assert(engine.move(matchId = "m-1", cognitoId = "", shape = Shape.Rock).isLeft)
         assertEquals(recorder.moves, Nil)
     }
 
     test("neither player is shown the other's throw until both have thrown") {
         val (engine, _, store, _, m) = fixture(isPublic = true)
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
 
         val waiting = store.get("m-1").get
         val bobSeat = waiting.seatFor(bob).get
@@ -153,7 +172,7 @@ class EngineSpec extends FunSuite with QuietTests {
         // Nor does a watcher see it, nor Alice herself see Bob's absence of one differently.
         assert(engine.stateOf(waiting, None).players.forall(_.shape.isEmpty))
 
-        engine.move("m-1", bob, Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
         val over = engine.stateOf(store.get("m-1").get, Some(bobSeat))
         assertEquals(over.players.map(_.shape), List(Some("Rock"), Some("Paper")))
         assertEquals(over.yourThrow, Some("Paper"))
@@ -163,7 +182,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a player sees their own throw while waiting, so the page can show what they threw") {
         val (engine, _, store, _, _) = fixture()
-        engine.move("m-1", alice, Shape.Scissors)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Scissors)
         val aliceSeat = store.get("m-1").get.seatFor(alice).get
         assertEquals(engine.stateOf(store.get("m-1").get, Some(aliceSeat)).yourThrow, Some("Scissors"))
     }
@@ -171,7 +190,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test("every throw is reported to matchmaker, naming nobody as next") {
         val (engine, recorder, _, _, _) = fixture()
 
-        assert(engine.move("m-1", alice, Shape.Rock).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock).isRight)
         assertEquals(recorder.moves.size, 1)
         val (url, first) = recorder.moves.head
         assertEquals(url, moveUrl)
@@ -182,7 +201,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(first.takenAt, created)
         assertEquals(first.startedAt, created)
 
-        assert(engine.move("m-1", bob, Shape.Rock).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Rock).isRight)
         assertEquals(recorder.moves.map(_._2.participantId), List(11L, 22L))
         assertEquals(recorder.moves.map(_._2.next), List(Nil, Nil))
         // Both clocks started when the match did, whichever of the two threw second.
@@ -192,9 +211,9 @@ class EngineSpec extends FunSuite with QuietTests {
     test("the results follow the second throw, ranking the winner first") {
         val (engine, recorder, _, _, _) = fixture()
 
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
         assertEquals(recorder.results, Nil, "a half-thrown match has no result to report")
-        engine.move("m-1", bob, Shape.Scissors)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Scissors)
 
         assertEquals(recorder.results.size, 1)
         val (url, results) = recorder.results.head
@@ -213,8 +232,8 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("the same throw twice is a draw: both first, neither a winner") {
         val (engine, recorder, store, _, _) = fixture()
-        engine.move("m-1", alice, Shape.Paper)
-        engine.move("m-1", bob, Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
 
         assert(store.get("m-1").get.isDrawn)
         val results = recorder.results.head._2.results
@@ -239,10 +258,15 @@ class EngineSpec extends FunSuite with QuietTests {
 
         expected.foreach { (mine, theirs, winner) =>
             val store = InMemoryMatchStore[RpsMatch]()
-            val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => created)
+            val engine = Engine(
+              store = store,
+              matchmaker = RecordingMatchmaker(),
+              baseUrl = "http://engine.test",
+              now = () => created
+            )
             engine.createGame(createRequest())
-            engine.move("m-1", alice, mine)
-            engine.move("m-1", bob, theirs)
+            engine.move(matchId = "m-1", cognitoId = alice, shape = mine)
+            engine.move(matchId = "m-1", cognitoId = bob, shape = theirs)
             assertEquals(store.get("m-1").get.winner.map(_.participantId), winner, s"$mine against $theirs")
         }
     }
@@ -252,15 +276,20 @@ class EngineSpec extends FunSuite with QuietTests {
         // turns, and a frozen clock would make every one of them identical.
         val store = InMemoryMatchStore[RpsMatch]()
         var elapsed = 0L
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => created.plusSeconds(elapsed))
+        val engine = Engine(
+          store = store,
+          matchmaker = RecordingMatchmaker(),
+          baseUrl = "http://engine.test",
+          now = () => created.plusSeconds(elapsed)
+        )
         engine.createGame(createRequest())
 
         // Alice throws after ten seconds, Bob after a further eighty — and Bob is charged for all
         // ninety of his own, not for the eighty since Alice moved. Neither was waiting for anyone.
         elapsed = 10
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
         elapsed = 90
-        engine.move("m-1", bob, Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
 
         val all = engine.status("m-1").toOption.get.turns
         assertEquals(all.map(_.participantId), List(11L, 22L))
@@ -275,13 +304,13 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("status says the match is over, and every seat with it, once both have thrown") {
         val (engine, _, _, _, _) = fixture()
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
 
         val half = engine.status("m-1").toOption.get
         assertEquals(half.isCompleted, false)
         assertEquals(half.participants.filter(_.isPending).map(_.participantId), List(22L))
 
-        engine.move("m-1", bob, Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
         val over = engine.status("m-1").toOption.get
         assert(over.isCompleted)
         assert(over.participants.forall(p => p.isCompleted && !p.isPending))
@@ -290,17 +319,20 @@ class EngineSpec extends FunSuite with QuietTests {
     test("an unknown match is a 404 to matchmaker and to a player alike") {
         val (engine, _, _, _, _) = fixture()
         assertEquals(engine.status("nope"), Left(Refusal.NotFound("no match 'nope'")))
-        assertEquals(engine.move("nope", alice, Shape.Rock), Left(Refusal.NotFound("no match 'nope'")))
+        assertEquals(
+          engine.move(matchId = "nope", cognitoId = alice, shape = Shape.Rock),
+          Left(Refusal.NotFound("no match 'nope'"))
+        )
     }
 
     test("a match with no callback urls is still playable") {
         val store = InMemoryMatchStore[RpsMatch]()
         val recorder = RecordingMatchmaker()
-        val engine = Engine(store, recorder, "http://engine.test")
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test")
         engine.createGame(createRequest().copy(moveCallbackUrl = None, resultsCallbackUrl = None))
 
-        assert(engine.move("m-1", alice, Shape.Rock).isRight)
-        assert(engine.move("m-1", bob, Shape.Paper).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock).isRight)
+        assert(engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper).isRight)
         assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves, Nil)
         assertEquals(recorder.results, Nil)
@@ -310,7 +342,9 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, store, _, _) = fixture()
 
         val both = List(alice, bob).map(player =>
-            java.util.concurrent.CompletableFuture.supplyAsync(() => engine.move("m-1", player, Shape.Rock))
+            java.util.concurrent.CompletableFuture.supplyAsync(() =>
+                engine.move(matchId = "m-1", cognitoId = player, shape = Shape.Rock)
+            )
         )
         both.foreach(f => assert(f.join().isRight))
 
@@ -324,15 +358,15 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a stored match round-trips through its json, which is how DynamoDB holds it") {
         val (engine, _, store, _, _) = fixture(isPublic = true)
-        engine.move("m-1", alice, Shape.Scissors)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Scissors)
         val m = store.get("m-1").get
         assertEquals(read[RpsMatch](write(m)), m)
     }
 
     test("every callback numbers its throw and names who is still to throw") {
         val (engine, recorder, _, _, _) = fixture()
-        engine.move("m-1", bob, Shape.Paper)
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
 
         val states = recorder.moves.map(_._2.state.get)
         assertEquals(states.map(_.sequence), List(1L, 2L))
@@ -345,8 +379,8 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, store, _, _) = fixture()
         recorder.isFailingCallbacks = true
 
-        assert(engine.move("m-1", alice, Shape.Rock).isRight)
-        val resolving = engine.move("m-1", bob, Shape.Scissors)
+        assert(engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock).isRight)
+        val resolving = engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Scissors)
         assert(resolving.isRight, s"the throw was committed, so it must not be reported as failing: $resolving")
         assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves.size, 2)
@@ -355,8 +389,8 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("the results carry both throws as turns") {
         val (engine, recorder, _, _, _) = fixture()
-        engine.move("m-1", bob, Shape.Paper)
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
         val turns = recorder.results.head._2.turns.get
         assertEquals(turns.map(_.participantId).toSet, Set(11L, 22L))
         assert(turns.forall(_.startedAt.contains(created)))
@@ -367,7 +401,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val store = InMemoryMatchStore[RpsMatch]()
         val recorder = RecordingMatchmaker()
         var at = created
-        val engine = Engine(store, recorder, "http://engine.test", () => at)
+        val engine = Engine(store = store, matchmaker = recorder, baseUrl = "http://engine.test", now = () => at)
         engine.createGame(createRequest().copy(canTie = Some(false)))
         (engine, recorder, store, (seconds: Long) => at = at.plusSeconds(seconds))
     }
@@ -375,9 +409,9 @@ class EngineSpec extends FunSuite with QuietTests {
     test("when ties are not allowed, a tied throw starts another, and the first throw that wins ends the match") {
         val (engine, recorder, store, advance) = noTieFixture()
 
-        engine.move("m-1", alice, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
         advance(30)
-        engine.move("m-1", bob, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Rock)
         val tied = store.get("m-1").get
         assert(!tied.isOver, "a tie must not end a match that may not be drawn")
         assertEquals(tied.pending.map(_.participantId), List(11L, 22L))
@@ -391,9 +425,9 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(engine.stateOf(tied, tied.seatFor(alice)).tiedRounds, List("Rock"))
 
         advance(10)
-        engine.move("m-1", bob, Shape.Paper)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Paper)
         assertEquals(engine.stateOf(store.get("m-1").get, None).players.flatMap(_.shape), Nil)
-        engine.move("m-1", alice, Shape.Scissors)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Scissors)
         val done = store.get("m-1").get
         assert(done.isOver)
         assertEquals(done.winner.map(_.participantId), Some(11L))
@@ -412,8 +446,8 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a match that allows ties still ends on the first tied throw, and one stored before the flag reads as one") {
         val (engine, _, store, _, _) = fixture()
-        engine.move("m-1", alice, Shape.Rock)
-        engine.move("m-1", bob, Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = alice, shape = Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = bob, shape = Shape.Rock)
         assert(store.get("m-1").get.isDrawn)
         val stored = write(store.get("m-1").get)
         assert(!stored.contains("canTie"), "a match that allows ties is stored as it always was")

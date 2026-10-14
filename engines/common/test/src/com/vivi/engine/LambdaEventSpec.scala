@@ -27,14 +27,16 @@ class LambdaEventSpec extends FunSuite {
         // Lowercased on the way in, since payload v2 does and a lookup for "Authorization" must match.
         assertEquals(decoded.headers.get("content-type"), Some("application/json"))
 
-        val encoded = ujson.read(LambdaEvent.encode(EngineResponse(201, """{"ok":true}""")))
+        val encoded = ujson.read(LambdaEvent.encode(EngineResponse(status = 201, body = """{"ok":true}""")))
         assertEquals(encoded("statusCode").num, 201.0)
         assertEquals(encoded("body").str, """{"ok":true}""")
     }
 
     test("a response's own headers go out beside its content type") {
         val encoded = ujson.read(
-          LambdaEvent.encode(EngineResponse(304, "", headers = Map("etag" -> "\"t\"", "cache-control" -> "no-cache")))
+          LambdaEvent.encode(
+            EngineResponse(status = 304, body = "", headers = Map("etag" -> "\"t\"", "cache-control" -> "no-cache"))
+          )
         )
         assertEquals(encoded("statusCode").num, 304.0)
         assertEquals(encoded("headers")("etag").str, "\"t\"")

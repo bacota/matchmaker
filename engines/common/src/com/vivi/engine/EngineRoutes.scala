@@ -97,7 +97,11 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 case e: ArchiveExpired =>
                     (request.method.toUpperCase, request.segments) match {
                         case ("GET", "matches" :: _ :: ("play" | "board") :: Nil) =>
-                            EngineResponse(410, ArchiveExpiredPage(e.matchId), "text/html; charset=utf-8")
+                            EngineResponse(
+                              status = 410,
+                              body = ArchiveExpiredPage(e.matchId),
+                              contentType = "text/html; charset=utf-8"
+                            )
                         case _ => error(410, e.getMessage)
                     }
                 case NonFatal(e) =>
@@ -154,7 +158,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                     case Right(create) =>
                         engine.createGame(create) match {
                             case Left(refusal)  => error(refusal)
-                            case Right(created) => EngineResponse(201, write(created))
+                            case Right(created) => EngineResponse(status = 201, body = write(created))
                         }
                 }
 
@@ -176,7 +180,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                                 // matchmaker asking about it is the prompt to try again. After the answer is
                                 // made, and unable to fail it.
                                 engine.archiveIfFinished(m)
-                                EngineResponse(200, write(status))
+                                EngineResponse(status = 200, body = write(status))
                         }
                 }
 
@@ -186,7 +190,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             case ("POST", "matches" :: matchId :: "cancel" :: Nil) =>
                 engine.cancel(matchId)
-                EngineResponse(204, "")
+                EngineResponse(status = 204, body = "")
 
             /* The play page itself, which is served to anyone who asks — signed in or not.
              *
@@ -205,11 +209,11 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         val state = Option.when(seat.isDefined)(stateOf(m, seat))
                         html(
                           page(
-                            matchId,
-                            MatchTitle.of(m, gameTitle),
-                            state,
-                            playAuth.login,
-                            live.map(_.url),
+                            matchId = matchId,
+                            title = MatchTitle.of(m, gameTitle),
+                            state = state,
+                            login = playAuth.login,
+                            liveUrl = live.map(_.url),
                             publicView = false
                           )
                         )
@@ -245,14 +249,21 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
                 withPublic(matchId, hasArchivedHint(request))(m =>
                     html(
-                      page(matchId, MatchTitle.of(m, gameTitle), Some(stateOf(m, None)), None, live.map(_.url), true)
+                      page(
+                        matchId = matchId,
+                        title = MatchTitle.of(m, gameTitle),
+                        state = Some(stateOf(m, None)),
+                        login = None,
+                        liveUrl = live.map(_.url),
+                        publicView = true
+                      )
                     )
                 )
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>
                 withPublic(matchId)(m => revalidated(request, write(stateOf(m, None))))
 
-            case ("GET", "health" :: Nil) => EngineResponse(200, """{"status":"ok"}""")
+            case ("GET", "health" :: Nil) => EngineResponse(status = 200, body = """{"status":"ok"}""")
 
             // Play Live. Only a connection's own events carry its id; see `EngineRequest`.
             case ("CONNECT", "live" :: Nil) if request.connectionId.isDefined =>
@@ -260,11 +271,12 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             case ("DISCONNECT", "live" :: Nil) if request.connectionId.isDefined =>
                 live.foreach(_.unsubscribe(request.connectionId.get))
-                EngineResponse(200, "{}")
+                EngineResponse(status = 200, body = "{}")
 
             // The page's keep-alive, should one reach the function: deployed, the gateway answers it
             // without invoking anything.
-            case ("MESSAGE", "live" :: Nil) if request.connectionId.isDefined => EngineResponse(200, "{}")
+            case ("MESSAGE", "live" :: Nil) if request.connectionId.isDefined =>
+                EngineResponse(status = 200, body = "{}")
 
             case key if extra.isDefinedAt(key) => extra(key)(request)
 
@@ -273,7 +285,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
     /** A move that was made, answered with the state it left the mover looking at. */
     protected def moved(applied: MoveApplied[M, S, ?]): EngineResponse =
-        EngineResponse(200, write(stateOf(applied.state, Some(applied.moved))))
+        EngineResponse(status = 200, body = write(stateOf(applied.state, Some(applied.moved))))
 
     /** `f` with the caller's subject, or the refusal that says who they are not. */
     protected def asPlayer(request: EngineRequest)(f: String => Either[Refusal, EngineResponse]): EngineResponse =
@@ -309,7 +321,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
                 admitted match {
                     case Left(refusal) => error(refusal)
-                    case Right(_)      => EngineResponse(200, "{}")
+                    case Right(_)      => EngineResponse(status = 200, body = "{}")
                 }
         }
 
@@ -356,7 +368,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 catch { case _: java.time.format.DateTimeParseException => Left(s"unreadable 'since': $raw") }
         }
 
-    private def html(body: String): EngineResponse = EngineResponse(200, body, "text/html; charset=utf-8")
+    private def html(body: String): EngineResponse =
+        EngineResponse(status = 200, body = body, contentType = "text/html; charset=utf-8")
 
     /** A state, tagged with a digest of itself, or a bodiless 304 when that is the tag the caller already holds.
       *
@@ -375,12 +388,12 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         val tag = "\"" + java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(digest.take(16)) + "\""
         val headers = Map("etag" -> tag, "cache-control" -> "private, no-cache", "vary" -> "Authorization")
         val held = request.headers.get("if-none-match").toList.flatMap(_.split(',')).map(_.trim.stripPrefix("W/"))
-        if (held.contains(tag) || held.contains("*")) EngineResponse(304, "", headers = headers)
-        else EngineResponse(200, body, headers = headers)
+        if (held.contains(tag) || held.contains("*")) EngineResponse(status = 304, body = "", headers = headers)
+        else EngineResponse(status = 200, body = body, headers = headers)
     }
 
     protected def error(refusal: Refusal): EngineResponse = error(refusal.status, refusal.message)
 
     protected def error(status: Int, message: String): EngineResponse =
-        EngineResponse(status, ujson.write(ujson.Obj("error" -> message)))
+        EngineResponse(status = status, body = ujson.write(ujson.Obj("error" -> message)))
 }

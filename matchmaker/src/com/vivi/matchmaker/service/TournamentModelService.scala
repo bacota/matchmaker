@@ -41,7 +41,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             session.transaction.use { _ =>
                 val repo = new TournamentModelRepo(session)
                 for {
-                    _ <- requireAdministered(session, gameId, callerExternalId)
+                    _ <- requireAdministered(session = session, gameId = gameId, callerExternalId = callerExternalId)
                     // Held against a sync removing it before the choice is written.
                     found <- repo.lockForShare(id)
                     model <- if (found) repo.read(id) else IO.pure(None)
@@ -62,7 +62,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             session.transaction.use { _ =>
                 val repo = new TournamentModelRepo(session)
                 for {
-                    _ <- requireAdministered(session, gameId, callerExternalId)
+                    _ <- requireAdministered(session = session, gameId = gameId, callerExternalId = callerExternalId)
                     _ <- repo.withdraw(gameId, id)
                     offered <- repo.listOffered(gameId)
                 } yield offered
@@ -98,10 +98,10 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                 case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
             }
             _ <- GameAdmins.require(
-              session,
-              caller.playerId,
-              gameId,
-              s"only an admin of ${game.displayName} may do that"
+              session = session,
+              caller = caller.playerId,
+              gameId = gameId,
+              refusal = s"only an admin of ${game.displayName} may do that"
             )
         } yield game
 }
@@ -195,7 +195,11 @@ object TournamentModelService {
                 if (tg.requiredSeats == 0) Nil
                 else
                     models
-                        .filter(m => Validation.designProblems(m.design, tg, m.poolSize).forall(_.isWarning))
+                        .filter(m =>
+                            Validation
+                                .designProblems(design = m.design, game = tg, defaultPoolSize = m.poolSize)
+                                .forall(_.isWarning)
+                        )
                         .map(_.tournamentModelId)
             playable.traverse_(id => repo.offer(game.gameId, id)).as(playable)
         }

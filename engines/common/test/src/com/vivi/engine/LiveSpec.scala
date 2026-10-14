@@ -25,7 +25,7 @@ class LiveSpec extends FunSuite with QuietTests {
     test("a change is pushed to the match's watchers and nobody else's, and a gone connection is forgotten") {
         val subscriptions = InMemorySubscriptions()
         val channel = Channel(gone = Set("c-gone"))
-        val live = Live("ws://x", PlayAuth.Trusted, subscriptions, channel)
+        val live = Live(url = "ws://x", auth = PlayAuth.Trusted, subscriptions = subscriptions, channel = channel)
         List("c-1" -> "m-1", "c-gone" -> "m-1", "c-other" -> "m-2").foreach((c, m) =>
             live.subscribe(Subscription(c, m))
         )
@@ -40,7 +40,8 @@ class LiveSpec extends FunSuite with QuietTests {
      * a move that stands, nor stop the other watchers hearing of it. */
     test("a push that fails is logged, and neither fails the caller nor stops the others".tag(Quiet)) {
         val channel = Channel(failing = Set("c-1"))
-        val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), channel)
+        val live =
+            Live(url = "ws://x", auth = PlayAuth.Trusted, subscriptions = InMemorySubscriptions(), channel = channel)
         live.subscribe(Subscription("c-1", "m-1"))
         live.subscribe(Subscription("c-2", "m-1"))
 
@@ -59,7 +60,13 @@ class LiveSpec extends FunSuite with QuietTests {
                 true
             }
         }
-        val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), stalled, java.time.Duration.ofMillis(300))
+        val live = Live(
+          url = "ws://x",
+          auth = PlayAuth.Trusted,
+          subscriptions = InMemorySubscriptions(),
+          channel = stalled,
+          deadline = java.time.Duration.ofMillis(300)
+        )
         (1 to 20).foreach(i => live.subscribe(Subscription(s"c-$i", "m-1")))
         live.subscribe(Subscription("c-stalled", "m-1"))
 
@@ -89,11 +96,11 @@ class LiveSpec extends FunSuite with QuietTests {
         }
         val live =
             Live(
-              "ws://x",
-              PlayAuth.Trusted,
-              InMemorySubscriptions(),
-              slow,
-              java.time.Duration.ofMillis(300),
+              url = "ws://x",
+              auth = PlayAuth.Trusted,
+              subscriptions = InMemorySubscriptions(),
+              channel = slow,
+              deadline = java.time.Duration.ofMillis(300),
               fanOut = 8
             )
         (1 to 100).foreach(i => live.subscribe(Subscription(s"c-$i", "m-1")))
@@ -116,11 +123,11 @@ class LiveSpec extends FunSuite with QuietTests {
                 else throw AwsError("the management api is down")
         }
         val live = Live(
-          "ws://x",
-          PlayAuth.Trusted,
-          InMemorySubscriptions(),
-          failing,
-          java.time.Duration.ofMillis(300),
+          url = "ws://x",
+          auth = PlayAuth.Trusted,
+          subscriptions = InMemorySubscriptions(),
+          channel = failing,
+          deadline = java.time.Duration.ofMillis(300),
           fanOut = 600
         )
         (1 to 300).foreach(i => live.subscribe(Subscription(s"failing-$i", "m-crowd")))
@@ -215,9 +222,10 @@ class LiveSpec extends FunSuite with QuietTests {
         val seen = LinkedBlockingQueue[EngineRequest]()
         server.serve { request =>
             seen.put(request)
-            if (request.method == "CONNECT" && request.query.get("as").contains("sub-alice")) EngineResponse(200, "{}")
-            else if (request.method == "CONNECT") EngineResponse(403, """{"error":"not yours"}""")
-            else EngineResponse(200, "{}")
+            if (request.method == "CONNECT" && request.query.get("as").contains("sub-alice"))
+                EngineResponse(status = 200, body = "{}")
+            else if (request.method == "CONNECT") EngineResponse(status = 403, body = """{"error":"not yours"}""")
+            else EngineResponse(status = 200, body = "{}")
         }
         try test(server, seen)
         finally server.close()
@@ -233,7 +241,7 @@ class LiveSpec extends FunSuite with QuietTests {
     test("the local server admits a connection the routes admit, and pushes down it") {
         withServer { (server, seen) =>
             val listener = Listener()
-            val ws = open(server, "match=m-9&as=sub-alice", listener)
+            val ws = open(server = server, query = "match=m-9&as=sub-alice", listener = listener)
 
             val connect = seen.poll(5, TimeUnit.SECONDS)
             assertEquals(connect.method, "CONNECT")
@@ -257,7 +265,9 @@ class LiveSpec extends FunSuite with QuietTests {
 
     test("the local server refuses a connection the routes refuse") {
         withServer { (server, seen) =>
-            val refused = intercept[java.util.concurrent.ExecutionException](open(server, "match=m-9&as=sub-carol"))
+            val refused = intercept[java.util.concurrent.ExecutionException](
+              open(server = server, query = "match=m-9&as=sub-carol")
+            )
             assert(refused.getCause.isInstanceOf[java.net.http.WebSocketHandshakeException], refused.getCause.toString)
             assertEquals(seen.poll(5, TimeUnit.SECONDS).method, "CONNECT")
             // Never admitted, so never disconnected either.
@@ -268,7 +278,7 @@ class LiveSpec extends FunSuite with QuietTests {
     test("a large push is framed with an extended length") {
         withServer { (server, seen) =>
             val listener = Listener()
-            open(server, "as=sub-alice", listener)
+            open(server = server, query = "as=sub-alice", listener = listener)
             val id = seen.poll(5, TimeUnit.SECONDS).connectionId.get
             val big = "x" * 70000
             assert(server.send(id, big))

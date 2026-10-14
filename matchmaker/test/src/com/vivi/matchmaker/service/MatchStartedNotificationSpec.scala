@@ -32,7 +32,13 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
     private class StubEngine extends GameEngineClient {
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            IO.pure(
+              CreateGameResponse(
+                statusUrl = "https://engine/status/1",
+                playUrl = "https://engine/play/1",
+                publicUrl = None
+              )
+            )
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(isCompleted = false, participants = Nil))
@@ -49,25 +55,25 @@ class MatchStartedNotificationSpec extends PropertySuite {
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Plain,
-                "Tic-Tac-Toe",
-                "Tic-Tac-Toe",
-                "description",
-                "https://engine.example.com/games",
+                gameId = GameId.unassigned,
+                gameType = GameType.Plain,
+                name = "Tic-Tac-Toe",
+                displayName = "Tic-Tac-Toe",
+                description = "description",
+                url = "https://engine.example.com/games",
                 isActive = true,
                 Seq(
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "attacker",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "attacker",
                     roleType = RoleType.Required,
                     displayName = "attacker"
                   ),
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "defender",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "defender",
                     roleType = RoleType.Optional,
                     displayName = "defender"
                   )
@@ -96,7 +102,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         beforeStart: (Services[String], Player, Game) => IO[Unit] = (_, _, _) => IO.unit
     ): IO[Match] = {
         val services = TestServices.servicesInline(
-          new StubEngine,
+          engine = new StubEngine,
           callbackBaseUrl = Some("https://matchmaker.example.com"),
           notifier = notifier,
           mail = TestServices.mailSettings
@@ -106,20 +112,28 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
         for {
             game <- makeGame(s"game-$seed")
-            challenger <- services.registration.register(s"challenger-$seed", challengerId, challengerEmail)
-            accepter <- services.registration.register(s"accepter-$seed", accepterId, accepterEmail)
-            seats = List(
-              Challenges.Seat(challenger, game.roles(0).gameRoleId),
-              Challenges.Seat(accepter, game.roles(1).gameRoleId)
+            challenger <- services.registration.register(
+              nickname = s"challenger-$seed",
+              externalId = challengerId,
+              email = challengerEmail
             )
-            t <- Challenges.offered(services, game, seats, isPublic = true)
+            accepter <- services.registration.register(
+              nickname = s"accepter-$seed",
+              externalId = accepterId,
+              email = accepterEmail
+            )
+            seats = List(
+              Challenges.Seat(player = challenger, role = game.roles(0).gameRoleId),
+              Challenges.Seat(player = accepter, role = game.roles(1).gameRoleId)
+            )
+            t <- Challenges.offered(services = services, game = game, seats = seats, isPublic = true)
             _ <- beforeStart(services, accepter, game)
             // The fixture above has sent mail of its own: an entry is news to the challenger, who is told
             // about it (and, since this challenge is then full, told that it is ready to start). Every
             // property here is about what the *start* sends, so the record is cleared at the moment the
             // start begins.
             _ <- IO(notifier.clear())
-            matchId <- Challenges.startAndChoose(services, game, t, seats)
+            matchId <- Challenges.startAndChoose(services = services, game = game, t = t, seats = seats)
             started <- TestSession.resource.use(session =>
                 new com.vivi.matchmaker.persistence.MatchRepo(session).read(game.gameId, matchId).map(_.get)
             )
@@ -130,8 +144,8 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val result = startedMatch(
-              seed,
-              notifier,
+              seed = seed,
+              notifier = notifier,
               challengerEmail = Some(s"challenger-$seed@example.com"),
               accepterEmail = Some(s"accepter-$seed@example.com")
             ).map { _ =>
@@ -155,8 +169,8 @@ class MatchStartedNotificationSpec extends PropertySuite {
             val notifier = new RecordingNotifier
             val result =
                 startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = None
                 )
@@ -171,8 +185,8 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier(isFailing = true)
             val result = startedMatch(
-              seed,
-              notifier,
+              seed = seed,
+              notifier = notifier,
               challengerEmail = Some(s"challenger-$seed@example.com"),
               accepterEmail = Some(s"accepter-$seed@example.com")
             ).map(started => started.statusUrl.contains("https://engine/status/1"))
@@ -191,14 +205,14 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val result = startedMatch(
-              seed,
-              notifier,
+              seed = seed,
+              notifier = notifier,
               challengerEmail = Some(s"challenger-$seed@example.com"),
               accepterEmail = Some(s"accepter-$seed@example.com"),
               beforeStart = (services, accepter, _) =>
                   services.notifications.updateMine(
-                    accepter.externalId,
-                    NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+                    callerExternalId = accepter.externalId,
+                    preferences = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
                   )
             ).map(_ => notifier.recipients == Set(s"challenger-$seed@example.com"))
             result.timeout(caseTimeout).unsafeRunSync()
@@ -211,14 +225,14 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val result = startedMatch(
-              seed,
-              notifier,
+              seed = seed,
+              notifier = notifier,
               challengerEmail = Some(s"challenger-$seed@example.com"),
               accepterEmail = Some(s"accepter-$seed@example.com"),
               beforeStart = (services, accepter, _) =>
                   services.notifications.updateMine(
-                    accepter.externalId,
-                    NotificationType.values.toSeq
+                    callerExternalId = accepter.externalId,
+                    preferences = NotificationType.values.toSeq
                         .filter(_ != NotificationType.MatchStarted)
                         .foldLeft(NotificationPreferences.unset)((p, kind) => p.updated(kind, Some(false)))
                   )
@@ -233,18 +247,18 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val result = startedMatch(
-              seed,
-              notifier,
+              seed = seed,
+              notifier = notifier,
               challengerEmail = Some(s"challenger-$seed@example.com"),
               accepterEmail = Some(s"accepter-$seed@example.com"),
               beforeStart = (services, accepter, game) =>
                   services.notifications.updateMine(
-                    accepter.externalId,
-                    NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
+                    callerExternalId = accepter.externalId,
+                    preferences = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
                   ) *> services.notifications.updateForGame(
-                    accepter.externalId,
-                    game.gameId,
-                    NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+                    callerExternalId = accepter.externalId,
+                    gameId = game.gameId,
+                    preferences = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
                   )
             ).map(_ => notifier.recipients == Set(s"challenger-$seed@example.com"))
             result.timeout(caseTimeout).unsafeRunSync()
@@ -259,7 +273,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -268,19 +282,36 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
                 accepterId = s"accepter-$seed"
-                before <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
-                _ <- services.notifications.updateForMatch(accepterId, started.gameId, started.matchId, muted)
-                after <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                before <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
+                _ <- services.notifications.updateForMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId,
+                  preferences = muted
+                )
+                after <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
                 // The match level is the player's own: the challenger, who is also in this match, is
                 // untouched by it.
                 challenger <- services.notifications
-                    .forMatch(s"challenger-$seed", started.gameId, started.matchId)
+                    .forMatch(
+                      callerExternalId = s"challenger-$seed",
+                      gameId = started.gameId,
+                      matchId = started.matchId
+                    )
                 // Stamped from the chain at the start, which in this fixture is the game's own
                 // defaults: every kind answered, nothing unsaid, and so nothing the form has to fill in.
             } yield before == SeatNotifications.all(true) && after == muted &&
@@ -298,7 +329,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -307,17 +338,21 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
                 _ <- services.notifications.updateForGame(
-                  accepterId,
-                  started.gameId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false))
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false))
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
                 // And the level they changed did take the change: this is the match not hearing it,
                 // not the write going nowhere.
                 settings <- services.notifications.mine(accepterId)
@@ -333,7 +368,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -342,22 +377,30 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
                 _ <- services.notifications.updateForGame(
-                  accepterId,
-                  started.gameId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
                   applyToMatches = true
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
                 // The rest come from the chain as it now stands, not from what the request named: the
                 // one question they answered is the only one that moved.
                 challenger <- services.notifications
-                    .forMatch(s"challenger-$seed", started.gameId, started.matchId)
+                    .forMatch(
+                      callerExternalId = s"challenger-$seed",
+                      gameId = started.gameId,
+                      matchId = started.matchId
+                    )
             } yield seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false) &&
                 challenger == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
@@ -373,7 +416,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -382,26 +425,30 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com"),
                   // Said before the start, so the seat is stamped with it and the game has an answer
                   // of its own for the cascade to have to overwrite.
                   beforeStart = (services, accepter, game) =>
                       services.notifications.updateForGame(
-                        accepter.externalId,
-                        game.gameId,
-                        NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
+                        callerExternalId = accepter.externalId,
+                        gameId = game.gameId,
+                        preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
                       )
                 )
                 _ <- services.notifications.updateMine(
-                  accepterId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  callerExternalId = accepterId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
                   applyToGames = true,
                   applyToMatches = true
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
                 settings <- services.notifications.mine(accepterId)
             } yield seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false) &&
                 settings.games.exists(g =>
@@ -420,7 +467,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -429,25 +476,29 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
                 // Said about this one match, and about nothing else.
                 _ <- services.notifications.updateForMatch(
-                  accepterId,
-                  started.gameId,
-                  started.matchId,
-                  SeatNotifications.all(true).copy(isNotifiedOfMatchEnded = false)
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId,
+                  preferences = SeatNotifications.all(true).copy(isNotifiedOfMatchEnded = false)
                 )
                 _ <- services.notifications.updateForGame(
-                  accepterId,
-                  started.gameId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
                   applyToMatches = true
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
             } yield seat == SeatNotifications
                 .all(true)
                 .copy(isNotifiedOfTurnTaken = false, isNotifiedOfMatchEnded = false)
@@ -462,7 +513,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -471,24 +522,28 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com"),
                   beforeStart = (services, accepter, game) =>
                       services.notifications.updateForGame(
-                        accepter.externalId,
-                        game.gameId,
-                        NotificationPreferences.unset.updated(NotificationType.MatchEnded, Some(false))
+                        callerExternalId = accepter.externalId,
+                        gameId = game.gameId,
+                        preferences = NotificationPreferences.unset.updated(NotificationType.MatchEnded, Some(false))
                       )
                 )
                 _ <- services.notifications.updateMine(
-                  accepterId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  callerExternalId = accepterId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
                   applyToGames = true,
                   applyToMatches = true
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
                 settings <- services.notifications.mine(accepterId)
             } yield
             // match-ended was never part of this save, so the game still says no to it and the seat,
@@ -511,7 +566,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
             val services = TestServices.servicesInline(
-              new StubEngine,
+              engine = new StubEngine,
               callbackBaseUrl = Some("https://matchmaker.example.com"),
               notifier = notifier,
               mail = TestServices.mailSettings
@@ -520,21 +575,29 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
             val result = for {
                 started <- startedMatch(
-                  seed,
-                  notifier,
+                  seed = seed,
+                  notifier = notifier,
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
                 // The challenger owns the challenge the match is played in, so is the only player who may call
                 // it off.
-                _ <- services.matches.cancel(started.gameId, started.matchId, s"challenger-$seed")
+                _ <- services.matches.cancel(
+                  gameId = started.gameId,
+                  matchId = started.matchId,
+                  callerExternalId = s"challenger-$seed"
+                )
                 _ <- services.notifications.updateForGame(
-                  accepterId,
-                  started.gameId,
-                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  preferences = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
                   applyToMatches = true
                 )
-                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                seat <- services.notifications.forMatch(
+                  callerExternalId = accepterId,
+                  gameId = started.gameId,
+                  matchId = started.matchId
+                )
             } yield seat == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -545,29 +608,29 @@ class MatchStartedNotificationSpec extends PropertySuite {
     property("an environment with no mail settings sends nothing") {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
-            val services = TestServices.servicesInline(new StubEngine, notifier = notifier)
+            val services = TestServices.servicesInline(engine = new StubEngine, notifier = notifier)
             val challengerId = s"quiet-challenger-$seed"
 
             val result = for {
                 game <- makeGame(s"quiet-game-$seed")
                 challenger <- services.registration.register(
-                  s"quiet-challenger-$seed",
-                  challengerId,
-                  Some(s"quiet-$seed@example.com")
+                  nickname = s"quiet-challenger-$seed",
+                  externalId = challengerId,
+                  email = Some(s"quiet-$seed@example.com")
                 )
                 accepterId = s"quiet-accepter-$seed"
                 accepter <- services.registration.register(
-                  s"quiet-accepter-$seed",
-                  accepterId,
-                  Some(s"quiet-a-$seed@example.com")
+                  nickname = s"quiet-accepter-$seed",
+                  externalId = accepterId,
+                  email = Some(s"quiet-a-$seed@example.com")
                 )
                 seats = List(
-                  Challenges.Seat(challenger, game.roles(0).gameRoleId),
-                  Challenges.Seat(accepter, game.roles(1).gameRoleId)
+                  Challenges.Seat(player = challenger, role = game.roles(0).gameRoleId),
+                  Challenges.Seat(player = accepter, role = game.roles(1).gameRoleId)
                 )
-                t <- Challenges.offered(services, game, seats, isPublic = true)
+                t <- Challenges.offered(services = services, game = game, seats = seats, isPublic = true)
                 _ <- IO(notifier.clear())
-                _ <- Challenges.startAndChoose(services, game, t, seats)
+                _ <- Challenges.startAndChoose(services = services, game = game, t = t, seats = seats)
             } yield notifier.messages.isEmpty
             result.timeout(caseTimeout).unsafeRunSync()
         }

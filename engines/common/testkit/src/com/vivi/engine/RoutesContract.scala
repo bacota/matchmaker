@@ -35,10 +35,16 @@ abstract class RoutesContract extends FunSuite {
         matchmakerKey: Option[String],
         live: Option[Live]
     ): EngineRequest => EngineResponse =
-        routes(playAuth, matchmakerKey, live, RecordingMatchmaker(), () => Instant.now())
+        routes(
+          playAuth = playAuth,
+          matchmakerKey = matchmakerKey,
+          live = live,
+          matchmaker = RecordingMatchmaker(),
+          now = () => Instant.now()
+        )
 
     private def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
-        routes(playAuth, matchmakerKey, None)
+        routes(playAuth = playAuth, matchmakerKey = matchmakerKey, live = None)
 
     /** A create request for match `matchId` seating `sub-alice` as participant 1 and `sub-bob` as participant 2, with
       * whatever else a match of this game needs to be played from its first move.
@@ -54,7 +60,12 @@ abstract class RoutesContract extends FunSuite {
     /** What a stranger's play page asks them to do, in this game's words. */
     protected def signInPrompt: String
 
-    private val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
+    private val login = LoginConfig(
+      hostedLoginUrl = "https://login.test",
+      clientId = "client-1",
+      redirectUri = "http://engine.test/auth/callback",
+      region = "us-east-1"
+    )
 
     private def fixture(
         isPublic: Boolean = true,
@@ -62,17 +73,24 @@ abstract class RoutesContract extends FunSuite {
         matchmakerKey: Option[String] = None
     ) = {
         val served = routes(playAuth, matchmakerKey)
-        val created = served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-9", isPublic))))
+        val created = served(
+          EngineRequest(
+            method = "POST",
+            path = "/games",
+            query = Map.empty,
+            body = write(createRequest("m-9", isPublic))
+          )
+        )
         (served, created)
     }
 
     private def get(routes: EngineRequest => EngineResponse, path: String, query: Map[String, String] = Map.empty) =
-        routes(EngineRequest("GET", path, query))
+        routes(EngineRequest(method = "GET", path = path, query = query))
 
     private def as(player: String) = Map("as" -> player)
 
     private def moving(routes: EngineRequest => EngineResponse, player: String) =
-        routes(EngineRequest("POST", "/matches/m-9/moves", as(player), firstMove))
+        routes(EngineRequest(method = "POST", path = "/matches/m-9/moves", query = as(player), body = firstMove))
 
     test("POST /games creates a match and answers 201 with the urls") {
         val (routes, created) = fixture()
@@ -81,12 +99,13 @@ abstract class RoutesContract extends FunSuite {
         assertEquals(response.statusUrl, "http://engine.test/matches/m-9/status")
         assertEquals(response.playUrl, "http://engine.test/matches/m-9/play")
         assertEquals(response.publicUrl, Some("http://engine.test/matches/m-9/board"))
-        assertEquals(get(routes, "/matches/m-9/status").status, 200)
+        assertEquals(get(routes = routes, path = "/matches/m-9/status").status, 200)
     }
 
     test("POST /games with a body that is not a create request is a 400, not a 500") {
         val (routes, _) = fixture()
-        val answer = routes(EngineRequest("POST", "/games", Map.empty, """{"nonsense":true}"""))
+        val answer =
+            routes(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = """{"nonsense":true}"""))
         assertEquals(answer.status, 400)
         assert(ujson.read(answer.body).obj.contains("error"))
     }
@@ -95,23 +114,28 @@ abstract class RoutesContract extends FunSuite {
         val (routes, _) = fixture()
         assertEquals(moving(routes, "sub-alice").status, 200)
 
-        val all = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
+        val all = read[Protocol.GameStatusResponse](get(routes = routes, path = "/matches/m-9/status").body)
         assertEquals(all.turns.map(_.participantId), List(1L))
 
         // From after the only move there is: nothing left to report.
         val since = all.turns.head.takenAt.toString
-        val later = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status", Map("since" -> since)).body)
+        val later = read[Protocol.GameStatusResponse](
+          get(routes = routes, path = "/matches/m-9/status", query = Map("since" -> since)).body
+        )
         assertEquals(later.turns, Nil)
 
         // Not a time at all. Answered as a bad request rather than as "send everything", which
         // would report turns matchmaker already has and charge them twice.
-        assertEquals(get(routes, "/matches/m-9/status", Map("since" -> "yesterday")).status, 400)
+        assertEquals(
+          get(routes = routes, path = "/matches/m-9/status", query = Map("since" -> "yesterday")).status,
+          400
+        )
     }
 
     test("the play page renders the state for the player whose seat it is") {
         val (routes, _) = fixture()
 
-        val page = get(routes, "/matches/m-9/play", as("sub-alice"))
+        val page = get(routes = routes, path = "/matches/m-9/play", query = as("sub-alice"))
         assertEquals(page.status, 200)
         assertEquals(page.contentType, "text/html; charset=utf-8")
         assert(page.body.contains("<!doctype html>"))
@@ -127,7 +151,7 @@ abstract class RoutesContract extends FunSuite {
     test("the play page for a stranger carries no state and offers a sign-in") {
         val (routes, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
 
-        val page = get(routes, "/matches/m-9/play")
+        val page = get(routes = routes, path = "/matches/m-9/play")
         assertEquals(page.status, 200)
         assert(page.body.contains("let state = null"), "a stranger's page must not carry the match")
         assert(page.body.contains(signInPrompt))
@@ -136,7 +160,7 @@ abstract class RoutesContract extends FunSuite {
 
     test("the state and move routes refuse a caller with no seat") {
         val (routes, _) = fixture()
-        assertEquals(get(routes, "/matches/m-9/state", as("sub-carol")).status, 403)
+        assertEquals(get(routes = routes, path = "/matches/m-9/state", query = as("sub-carol")).status, 403)
         assertEquals(moving(routes, "sub-carol").status, 403)
     }
 
@@ -144,25 +168,29 @@ abstract class RoutesContract extends FunSuite {
      * 403 keeps it and says there is no seat here, which a sign-in cannot change. */
     test("a caller who cannot be identified is refused with 401, not 403") {
         val (routes, _) = fixture()
-        assertEquals(get(routes, "/matches/m-9/state").status, 401)
-        assertEquals(routes(EngineRequest("POST", "/matches/m-9/moves", body = firstMove)).status, 401)
+        assertEquals(get(routes = routes, path = "/matches/m-9/state").status, 401)
+        assertEquals(routes(EngineRequest(method = "POST", path = "/matches/m-9/moves", body = firstMove)).status, 401)
 
         // Deployed: no claims means no authorizer vouched for anyone; a stranger's claims are a 403.
         val (deployed, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
-        assertEquals(deployed(EngineRequest("GET", "/matches/m-9/state")).status, 401)
+        assertEquals(deployed(EngineRequest(method = "GET", path = "/matches/m-9/state")).status, 401)
         assertEquals(
-          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-carol"))).status,
+          deployed(
+            EngineRequest(method = "GET", path = "/matches/m-9/state", claims = Map("sub" -> "sub-carol"))
+          ).status,
           403
         )
         assertEquals(
-          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-alice"))).status,
+          deployed(
+            EngineRequest(method = "GET", path = "/matches/m-9/state", claims = Map("sub" -> "sub-alice"))
+          ).status,
           200
         )
     }
 
     test("the sign-in callback page is served when a pool is configured, and not otherwise") {
         val (withPool, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
-        val page = get(withPool, "/auth/callback")
+        val page = get(routes = withPool, path = "/auth/callback")
         assertEquals(page.status, 200)
         assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
         // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
@@ -173,13 +201,13 @@ abstract class RoutesContract extends FunSuite {
         assert(page.body.contains("""<meta name="viewport" content="width=device-width, initial-scale=1">"""))
 
         val (withoutPool, _) = fixture()
-        assertEquals(get(withoutPool, "/auth/callback").status, 404)
+        assertEquals(get(routes = withoutPool, path = "/auth/callback").status, 404)
     }
 
     test("the public board is readable by anyone, and shows no seat as its own") {
         val (routes, _) = fixture(isPublic = true)
-        assertEquals(get(routes, "/matches/m-9/board").status, 200)
-        val watching = ujson.read(get(routes, "/matches/m-9/board/state").body)
+        assertEquals(get(routes = routes, path = "/matches/m-9/board").status, 200)
+        val watching = ujson.read(get(routes = routes, path = "/matches/m-9/board/state").body)
         assert(watching.obj.get("you").forall(_.isNull), "nobody's seat is the public board's")
     }
 
@@ -189,27 +217,27 @@ abstract class RoutesContract extends FunSuite {
     private def state(routes: EngineRequest => EngineResponse, player: String, held: Option[String] = None) =
         routes(
           EngineRequest(
-            "GET",
-            "/matches/m-9/state",
-            as(player),
+            method = "GET",
+            path = "/matches/m-9/state",
+            query = as(player),
             headers = held.map(tag => Map("if-none-match" -> tag)).getOrElse(Map.empty)
           )
         )
 
     test("a state is tagged, and asked for again with its tag is a bodiless 304 until a move changes it") {
         val (routes, _) = fixture()
-        val first = state(routes, "sub-alice")
+        val first = state(routes = routes, player = "sub-alice")
         assertEquals(first.status, 200)
         val tag = first.headers("etag")
         assertEquals(first.headers("cache-control"), "private, no-cache")
 
-        val again = state(routes, "sub-alice", Some(tag))
+        val again = state(routes = routes, player = "sub-alice", held = Some(tag))
         assertEquals(again.status, 304)
         assertEquals(again.body, "")
         assertEquals(again.headers("etag"), tag)
 
         assertEquals(moving(routes, "sub-alice").status, 200)
-        val moved = state(routes, "sub-alice", Some(tag))
+        val moved = state(routes = routes, player = "sub-alice", held = Some(tag))
         assertEquals(moved.status, 200)
         assertNotEquals(moved.headers("etag"), tag)
     }
@@ -218,30 +246,34 @@ abstract class RoutesContract extends FunSuite {
     // never the other's, so a browser holding one player's copy is never told it may show it to the other.
     test("one player's tag does not answer for the other's state") {
         val (routes, _) = fixture()
-        val alices = state(routes, "sub-alice").headers("etag")
-        assertEquals(state(routes, "sub-bob", Some(alices)).status, 200)
+        val alices = state(routes = routes, player = "sub-alice").headers("etag")
+        assertEquals(state(routes = routes, player = "sub-bob", held = Some(alices)).status, 200)
     }
 
     test("the public board's state is tagged and revalidated the same way") {
         val (routes, _) = fixture()
-        val board = get(routes, "/matches/m-9/board/state")
+        val board = get(routes = routes, path = "/matches/m-9/board/state")
         assertEquals(board.status, 200)
         val again = routes(
-          EngineRequest("GET", "/matches/m-9/board/state", headers = Map("if-none-match" -> board.headers("etag")))
+          EngineRequest(
+            method = "GET",
+            path = "/matches/m-9/board/state",
+            headers = Map("if-none-match" -> board.headers("etag"))
+          )
         )
         assertEquals(again.status, 304)
     }
 
     test("a private match has no public board") {
         val (routes, _) = fixture(isPublic = false)
-        assertEquals(get(routes, "/matches/m-9/board").status, 403)
-        assertEquals(get(routes, "/matches/m-9/board/state").status, 403)
+        assertEquals(get(routes = routes, path = "/matches/m-9/board").status, 403)
+        assertEquals(get(routes = routes, path = "/matches/m-9/board/state").status, 403)
     }
 
     test("an unknown match and an unknown path are both 404") {
         val (routes, _) = fixture()
-        assertEquals(get(routes, "/matches/nope/status").status, 404)
-        assertEquals(get(routes, "/nothing/here").status, 404)
+        assertEquals(get(routes = routes, path = "/matches/nope/status").status, 404)
+        assertEquals(get(routes = routes, path = "/nothing/here").status, 404)
     }
 
     // ---------------------------------------------------------------------------
@@ -252,15 +284,16 @@ abstract class RoutesContract extends FunSuite {
         // The fixture's own create call is made with no key, so it is the refusal being asserted.
         val (routes, created) = fixture(matchmakerKey = Some("s3cret"))
         assertEquals(created.status, 401)
-        assertEquals(routes(EngineRequest("GET", "/matches/m-9/status")).status, 401)
-        assertEquals(routes(EngineRequest("POST", "/matches/m-9/cancel")).status, 401)
+        assertEquals(routes(EngineRequest(method = "GET", path = "/matches/m-9/status")).status, 401)
+        assertEquals(routes(EngineRequest(method = "POST", path = "/matches/m-9/cancel")).status, 401)
     }
 
     test("a wrong key is refused exactly as a missing one is") {
         val (routes, _) = fixture(matchmakerKey = Some("s3cret"))
-        val wrong = routes(EngineRequest("GET", "/matches/m-9/status", headers = Map("x-api-key" -> "s3crea")))
+        val wrong =
+            routes(EngineRequest(method = "GET", path = "/matches/m-9/status", headers = Map("x-api-key" -> "s3crea")))
         assertEquals(wrong.status, 401)
-        assertEquals(wrong.body, routes(EngineRequest("GET", "/matches/m-9/status")).body)
+        assertEquals(wrong.body, routes(EngineRequest(method = "GET", path = "/matches/m-9/status")).body)
     }
 
     test("the right key gets in") {
@@ -268,27 +301,41 @@ abstract class RoutesContract extends FunSuite {
         val served = routes(PlayAuth.Trusted, Some("s3cret"))
         assertEquals(
           served(
-            EngineRequest("POST", "/games", Map.empty, write(createRequest("m-1", isPublic = true)), keyed)
+            EngineRequest(
+              method = "POST",
+              path = "/games",
+              query = Map.empty,
+              body = write(createRequest("m-1", isPublic = true)),
+              headers = keyed
+            )
           ).status,
           201
         )
-        assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
+        assertEquals(served(EngineRequest(method = "GET", path = "/matches/m-1/status", headers = keyed)).status, 200)
     }
 
     test("matchmaker cancelling a match drops it, only with the key, and saying so twice is harmless") {
         val keyed = Map("x-api-key" -> "s3cret")
         val served = routes(PlayAuth.Trusted, Some("s3cret"))
         val created = read[Protocol.CreateGameResponse](
-          served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-1", isPublic = true)), keyed)).body
+          served(
+            EngineRequest(
+              method = "POST",
+              path = "/games",
+              query = Map.empty,
+              body = write(createRequest("m-1", isPublic = true)),
+              headers = keyed
+            )
+          ).body
         )
         assertEquals(created.cancelUrl, Some("http://engine.test/matches/m-1/cancel"))
 
-        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel")).status, 401)
-        assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
+        assertEquals(served(EngineRequest(method = "POST", path = "/matches/m-1/cancel")).status, 401)
+        assertEquals(served(EngineRequest(method = "GET", path = "/matches/m-1/status", headers = keyed)).status, 200)
 
-        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel", headers = keyed)).status, 204)
-        assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 404)
-        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel", headers = keyed)).status, 204)
+        assertEquals(served(EngineRequest(method = "POST", path = "/matches/m-1/cancel", headers = keyed)).status, 204)
+        assertEquals(served(EngineRequest(method = "GET", path = "/matches/m-1/status", headers = keyed)).status, 404)
+        assertEquals(served(EngineRequest(method = "POST", path = "/matches/m-1/cancel", headers = keyed)).status, 204)
     }
 
     test("a player route is not protected by matchmaker's key") {
@@ -298,13 +345,21 @@ abstract class RoutesContract extends FunSuite {
         val served = routes(PlayAuth.Trusted, Some("s3cret"))
         val keyed = Map("x-api-key" -> "s3cret")
         val created =
-            served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-9", isPublic = true)), keyed))
+            served(
+              EngineRequest(
+                method = "POST",
+                path = "/games",
+                query = Map.empty,
+                body = write(createRequest("m-9", isPublic = true)),
+                headers = keyed
+              )
+            )
         assertEquals(created.status, 201)
 
-        assertEquals(get(served, "/matches/m-9/play", as("sub-alice")).status, 200)
-        assertEquals(get(served, "/matches/m-9/state", as("sub-alice")).status, 200)
+        assertEquals(get(routes = served, path = "/matches/m-9/play", query = as("sub-alice")).status, 200)
+        assertEquals(get(routes = served, path = "/matches/m-9/state", query = as("sub-alice")).status, 200)
         assertEquals(moving(served, "sub-alice").status, 200)
-        assertEquals(get(served, "/health").status, 200)
+        assertEquals(get(routes = served, path = "/health").status, 200)
     }
 
     // ---------------------------------------------------------------------------
@@ -327,33 +382,50 @@ abstract class RoutesContract extends FunSuite {
 
     private def liveFixture(isPublic: Boolean = true, auth: PlayAuth = PlayAuth.Trusted) = {
         val channel = RecordingChannel()
-        val live = Live("ws://engine.test/live", auth, InMemorySubscriptions(), channel)
-        val served = routes(PlayAuth.Trusted, None, Some(live))
+        val live =
+            Live(url = "ws://engine.test/live", auth = auth, subscriptions = InMemorySubscriptions(), channel = channel)
+        val served = routes(playAuth = PlayAuth.Trusted, matchmakerKey = None, live = Some(live))
         assertEquals(
-          served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-9", isPublic)))).status,
+          served(
+            EngineRequest(
+              method = "POST",
+              path = "/games",
+              query = Map.empty,
+              body = write(createRequest("m-9", isPublic))
+            )
+          ).status,
           201
         )
         (served, channel)
     }
 
     private def connecting(routes: EngineRequest => EngineResponse, id: String, query: Map[String, String]) =
-        routes(EngineRequest("CONNECT", "/live", query, connectionId = Some(id)))
+        routes(EngineRequest(method = "CONNECT", path = "/live", query = query, connectionId = Some(id)))
 
     test("Play Live admits a seat of the match, and a watcher of a public one") {
         val (routes, _) = liveFixture()
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-alice")).status, 200)
-        assertEquals(connecting(routes, "c-2", Map("match" -> "m-9", "board" -> "1")).status, 200)
+        assertEquals(
+          connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9", "as" -> "sub-alice")).status,
+          200
+        )
+        assertEquals(connecting(routes = routes, id = "c-2", query = Map("match" -> "m-9", "board" -> "1")).status, 200)
     }
 
     /* Refused on the terms the state routes refuse on, since a connection is told when the match
      * moves — which in a private match is the players' business. */
     test("Play Live refuses a connection the state routes would refuse") {
         val (routes, _) = liveFixture(isPublic = false)
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9")).status, 401)
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-carol")).status, 403)
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "board" -> "1")).status, 403)
-        assertEquals(connecting(routes, "c-1", Map("match" -> "nope", "as" -> "sub-alice")).status, 404)
-        assertEquals(connecting(routes, "c-1", Map("as" -> "sub-alice")).status, 400)
+        assertEquals(connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9")).status, 401)
+        assertEquals(
+          connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9", "as" -> "sub-carol")).status,
+          403
+        )
+        assertEquals(connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9", "board" -> "1")).status, 403)
+        assertEquals(
+          connecting(routes = routes, id = "c-1", query = Map("match" -> "nope", "as" -> "sub-alice")).status,
+          404
+        )
+        assertEquals(connecting(routes = routes, id = "c-1", query = Map("as" -> "sub-alice")).status, 400)
     }
 
     test("Play Live reads a player's token from the query, where a browser has to put it") {
@@ -365,15 +437,18 @@ abstract class RoutesContract extends FunSuite {
                 request.bearerToken.toRight(Refusal.Unauthenticated("no token"))
         }
         val (routes, _) = liveFixture(auth = byToken)
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "token" -> "sub-alice")).status, 200)
-        assertEquals(connecting(routes, "c-2", Map("match" -> "m-9")).status, 401)
+        assertEquals(
+          connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9", "token" -> "sub-alice")).status,
+          200
+        )
+        assertEquals(connecting(routes = routes, id = "c-2", query = Map("match" -> "m-9")).status, 401)
     }
 
     test("a move is pushed to every connection watching the match, and only as the fact of a change") {
         val (routes, channel) = liveFixture()
-        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
-        connecting(routes, "bob", Map("match" -> "m-9", "as" -> "sub-bob"))
-        connecting(routes, "watcher", Map("match" -> "m-9", "board" -> "1"))
+        connecting(routes = routes, id = "alice", query = Map("match" -> "m-9", "as" -> "sub-alice"))
+        connecting(routes = routes, id = "bob", query = Map("match" -> "m-9", "as" -> "sub-bob"))
+        connecting(routes = routes, id = "watcher", query = Map("match" -> "m-9", "board" -> "1"))
 
         assertEquals(moving(routes, "sub-alice").status, 200)
         assertEquals(channel.sent.map(_._1).toSet, Set("alice", "bob", "watcher"))
@@ -383,18 +458,21 @@ abstract class RoutesContract extends FunSuite {
 
     test("nothing is pushed for a read, or for a move that was refused") {
         val (routes, channel) = liveFixture()
-        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
+        connecting(routes = routes, id = "alice", query = Map("match" -> "m-9", "as" -> "sub-alice"))
 
-        assertEquals(get(routes, "/matches/m-9/state", as("sub-alice")).status, 200)
+        assertEquals(get(routes = routes, path = "/matches/m-9/state", query = as("sub-alice")).status, 200)
         assertEquals(moving(routes, "sub-carol").status, 403)
         assertEquals(channel.sent.toList, Nil)
     }
 
     test("a disconnected connection, or one the channel reports gone, is pushed to no more") {
         val (routes, channel) = liveFixture()
-        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
-        connecting(routes, "bob", Map("match" -> "m-9", "as" -> "sub-bob"))
-        assertEquals(routes(EngineRequest("DISCONNECT", "/live", connectionId = Some("alice"))).status, 200)
+        connecting(routes = routes, id = "alice", query = Map("match" -> "m-9", "as" -> "sub-alice"))
+        connecting(routes = routes, id = "bob", query = Map("match" -> "m-9", "as" -> "sub-bob"))
+        assertEquals(
+          routes(EngineRequest(method = "DISCONNECT", path = "/live", connectionId = Some("alice"))).status,
+          200
+        )
         channel.gone = Set("bob")
 
         assertEquals(moving(routes, "sub-alice").status, 200)
@@ -403,23 +481,33 @@ abstract class RoutesContract extends FunSuite {
 
     test("a connection event is only ever a connection's: a plain request with its method is not found") {
         val (routes, _) = liveFixture()
-        assertEquals(routes(EngineRequest("CONNECT", "/live", Map("match" -> "m-9", "as" -> "sub-alice"))).status, 404)
+        assertEquals(
+          routes(
+            EngineRequest(method = "CONNECT", path = "/live", query = Map("match" -> "m-9", "as" -> "sub-alice"))
+          ).status,
+          404
+        )
         // And an engine without Play Live refuses the connection itself.
         val (plain, _) = fixture()
-        assertEquals(connecting(plain, "c-1", Map("match" -> "m-9", "as" -> "sub-alice")).status, 404)
+        assertEquals(
+          connecting(routes = plain, id = "c-1", query = Map("match" -> "m-9", "as" -> "sub-alice")).status,
+          404
+        )
     }
 
     test("the page offers the Play Live switch only when the engine has somewhere to connect it") {
         val (live, _) = liveFixture()
-        val offered = get(live, "/matches/m-9/play", as("sub-alice")).body
+        val offered = get(routes = live, path = "/matches/m-9/play", query = as("sub-alice")).body
         assert(offered.contains("""const liveUrl = "ws://engine.test/live";"""))
         assert(offered.contains("""<input type="checkbox" id="live-toggle""""))
         assert(offered.contains("> Play Live</label>"), "the switch is called Play Live")
         assert(offered.contains("""id="live-status" role="status" aria-live="polite""""))
-        assert(get(live, "/matches/m-9/board").body.contains("""const liveUrl = "ws://engine.test/live";"""))
+        assert(
+          get(routes = live, path = "/matches/m-9/board").body.contains("""const liveUrl = "ws://engine.test/live";""")
+        )
 
         val (plain, _) = fixture()
-        val page = get(plain, "/matches/m-9/play", as("sub-alice")).body
+        val page = get(routes = plain, path = "/matches/m-9/play", query = as("sub-alice")).body
         assert(page.contains("const liveUrl = null;"), "no url, no switch")
         assert(page.contains("keepCurrent(refresh,"), "without Play Live the page still keeps itself current")
     }
@@ -429,7 +517,7 @@ abstract class RoutesContract extends FunSuite {
      * shows — its refresh and its own move's — takes a ticket for that. */
     test("the page shows its answers in the order it asked for them") {
         val (routes, _) = fixture()
-        val page = get(routes, "/matches/m-9/play", as("sub-alice")).body
+        val page = get(routes = routes, path = "/matches/m-9/play", query = as("sub-alice")).body
         assert(page.contains("function latest(ticket)"))
         val sendStarts = page.indexOf("async function send(url, init, ticket) {")
         assert(sendStarts >= 0, "send must take the caller's ticket")
@@ -476,16 +564,25 @@ abstract class RoutesContract extends FunSuite {
     private def liveMatch(live: Option[Live] = None) = {
         val clock = AtomicReference(kickOff)
         val matchmaker = RecordingMatchmaker()
-        val served = routes(PlayAuth.Trusted, None, live, matchmaker, () => clock.get)
-        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(calledBack()))).status, 201)
+        val served = routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = None,
+          live = live,
+          matchmaker = matchmaker,
+          now = () => clock.get
+        )
+        assertEquals(
+          served(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = write(calledBack()))).status,
+          201
+        )
         (served, matchmaker, (seconds: Long) => clock.updateAndGet(_.plusSeconds(seconds)): Unit)
     }
 
     private def statusOf(routes: EngineRequest => EngineResponse) =
-        read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
+        read[Protocol.GameStatusResponse](get(routes = routes, path = "/matches/m-9/status").body)
 
     private def stateOf(routes: EngineRequest => EngineResponse, player: String) =
-        ujson.read(get(routes, "/matches/m-9/state", as(player)).body)
+        ujson.read(get(routes = routes, path = "/matches/m-9/state", query = as(player)).body)
 
     test("a live match reports none of its moves to matchmaker") {
         val (routes, matchmaker, _) = liveMatch()
@@ -495,8 +592,19 @@ abstract class RoutesContract extends FunSuite {
 
     test("a match that is not live has no clock, and reports its moves as ever") {
         val matchmaker = RecordingMatchmaker()
-        val served = routes(PlayAuth.Trusted, None, None, matchmaker, () => kickOff)
-        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(calledBack(live = None)))).status, 201)
+        val served = routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = None,
+          live = None,
+          matchmaker = matchmaker,
+          now = () => kickOff
+        )
+        assertEquals(
+          served(
+            EngineRequest(method = "POST", path = "/games", query = Map.empty, body = write(calledBack(live = None)))
+          ).status,
+          201
+        )
         assertEquals(moving(served, "sub-alice").status, 200)
         assertEquals(matchmaker.moves.size, 1)
         assert(!stateOf(served, "sub-alice").obj.contains("clock"), "only a live match has a clock")
@@ -586,8 +694,20 @@ abstract class RoutesContract extends FunSuite {
     test("a player opening the board, and a forfeit found by a read, are each pushed to the watchers once") {
         val channel = RecordingChannel()
         val (routes, _, advance) =
-            liveMatch(Some(Live("ws://engine.test/live", PlayAuth.Trusted, InMemorySubscriptions(), channel)))
-        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-bob")).status, 200)
+            liveMatch(
+              Some(
+                Live(
+                  url = "ws://engine.test/live",
+                  auth = PlayAuth.Trusted,
+                  subscriptions = InMemorySubscriptions(),
+                  channel = channel
+                )
+              )
+            )
+        assertEquals(
+          connecting(routes = routes, id = "c-1", query = Map("match" -> "m-9", "as" -> "sub-bob")).status,
+          200
+        )
         val changed = "c-1" -> """{"changed":"m-9"}"""
 
         // Alice's clock starting is news to bob, whose page shows it.
@@ -607,7 +727,14 @@ abstract class RoutesContract extends FunSuite {
     test("a live match needs a time limit of at least a second, of a kind the engine knows") {
         val served = routes(PlayAuth.Trusted, None)
         def creating(terms: Protocol.LiveTerms) =
-            served(EngineRequest("POST", "/games", Map.empty, write(calledBack(live = Some(terms))))).status
+            served(
+              EngineRequest(
+                method = "POST",
+                path = "/games",
+                query = Map.empty,
+                body = write(calledBack(live = Some(terms)))
+              )
+            ).status
         assertEquals(creating(Protocol.LiveTerms(0)), 400)
         assertEquals(creating(Protocol.LiveTerms(30, "HOURGLASS")), 400)
     }
@@ -618,9 +745,18 @@ abstract class RoutesContract extends FunSuite {
     private def chessMatch() = {
         val clock = AtomicReference(kickOff)
         val matchmaker = RecordingMatchmaker()
-        val served = routes(PlayAuth.Trusted, None, None, matchmaker, () => clock.get)
+        val served = routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = None,
+          live = None,
+          matchmaker = matchmaker,
+          now = () => clock.get
+        )
         val create = calledBack(live = Some(Protocol.LiveTerms(30, "TOTAL")))
-        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(create))).status, 201)
+        assertEquals(
+          served(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = write(create))).status,
+          201
+        )
         (served, matchmaker, (seconds: Long) => clock.updateAndGet(_.plusSeconds(seconds)): Unit)
     }
 
@@ -652,7 +788,7 @@ abstract class RoutesContract extends FunSuite {
 
     test("the play page counts a live match's turn down, without announcing every second") {
         val (routes, _, _) = liveMatch()
-        val page = get(routes, "/matches/m-9/play", as("sub-alice")).body
+        val page = get(routes = routes, path = "/matches/m-9/play", query = as("sub-alice")).body
         assert(page.contains("""<p id="turn-clock" role="timer" aria-live="off" hidden>"""))
         assert(page.contains("function turnClock(refresh)"))
         assert(page.contains("const showClock = turnClock(refresh);"))

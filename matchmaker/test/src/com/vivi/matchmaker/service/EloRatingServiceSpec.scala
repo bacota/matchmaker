@@ -35,42 +35,49 @@ class EloRatingServiceSpec extends PropertySuite {
         @volatile var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil)
 
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            IO.pure(
+              CreateGameResponse(
+                statusUrl = "https://engine/status/1",
+                playUrl = "https://engine/play/1",
+                publicUrl = None
+              )
+            )
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(status)
     }
 
     private val engine = new StubEngine
-    private val services = TestServices.servicesWith(engine)
+    private val services = TestServices.servicesWith(engine = engine)
 
     private def unique(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
 
-    private def register(): IO[Player] = services.registration.register(unique("elo"), unique("elo-sub"))
+    private def register(): IO[Player] =
+        services.registration.register(nickname = unique("elo"), externalId = unique("elo-sub"))
 
     private def makeGame(unimportantRoles: Boolean = false): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Plain,
-                "Duel",
-                "Duel",
-                "description",
-                "https://engine.example.com/games",
+                gameId = GameId.unassigned,
+                gameType = GameType.Plain,
+                name = "Duel",
+                displayName = "Duel",
+                description = "description",
+                url = "https://engine.example.com/games",
                 isActive = true,
                 Seq(
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "first",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "first",
                     roleType = RoleType.Required,
                     displayName = "First"
                   ),
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "second",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "second",
                     roleType = RoleType.Required,
                     displayName = "Second"
                   )
@@ -91,20 +98,30 @@ class EloRatingServiceSpec extends PropertySuite {
             overall <- register()
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
             host <- register()
-            _ <- services.gameAdmins.grant(game.gameId, host.playerId, overall.externalId)
+            _ <- services.gameAdmins.grant(
+              gameId = game.gameId,
+              playerId = host.playerId,
+              callerExternalId = overall.externalId
+            )
             first <- register()
             second <- register()
-        } yield Fixture(game, overall.copy(isAdmin = true), host, first, second)
+        } yield Fixture(
+          game = game,
+          overall = overall.copy(isAdmin = true),
+          host = host,
+          first = first,
+          second = second
+        )
 
     /** A match between the two players, hosted by the game's admin, started and not yet over. */
     private def started(f: Fixture, friendly: Boolean, timeLimit: Option[Duration] = None): IO[MatchId] =
         Challenges
             .startedMatch(
-              services,
-              f.game,
-              List(
-                Challenges.Seat(f.first, f.game.roles(0).gameRoleId),
-                Challenges.Seat(f.second, f.game.roles(1).gameRoleId)
+              services = services,
+              game = f.game,
+              seats = List(
+                Challenges.Seat(player = f.first, role = f.game.roles(0).gameRoleId),
+                Challenges.Seat(player = f.second, role = f.game.roles(1).gameRoleId)
               ),
               friendly = friendly,
               roundDuration = timeLimit,
@@ -115,9 +132,10 @@ class EloRatingServiceSpec extends PropertySuite {
     /** A challenge the game's admin offers and will not play in, which anybody may enter. */
     private def openChallenge(f: Fixture, friendly: Boolean): IO[Tournament] =
         Challenges.offeredIn(f.game) *> services.tournaments.createChallenge(
-          f.game.gameId,
-          ChallengeRequest(isPlaying = false, poolSize = Some(2), isFriendly = friendly, isAutoStarted = true),
-          f.host.externalId
+          gameId = f.game.gameId,
+          request =
+              ChallengeRequest(isPlaying = false, poolSize = Some(2), isFriendly = friendly, isAutoStarted = true),
+          callerExternalId = f.host.externalId
         )
 
     /** A friendly match `first` plays both seats of.
@@ -127,7 +145,7 @@ class EloRatingServiceSpec extends PropertySuite {
       */
     private def playingThemselves(f: Fixture): IO[MatchId] =
         for {
-            matchId <- started(f, friendly = true)
+            matchId <- started(f = f, friendly = true)
             _ <- TestSession.resource.use { session =>
                 val repo = new ParticipantRepo(session)
                 repo.listForMatch(f.game.gameId, matchId).flatMap { seats =>
@@ -156,14 +174,19 @@ class EloRatingServiceSpec extends PropertySuite {
             results = seats.map { (p, _, _) =>
                 val won = p.playerId == winner.playerId
                 ReportedResult(
-                  p.participantId,
+                  participantId = p.participantId,
                   rank = if (won) 1 else 2,
                   scores = Map.empty,
                   isWinner = won,
                   isForfeit = forfeitOnLoser && !won
                 )
             }
-            _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
+            _ <- through.engine.recordResults(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              results = results,
+              callerExternalId = f.game.externalId
+            )
         } yield ()
 
     /** The two players' ratings as anybody may see them: a player no rated match has moved and no admin has set has
@@ -174,7 +197,8 @@ class EloRatingServiceSpec extends PropertySuite {
             val repo = new EloRatingRepo(session)
             List(f.first, f.second)
                 .traverse(p =>
-                    repo.readRated(f.game.gameId, p.playerId).map(_.map(r => p.playerId -> (r.rating, r.matches)))
+                    repo.readRated(game = f.game.gameId, player = p.playerId)
+                        .map(_.map(r => p.playerId -> (r.rating, r.matches)))
                 )
                 .map(_.flatten.toMap)
         }
@@ -187,7 +211,8 @@ class EloRatingServiceSpec extends PropertySuite {
             val repo = new EloRatingRepo(session)
             List(f.first, f.second)
                 .traverse(p =>
-                    repo.read(f.game.gameId, p.playerId).map(_.map(r => p.playerId -> (r.rating, r.matches)))
+                    repo.read(game = f.game.gameId, player = p.playerId)
+                        .map(_.map(r => p.playerId -> (r.rating, r.matches)))
                 )
                 .map(_.flatten.toMap)
         }
@@ -224,7 +249,7 @@ class EloRatingServiceSpec extends PropertySuite {
             List(f.first -> f.game.roles(0), f.second -> f.game.roles(1))
                 .traverse((p, role) =>
                     repo
-                        .readRated(f.game.gameId, p.playerId, Some(role.gameRoleId))
+                        .readRated(game = f.game.gameId, player = p.playerId, role = Some(role.gameRoleId))
                         .map(_.map(r => p.playerId -> (r.rating, r.matches)))
                 )
                 .map(_.flatten.toMap)
@@ -252,10 +277,10 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a match that is not friendly moves both players from the starting rating, once however often it is told") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             // The engine's callback retried: the match is already completed, so nothing moves again.
-            _ <- finish(f, matchId, f.first)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
             shown <- resultElo(f.second, matchId)
@@ -275,11 +300,15 @@ class EloRatingServiceSpec extends PropertySuite {
     test("settling a rated match's ending places its players on the leaderboard") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.second)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.second)
             // Whatever it says of the archive, which is not this test's business.
             _ <- services.ending.settle(f.game.gameId, matchId)
-            board <- services.ratings.leaderboard(f.game.gameId, 0, f.first.externalId)
+            board <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.first.externalId
+            )
         } yield (f, board)
         val (f, board) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(
@@ -291,22 +320,40 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a player's standing is their place, the rating it was worked out from, and their rating now") {
         // Ended with nothing settling it in the background, which would place the moved rating whenever it ran: the
         // listener is this test's to run.
-        val unsettled = TestServices.servicesWith(engine, matchEndings = Some(MatchEndings.disabled))
+        val unsettled = TestServices.servicesWith(engine = engine, matchEndings = Some(MatchEndings.disabled))
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first, unsettled)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first, through = unsettled)
             _ <- services.ending.settle(f.game.gameId, matchId)
-            winner <- services.ratings.standing(f.game.gameId, f.first.playerId, f.second.externalId)
+            winner <- services.ratings.standing(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              callerExternalId = f.second.externalId
+            )
             // A rating moved since the player was placed: the place, and what it was worked out from, trail it until
             // the listener places them again.
             _ <- TestSession.resource.use(session =>
                 new EloRatingRepo(session).played(f.game.gameId, f.second.playerId, 40, MatchRecord())
             )
-            moved <- services.ratings.standing(f.game.gameId, f.second.playerId, f.first.externalId)
-            board <- services.ratings.leaderboard(f.game.gameId, 0, f.first.externalId)
-            unrated <- refusal(services.ratings.standing(f.game.gameId, f.host.playerId, f.first.externalId))
-            noGame <- refusal(services.ratings.standing(GameId(-1), f.first.playerId, f.first.externalId))
+            moved <- services.ratings.standing(
+              gameId = f.game.gameId,
+              playerId = f.second.playerId,
+              callerExternalId = f.first.externalId
+            )
+            board <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.first.externalId
+            )
+            unrated <- refusal(
+              services.ratings
+                  .standing(gameId = f.game.gameId, playerId = f.host.playerId, callerExternalId = f.first.externalId)
+            )
+            noGame <- refusal(
+              services.ratings
+                  .standing(gameId = GameId(-1), playerId = f.first.playerId, callerExternalId = f.first.externalId)
+            )
         } yield (winner, moved, board, unrated, noGame)
         val (winner, moved, board, unrated, noGame) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals((winner.rank, winner.rankedRating, winner.rating), (Some(1), Some(1516), 1516))
@@ -323,19 +370,29 @@ class EloRatingServiceSpec extends PropertySuite {
     test("finding players in the rankings by the start of a nickname finds the rated ones, whatever the case") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             _ <- services.ending.settle(f.game.gameId, matchId)
             // Upper case, and only the start of the name.
             first <- services.ratings.findInRankings(
-              f.game.gameId,
-              f.first.nickname.toUpperCase.dropRight(4),
-              f.host.externalId
+              gameId = f.game.gameId,
+              prefix = f.first.nickname.toUpperCase.dropRight(4),
+              callerExternalId = f.host.externalId
             )
             // The host has played nothing here, so has no rating to be found by.
-            host <- services.ratings.findInRankings(f.game.gameId, f.host.nickname, f.first.externalId)
-            blank <- refusal(services.ratings.findInRankings(f.game.gameId, "  ", f.first.externalId))
-            noGame <- refusal(services.ratings.findInRankings(GameId(-1), f.first.nickname, f.first.externalId))
+            host <- services.ratings.findInRankings(
+              gameId = f.game.gameId,
+              prefix = f.host.nickname,
+              callerExternalId = f.first.externalId
+            )
+            blank <- refusal(
+              services.ratings
+                  .findInRankings(gameId = f.game.gameId, prefix = "  ", callerExternalId = f.first.externalId)
+            )
+            noGame <- refusal(
+              services.ratings
+                  .findInRankings(gameId = GameId(-1), prefix = f.first.nickname, callerExternalId = f.first.externalId)
+            )
         } yield (f, first, host, blank, noGame)
         val (f, first, host, blank, noGame) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(
@@ -351,13 +408,16 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a rated match's result goes on both players' records, and a friendly one on neither") {
         val result = for {
             f <- fixture()
-            rated <- started(f, friendly = false)
-            _ <- finish(f, rated, f.first)
-            friendly <- started(f, friendly = true)
-            _ <- finish(f, friendly, f.first)
+            rated <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = rated, winner = f.first)
+            friendly <- started(f = f, friendly = true)
+            _ <- finish(f = f, matchId = friendly, winner = f.first)
             stored <- TestSession.resource.use { session =>
                 val repo = new EloRatingRepo(session)
-                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                (
+                  repo.read(game = f.game.gameId, player = f.first.playerId),
+                  repo.read(game = f.game.gameId, player = f.second.playerId)
+                ).tupled
             }
         } yield stored
         val (first, second) = result.timeout(caseTimeout).unsafeRunSync()
@@ -371,17 +431,30 @@ class EloRatingServiceSpec extends PropertySuite {
         def records(f: Fixture) =
             TestSession.resource.use { session =>
                 val repo = new EloRatingRepo(session)
-                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                (
+                  repo.read(game = f.game.gameId, player = f.first.playerId),
+                  repo.read(game = f.game.gameId, player = f.second.playerId)
+                ).tupled
                     .map((a, b) => (a.map(_.record), b.map(_.record)))
             }
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first, forfeitOnLoser = true)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first, forfeitOnLoser = true)
             rated <- records(f)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = true,
+              f.host.externalId
+            )
             friendly <- records(f)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = false,
+              f.host.externalId
+            )
             again <- records(f)
         } yield (rated, friendly, again)
         val (rated, friendly, again) = result.timeout(caseTimeout).unsafeRunSync()
@@ -394,12 +467,20 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a match made friendly after it finished takes its result off both players' records") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.second)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.second)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = true,
+              f.host.externalId
+            )
             stored <- TestSession.resource.use { session =>
                 val repo = new EloRatingRepo(session)
-                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                (
+                  repo.read(game = f.game.gameId, player = f.first.playerId),
+                  repo.read(game = f.game.gameId, player = f.second.playerId)
+                ).tupled
             }
         } yield stored
         val (first, second) = result.timeout(caseTimeout).unsafeRunSync()
@@ -410,11 +491,16 @@ class EloRatingServiceSpec extends PropertySuite {
     test("the delta is worked out from the ratings the match began at, and added to the rating as it is now") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
+            matchId <- started(f = f, friendly = false)
             // Changed while the match is played. The match was begun at 1500 apiece, and is rated as
             // such; the change stands, and the delta is added to it.
-            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1700, f.host.externalId)
-            _ <- finish(f, matchId, f.first)
+            _ <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              rating = 1700,
+              callerExternalId = f.host.externalId
+            )
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
         } yield (f, now, recorded)
@@ -429,7 +515,7 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a turn that runs out in a match that is not friendly is a loss to the player who ran out") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false, timeLimit = Some(Duration.ofMinutes(10)))
+            matchId <- started(f = f, friendly = false, timeLimit = Some(Duration.ofMinutes(10)))
             seats <- TestSession.resource.use(session =>
                 new ParticipantRepo(session).listForMatch(f.game.gameId, matchId).map(_.map(_._1))
             )
@@ -438,10 +524,10 @@ class EloRatingServiceSpec extends PropertySuite {
             // The second player moved an hour ago, against a ten-minute limit: the first is fifty
             // minutes over, and the engine, when asked, says the same.
             anHourAgo <- IO.realTimeInstant.map(_.minusSeconds(3600))
-            m <- services.engine.read(f.game.gameId, matchId, f.first.externalId)
+            m <- services.engine.read(gameId = f.game.gameId, matchId = matchId, callerExternalId = f.first.externalId)
             _ <- services.engine.recordMove(
-              f.game.gameId,
-              matchId,
+              gameId = f.game.gameId,
+              matchId = matchId,
               moved = second.participantId,
               next = List(first.participantId),
               takenAt = anHourAgo,
@@ -452,17 +538,34 @@ class EloRatingServiceSpec extends PropertySuite {
                 engine.status = GameStatusResponse(
                   isCompleted = false,
                   participants = List(
-                    EngineParticipantStatus(first.participantId.value, true, false, Some(anHourAgo)),
-                    EngineParticipantStatus(second.participantId.value, false, false, None)
+                    EngineParticipantStatus(
+                      participantId = first.participantId.value,
+                      isPending = true,
+                      isCompleted = false,
+                      prevMoveAt = Some(anHourAgo)
+                    ),
+                    EngineParticipantStatus(
+                      participantId = second.participantId.value,
+                      isPending = false,
+                      isCompleted = false,
+                      prevMoveAt = None
+                    )
                   )
                 )
             }
-            refreshed <- services.engine.refresh(f.game.gameId, matchId, f.second.externalId)
+            refreshed <- services.engine.refresh(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              callerExternalId = f.second.externalId
+            )
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
             records <- TestSession.resource.use { session =>
                 val repo = new EloRatingRepo(session)
-                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                (
+                  repo.read(game = f.game.gameId, player = f.first.playerId),
+                  repo.read(game = f.game.gameId, player = f.second.playerId)
+                ).tupled
             }
         } yield (f, refreshed, now, recorded, records)
         val (f, refreshed, now, recorded, records) = result.timeout(caseTimeout).unsafeRunSync()
@@ -482,13 +585,17 @@ class EloRatingServiceSpec extends PropertySuite {
     test("results arriving after a refresh completed the match from a status with no ranks still rate it, once") {
         val result = (for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
+            matchId <- started(f = f, friendly = false)
             // The results callback went astray, and a refresh found the game over.
             _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
-            refreshed <- services.engine.refresh(f.game.gameId, matchId, f.first.externalId)
+            refreshed <- services.engine.refresh(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              callerExternalId = f.first.externalId
+            )
             before <- ratings(f)
-            _ <- finish(f, matchId, f.first)
-            _ <- finish(f, matchId, f.first)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             after <- ratings(f)
         } yield (f, refreshed, before, after))
             // The engine is shared with the cases after this one, which start matches of their own.
@@ -503,9 +610,19 @@ class EloRatingServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             created <- openChallenge(f, friendly = false)
-            _ <- services.tournaments.enter(f.game.gameId, created.tournamentId, None, f.first.externalId)
+            _ <- services.tournaments.enter(
+              gameId = f.game.gameId,
+              tournamentId = created.tournamentId,
+              characterId = None,
+              callerExternalId = f.first.externalId
+            )
             refused <- refusal(
-              services.tournaments.enter(f.game.gameId, created.tournamentId, None, f.first.externalId)
+              services.tournaments.enter(
+                gameId = f.game.gameId,
+                tournamentId = created.tournamentId,
+                characterId = None,
+                callerExternalId = f.first.externalId
+              )
             )
         } yield refused
         val refused = result.timeout(caseTimeout).unsafeRunSync()
@@ -517,7 +634,8 @@ class EloRatingServiceSpec extends PropertySuite {
             f <- fixture()
             matchId <- playingThemselves(f)
             refused <- refusal(
-              services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+              services.matches
+                  .setFriendly(gameId = f.game.gameId, matchId = matchId, friendly = false, f.host.externalId)
             )
             stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId))
         } yield (refused, stored)
@@ -535,7 +653,7 @@ class EloRatingServiceSpec extends PropertySuite {
                 val repo = new MatchRepo(session)
                 repo.read(f.game.gameId, matchId).flatMap(m => repo.update(m.get.copy(isFriendly = false)))
             }
-            _ <- finish(f, matchId, f.first)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId))
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
@@ -549,11 +667,21 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a completed friendly match made one that is not is rated then, from the ratings its seats began it at") {
         val result = for {
             f <- fixture()
-            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1600, f.host.externalId)
-            matchId <- started(f, friendly = true)
-            _ <- finish(f, matchId, f.first)
+            _ <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              rating = 1600,
+              callerExternalId = f.host.externalId
+            )
+            matchId <- started(f = f, friendly = true)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             before <- ratings(f)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = false,
+              f.host.externalId
+            )
             after <- ratings(f)
             recorded <- eloSeats(f, matchId)
         } yield (f, before, after, recorded)
@@ -567,14 +695,24 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a completed match that was not friendly made friendly takes back what it did to the ratings") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = true,
+              f.host.externalId
+            )
             after <- ratings(f)
             stored <- storedRatings(f)
             recorded <- eloSeats(f, matchId)
             // And back again: rated as it was the first time.
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = false,
+              f.host.externalId
+            )
             again <- ratings(f)
         } yield (f, after, stored, recorded, again)
         val (f, after, stored, recorded, again) = result.timeout(caseTimeout).unsafeRunSync()
@@ -589,12 +727,14 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a completed match cannot change once a player in it has begun and finished another match since") {
         val result = for {
             f <- fixture()
-            first <- started(f, friendly = false)
-            _ <- finish(f, first, f.first)
-            second <- started(f, friendly = false)
-            _ <- finish(f, second, f.second)
+            first <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = first, winner = f.first)
+            second <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = second, winner = f.second)
             before <- ratings(f)
-            refused <- refusal(services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId))
+            refused <- refusal(
+              services.matches.setFriendly(gameId = f.game.gameId, matchId = first, friendly = true, f.host.externalId)
+            )
             after <- ratings(f)
             stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, first))
         } yield (refused, before, after, stored)
@@ -607,14 +747,19 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a match still being played that began after the changed one has its starting ratings moved with it") {
         val result = for {
             f <- fixture()
-            first <- started(f, friendly = false)
-            _ <- finish(f, first, f.first)
+            first <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = first, winner = f.first)
             // Begun at 1516 and 1484, which take in the first match.
-            second <- started(f, friendly = false)
+            second <- started(f = f, friendly = false)
             began <- eloSeats(f, second)
-            _ <- services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = first,
+              friendly = true,
+              f.host.externalId
+            )
             moved <- eloSeats(f, second)
-            _ <- finish(f, second, f.second)
+            _ <- finish(f = f, matchId = second, winner = f.second)
             after <- ratings(f)
         } yield (f, began, moved, after)
         val (f, began, moved, after) = result.timeout(caseTimeout).unsafeRunSync()
@@ -627,9 +772,14 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a friendly match records what its players began it rated, and moves nobody's rating nor gives anybody one") {
         val result = for {
             f <- fixture()
-            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1600, f.host.externalId)
-            matchId <- started(f, friendly = true)
-            _ <- finish(f, matchId, f.first)
+            _ <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              rating = 1600,
+              callerExternalId = f.host.externalId
+            )
+            matchId <- started(f = f, friendly = true)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
             shown <- resultElo(f.first, matchId)
@@ -644,13 +794,21 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a rating an admin of the game set is where the next rated match moves it from") {
         val result = for {
             f <- fixture()
-            set <- services.ratings.set(f.game.gameId, f.first.playerId, 1600, f.host.externalId)
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
+            set <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              rating = 1600,
+              callerExternalId = f.host.externalId
+            )
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             now <- ratings(f)
         } yield (f, set, now)
         val (f, set, now) = result.timeout(caseTimeout).unsafeRunSync()
-        assertEquals(set, EloRating(PublicPlayer(f.first.playerId, f.first.nickname), 1600, 0))
+        assertEquals(
+          set,
+          EloRating(player = PublicPlayer(f.first.playerId, f.first.nickname), rating = 1600, matches = 0)
+        )
         // Expected 0.64 for the favourite: 32 * 0.36 is 11.5, rounded to 12.
         assertEquals(now, Map(f.first.playerId -> (1612, 1), f.second.playerId -> (1488, 1)))
     }
@@ -658,12 +816,21 @@ class EloRatingServiceSpec extends PropertySuite {
     test("setting a rating leaves alone how many matches stand behind it, and the leaderboard is highest first") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
-            _ <- services.ratings.set(f.game.gameId, f.second.playerId, 2000, f.overall.externalId)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
+            _ <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.second.playerId,
+              rating = 2000,
+              callerExternalId = f.overall.externalId
+            )
             // What the listener does once the set has said so: here, a run of it that has finished.
             _ <- services.ending.rank(f.game.gameId)
-            listed <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId)
+            listed <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.host.externalId
+            )
         } yield (f, listed)
         val (f, listed) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(
@@ -677,14 +844,47 @@ class EloRatingServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             g <- fixture()
-            byPlayer <- refusal(services.ratings.set(f.game.gameId, f.first.playerId, 1700, f.first.externalId))
-            // An admin of another game is nobody special here.
-            byOtherAdmin <- refusal(services.ratings.set(f.game.gameId, f.first.playerId, 1700, g.host.externalId))
-            tooHigh <- refusal(
-              services.ratings.set(f.game.gameId, f.first.playerId, EloRating.maximum + 1, f.host.externalId)
+            byPlayer <- refusal(
+              services.ratings.set(
+                gameId = f.game.gameId,
+                playerId = f.first.playerId,
+                rating = 1700,
+                callerExternalId = f.first.externalId
+              )
             )
-            noPlayer <- refusal(services.ratings.set(f.game.gameId, PlayerId(-1), 1700, f.host.externalId))
-            noGame <- refusal(services.ratings.set(GameId(-1), f.first.playerId, 1700, f.overall.externalId))
+            // An admin of another game is nobody special here.
+            byOtherAdmin <- refusal(
+              services.ratings.set(
+                gameId = f.game.gameId,
+                playerId = f.first.playerId,
+                rating = 1700,
+                callerExternalId = g.host.externalId
+              )
+            )
+            tooHigh <- refusal(
+              services.ratings.set(
+                gameId = f.game.gameId,
+                playerId = f.first.playerId,
+                rating = EloRating.maximum + 1,
+                callerExternalId = f.host.externalId
+              )
+            )
+            noPlayer <- refusal(
+              services.ratings.set(
+                gameId = f.game.gameId,
+                playerId = PlayerId(-1),
+                rating = 1700,
+                callerExternalId = f.host.externalId
+              )
+            )
+            noGame <- refusal(
+              services.ratings.set(
+                gameId = GameId(-1),
+                playerId = f.first.playerId,
+                rating = 1700,
+                callerExternalId = f.overall.externalId
+              )
+            )
             now <- ratings(f)
         } yield (byPlayer, byOtherAdmin, tooHigh, noPlayer, noGame, now)
         val (byPlayer, byOtherAdmin, tooHigh, noPlayer, noGame, now) = result.timeout(caseTimeout).unsafeRunSync()
@@ -700,15 +900,24 @@ class EloRatingServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             // Favoured overall, and new to the role: the two pools move by different amounts.
-            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1700, f.host.externalId)
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
+            _ <- services.ratings.set(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              rating = 1700,
+              callerExternalId = f.host.externalId
+            )
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             overall <- ratings(f)
             inRole <- roleRatings(f)
             seats <- roleSeats(f, matchId)
             record <- TestSession.resource.use(session =>
                 new EloRatingRepo(session)
-                    .readRated(f.game.gameId, f.second.playerId, Some(f.game.roles(1).gameRoleId))
+                    .readRated(
+                      game = f.game.gameId,
+                      player = f.second.playerId,
+                      role = Some(f.game.roles(1).gameRoleId)
+                    )
                     .map(_.map(_.record))
             )
         } yield (f, overall, inRole, seats, record)
@@ -726,8 +935,8 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a game whose roles are unimportant keeps no ratings by role") {
         val result = for {
             f <- fixture(unimportantRoles = true)
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.first)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.first)
             overall <- ratings(f)
             inRole <- roleRatings(f)
             seats <- roleSeats(f, matchId)
@@ -741,12 +950,22 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a completed match made friendly takes back what it did to the role ratings, and gives it again if not") {
         val result = for {
             f <- fixture()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.second)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.second)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = true,
+              f.host.externalId
+            )
             taken <- roleRatings(f)
             takenSeats <- roleSeats(f, matchId)
-            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = matchId,
+              friendly = false,
+              f.host.externalId
+            )
             again <- roleRatings(f)
             againSeats <- roleSeats(f, matchId)
         } yield (f, taken, takenSeats, again, againSeats)
@@ -763,12 +982,17 @@ class EloRatingServiceSpec extends PropertySuite {
     test("a match still being played in the same role has its role starting rating moved with a changed match") {
         val result = for {
             f <- fixture()
-            first <- started(f, friendly = false)
-            _ <- finish(f, first, f.first)
+            first <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = first, winner = f.first)
             // Begun after the first finished, in the same roles: it began at the ratings the first left.
-            later <- started(f, friendly = false)
+            later <- started(f = f, friendly = false)
             before <- roleSeats(f, later)
-            _ <- services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId)
+            _ <- services.matches.setFriendly(
+              gameId = f.game.gameId,
+              matchId = first,
+              friendly = true,
+              f.host.externalId
+            )
             after <- roleSeats(f, later)
         } yield (f, before, after)
         val (f, before, after) = result.timeout(caseTimeout).unsafeRunSync()
@@ -780,23 +1004,60 @@ class EloRatingServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             other <- makeGame()
-            matchId <- started(f, friendly = false)
-            _ <- finish(f, matchId, f.second)
+            matchId <- started(f = f, friendly = false)
+            _ <- finish(f = f, matchId = matchId, winner = f.second)
             _ <- services.ending.settle(f.game.gameId, matchId)
             firstRole = Some(f.game.roles(0).gameRoleId)
             secondRole = Some(f.game.roles(1).gameRoleId)
-            overall <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId)
-            asFirst <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, firstRole)
-            asSecond <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, secondRole)
-            standing <- services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, firstRole)
-            notPlayed <- refusal(
-              services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, secondRole)
+            overall <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.host.externalId
             )
-            found <- services.ratings.findInRankings(f.game.gameId, f.second.nickname, f.host.externalId, secondRole)
+            asFirst <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.host.externalId,
+              role = firstRole
+            )
+            asSecond <- services.ratings.leaderboard(
+              gameId = f.game.gameId,
+              page = 0,
+              callerExternalId = f.host.externalId,
+              role = secondRole
+            )
+            standing <- services.ratings.standing(
+              gameId = f.game.gameId,
+              playerId = f.first.playerId,
+              callerExternalId = f.host.externalId,
+              role = firstRole
+            )
+            notPlayed <- refusal(
+              services.ratings.standing(
+                gameId = f.game.gameId,
+                playerId = f.first.playerId,
+                callerExternalId = f.host.externalId,
+                role = secondRole
+              )
+            )
+            found <- services.ratings.findInRankings(
+              gameId = f.game.gameId,
+              prefix = f.second.nickname,
+              callerExternalId = f.host.externalId,
+              role = secondRole
+            )
             elsewhere = Some(other.roles(0).gameRoleId)
-            noRole <- refusal(services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, elsewhere))
+            noRole <- refusal(
+              services.ratings
+                  .leaderboard(gameId = f.game.gameId, page = 0, callerExternalId = f.host.externalId, role = elsewhere)
+            )
             noRoleStanding <- refusal(
-              services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, elsewhere)
+              services.ratings.standing(
+                gameId = f.game.gameId,
+                playerId = f.first.playerId,
+                callerExternalId = f.host.externalId,
+                role = elsewhere
+              )
             )
         } yield (f, overall, asFirst, asSecond, standing, notPlayed, found, noRole, noRoleStanding)
         val (f, overall, asFirst, asSecond, standing, notPlayed, found, noRole, noRoleStanding) =
@@ -824,7 +1085,9 @@ class EloRatingServiceSpec extends PropertySuite {
     test("the leaderboard of a game that does not exist is not found") {
         val result = for {
             player <- register()
-            refused <- refusal(services.ratings.leaderboard(GameId(-1), 0, player.externalId))
+            refused <- refusal(
+              services.ratings.leaderboard(gameId = GameId(-1), page = 0, callerExternalId = player.externalId)
+            )
         } yield refused
         val refused = result.timeout(caseTimeout).unsafeRunSync()
         assert(refused.isInstanceOf[NotFoundError], refused)

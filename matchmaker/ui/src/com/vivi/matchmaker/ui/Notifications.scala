@@ -294,7 +294,7 @@ object Notifications {
           cls := "account-section",
           h3(heading),
           p(cls := "detail", explanation),
-          editor(preferences, withDefault, kinds),
+          editor(preferences = preferences, withDefault = withDefault, kinds = kinds),
           tail
         )
     }

@@ -4,11 +4,11 @@ package standard
 /** Round-robin heats of the tournament's default pool size -- four suggested -- seeding a knockout of pairs. */
 object Heats
     extends StandardModel(
-      "heats",
-      1,
-      "Heats with Single Elimination",
-      "Round-robin heats seed a single elimination.",
-      "Pools, then elimination",
+      id = "heats",
+      version = 1,
+      name = "Heats with Single Elimination",
+      description = "Round-robin heats seed a single elimination.",
+      classification = "Pools, then elimination",
       poolSize = Some(4)
     ) {
 

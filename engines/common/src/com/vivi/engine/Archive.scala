@@ -172,9 +172,13 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
                     )
             val body = write(m).getBytes(StandardCharsets.UTF_8)
             val answer = matchmaker.requestArchiveUpload(
-              matchmakerUrl,
-              matchId,
-              Protocol.ArchiveUploadRequest(body.length.toLong, ArchiveTransfer.sha256(body), Some(formatVersion))
+              matchmakerUrl = matchmakerUrl,
+              matchId = matchId,
+              request = Protocol.ArchiveUploadRequest(
+                size = body.length.toLong,
+                sha256 = ArchiveTransfer.sha256(body),
+                formatVersion = Some(formatVersion)
+              )
             )
             answer.upload match {
                 case None if answer.archivedAt.isDefined => ()
@@ -201,7 +205,7 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
                     transfer.download(download.url) match {
                         case Some(bytes) =>
                             val m = read[M](String(bytes, StandardCharsets.UTF_8))
-                            remember(matchId, at, m)
+                            remember(matchId = matchId, at = at, m = m)
                             Some(m)
                         case None =>
                             // Matchmaker checks before believing it, and refuses it outright for an archive

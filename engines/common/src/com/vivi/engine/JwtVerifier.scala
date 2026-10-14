@@ -64,7 +64,11 @@ class JwtVerifier(
                     )
                     kid <- header.obj.get("kid").map(_.str).toRight("token names no key")
                     key <- keyFor(kid).toRight("token names an unknown key")
-                    _ <- Either.cond(isVerified(key, parts(0), parts(1), signature), (), "bad token signature")
+                    _ <- Either.cond(
+                      isVerified(key = key, header = parts(0), payload = parts(1), signature = signature),
+                      (),
+                      "bad token signature"
+                    )
                     _ <- Either.cond(
                       claims.obj.get("iss").map(_.str).contains(issuer),
                       (),

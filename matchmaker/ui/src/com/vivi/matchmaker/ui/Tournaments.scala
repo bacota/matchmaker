@@ -33,7 +33,11 @@ object Tournaments {
 
     /** A game's tournaments, on its screen, with the button that creates one. */
     def gameSection(game: Game): HtmlElement =
-        Views.refreshableSection("Tournaments", () => Store.reloadTournaments(game.gameId), subsection = false)(
+        Views.refreshableSection(
+          heading = "Tournaments",
+          reload = () => Store.reloadTournaments(game.gameId),
+          subsection = false
+        )(
           listing(
             Store.tournamentsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
             Store.loading(Store.Fetch.Tournaments(game.gameId))
@@ -57,7 +61,11 @@ object Tournaments {
           child <-- Store.tournamentChoices.signal.map { choices =>
               if (choices.isEmpty) emptyNode
               else
-                  Views.refreshableSection("Choose a Role", () => Store.reloadTournamentChoices(), subsection = false)(
+                  Views.refreshableSection(
+                    heading = "Choose a Role",
+                    reload = () => Store.reloadTournamentChoices(),
+                    subsection = false
+                  )(
                     ul(
                       choices.map { c =>
                           li(
@@ -79,7 +87,11 @@ object Tournaments {
               val waiting = mine.filter(isWaitingOnMe)
               if (waiting.isEmpty) emptyNode
               else
-                  Views.refreshableSection("Rounds to Start", () => Store.reloadMyTournaments(), subsection = false)(
+                  Views.refreshableSection(
+                    heading = "Rounds to Start",
+                    reload = () => Store.reloadMyTournaments(),
+                    subsection = false
+                  )(
                     ul(
                       aria.live := "polite",
                       waiting.map { s =>
@@ -93,8 +105,11 @@ object Tournaments {
                               onClick --> (_ => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId)))
                             ),
                             span(cls := "detail", s" · ${s.gameName} · every match of the round is over"),
-                            busyButton("Start Next Round")(busy =>
-                                Store.run(ApiClient.startRound(t.gameId, t.tournamentId), busy) { _ =>
+                            busyButton(label = "Start Next Round")(busy =>
+                                Store.run(
+                                  ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId),
+                                  busy
+                                ) { _ =>
                                     Store.reloadMyTournaments()
                                     Store.reloadTournamentChoices()
                                 }
@@ -107,7 +122,11 @@ object Tournaments {
           child <-- Store.myTournaments.signal.map { mine =>
               if (mine.isEmpty) emptyNode
               else
-                  Views.refreshableSection("My Tournaments", () => Store.reloadMyTournaments(), subsection = false)(
+                  Views.refreshableSection(
+                    heading = "My Tournaments",
+                    reload = () => Store.reloadMyTournaments(),
+                    subsection = false
+                  )(
                     summaryList(mine, showGame = true)
                   )
           },
@@ -115,8 +134,8 @@ object Tournaments {
               if (rows.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    "Where You Stand",
-                    () => Store.reloadTournamentStandings(),
+                    heading = "Where You Stand",
+                    reload = () => Store.reloadTournamentStandings(),
                     subsection = false
                   )(
                     standingsTable(rows)
@@ -240,12 +259,13 @@ object Tournaments {
               ownerControls(d, editing)
           else emptyNode,
           child <-- editing.signal.map(
-            if (_) game.fold(emptyNode)(g => form(g, Some(t), () => editing.set(false))) else emptyNode
+            if (_) game.fold(emptyNode)(g => form(game = g, existing = Some(t), onSaved = () => editing.set(false)))
+            else emptyNode
           ),
           entriesSection(d, me),
           if (d.summary.isOwner && t.settings.isInvitational) invitationsSection(d) else emptyNode,
-          roundSection(d, game, me, names),
-          d.state.fold(emptyNode)(s => standings(s.root, names, Some("Standings"))),
+          roundSection(d = d, game = game, me = me, names = names),
+          d.state.fold(emptyNode)(s => standings(node = s.root, names = names, heading = Some("Standings"))),
           d.state.flatMap(_.root.ranking).fold(emptyNode)(r => finalRanking(r, names))
         )
     }
@@ -259,8 +279,11 @@ object Tournaments {
     private def ownerControls(d: TournamentDetail, editing: Var[Boolean]): HtmlElement = {
         val t = d.summary.tournament
         def step(label: String, name: String) =
-            busyButton(label)(busy =>
-                Store.run(ApiClient.tournamentStep(t.gameId, t.tournamentId, name), busy)(_ => reload(d))
+            busyButton(label = label)(busy =>
+                Store.run(
+                  ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name),
+                  busy
+                )(_ => reload(d))
             )
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
@@ -283,9 +306,9 @@ object Tournaments {
                       else
                           span(
                             Views.tipField(
-                              freshTipId("round-length-tip"),
-                              "This round's length (hours)",
-                              "How long this round lasts. Blank uses the tournament's round length."
+                              id = freshTipId("round-length-tip"),
+                              caption = "This round's length (hours)",
+                              text = "How long this round lasts. Blank uses the tournament's round length."
                             )(
                               input(
                                 tpe := "number",
@@ -294,21 +317,26 @@ object Tournaments {
                                 controlled(value <-- roundHours.signal, onInput.mapToValue --> roundHours)
                               )
                             ),
-                            busyButton("Start Next Round")(busy =>
-                                Store.run(ApiClient.startRound(t.gameId, t.tournamentId, roundLength), busy)(_ =>
-                                    reload(d)
-                                )
+                            busyButton(label = "Start Next Round")(busy =>
+                                Store.run(
+                                  ApiClient.startRound(
+                                    gameId = t.gameId,
+                                    tournamentId = t.tournamentId,
+                                    duration = roundLength
+                                  ),
+                                  busy
+                                )(_ => reload(d))
                             )
                           ),
                       if (roundOpen)
                           withTip(
-                            freshTipId("check-round-tip"),
-                            "Check Round",
-                            "Ends any match of this round whose clock has run out, as a player's look at it would, and " +
+                            id = freshTipId("check-round-tip"),
+                            subject = "Check Round",
+                            text = "Ends any match of this round whose clock has run out, as a player's look at it would, and " +
                                 "forfeits any seat that ran out of time to choose its role. It runs in the background, " +
                                 "so what it changes shows when the page is next refreshed."
                           )(
-                            busyButton("Check Round")(busy =>
+                            busyButton(label = "Check Round")(busy =>
                                 Store.run(ApiClient.checkRound(t.gameId, t.tournamentId), busy)(_ => checking.set(true))
                             )
                           )
@@ -321,7 +349,7 @@ object Tournaments {
                         )
                       ),
                       if (d.design.stages.exists(_.repeat == Repetition.UntilStopped))
-                          busyButton("Stop Repeating")(busy =>
+                          busyButton(label = "Stop Repeating")(busy =>
                               Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy)(_ => reload(d))
                           )
                       else emptyNode
@@ -365,10 +393,15 @@ object Tournaments {
                         !e.isWithdrawn && (mine
                             .contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
                       )
-                          busyButton("Withdraw")(busy =>
-                              Store.run(ApiClient.withdrawFromTournament(t.gameId, t.tournamentId, e.entrantId), busy)(
-                                _ => reload(d)
-                              )
+                          busyButton(label = "Withdraw")(busy =>
+                              Store.run(
+                                ApiClient.withdrawFromTournament(
+                                  gameId = t.gameId,
+                                  tournamentId = t.tournamentId,
+                                  entrantId = e.entrantId
+                                ),
+                                busy
+                              )(_ => reload(d))
                           ).amend(aria.label := s"Withdraw ${nameOf(d)(e.entrantId.value)}")
                       else emptyNode
                     )
@@ -402,8 +435,15 @@ object Tournaments {
                       )
                     )
                 else emptyNode,
-                busyButton(if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter")(busy =>
-                    Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, chosen.now()), busy)(_ => reload(d))
+                busyButton(label = if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter")(busy =>
+                    Store.run(
+                      ApiClient.enterTournament(
+                        gameId = t.gameId,
+                        tournamentId = t.tournamentId,
+                        characterId = chosen.now()
+                      ),
+                      busy
+                    )(_ => reload(d))
                 )
               )
         )
@@ -427,10 +467,15 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(inv.nickname),
-                      busyButton("Remove")(busy =>
-                          Store.run(ApiClient.revokeTournamentInvitation(t.gameId, t.tournamentId, inv.playerId), busy)(
-                            _ => reload(d)
-                          )
+                      busyButton(label = "Remove")(busy =>
+                          Store.run(
+                            ApiClient.revokeTournamentInvitation(
+                              gameId = t.gameId,
+                              tournamentId = t.tournamentId,
+                              playerId = inv.playerId
+                            ),
+                            busy
+                          )(_ => reload(d))
                       ).amend(aria.label := s"Remove the invitation of ${inv.nickname}")
                     )
                 ) ++ d.invitedCharacters.map(inv =>
@@ -438,13 +483,13 @@ object Tournaments {
                       cls := "row",
                       span(inv.character.name),
                       span(cls := "detail", inv.owner.fold(" · nobody's")(o => s" · ${o.nickname}'s")),
-                      busyButton("Remove")(busy =>
+                      busyButton(label = "Remove")(busy =>
                           Store.run(
                             ApiClient
                                 .revokeTournamentCharacterInvitation(
-                                  t.gameId,
-                                  t.tournamentId,
-                                  inv.character.characterId
+                                  gameId = t.gameId,
+                                  tournamentId = t.tournamentId,
+                                  characterId = inv.character.characterId
                                 ),
                             busy
                           )(_ => reload(d))
@@ -455,7 +500,7 @@ object Tournaments {
           div(
             cls := "row",
             field("Find a player", input(controlled(value <-- prefix.signal, onInput.mapToValue --> prefix))),
-            busyButton("Search", disabledWhen = prefix.signal.map(_.trim.isEmpty))(busy =>
+            busyButton(label = "Search", disabledWhen = prefix.signal.map(_.trim.isEmpty))(busy =>
                 Store.run(ApiClient.searchPlayers(prefix.now().trim), busy)(r => found.set(r.players))
             )
           ),
@@ -467,21 +512,31 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(p.nickname),
-                      Views.characterInviteButtons(t.gameId, p, invitedCharacters) { (c, busy) =>
-                          Store.run(
-                            ApiClient.inviteCharacterToTournament(t.gameId, t.tournamentId, c.characterId),
-                            busy
-                          )(_ => reload(d))
+                      Views.characterInviteButtons(gameId = t.gameId, owner = p, exclude = invitedCharacters) {
+                          (c, busy) =>
+                              Store.run(
+                                ApiClient.inviteCharacterToTournament(
+                                  gameId = t.gameId,
+                                  tournamentId = t.tournamentId,
+                                  characterId = c.characterId
+                                ),
+                                busy
+                              )(_ => reload(d))
                       }
                     )
                 else
                     li(
                       cls := "row",
                       span(p.nickname),
-                      busyButton("Invite")(busy =>
-                          Store.run(ApiClient.inviteToTournament(t.gameId, t.tournamentId, p.playerId), busy)(_ =>
-                              reload(d)
-                          )
+                      busyButton(label = "Invite")(busy =>
+                          Store.run(
+                            ApiClient.inviteToTournament(
+                              gameId = t.gameId,
+                              tournamentId = t.tournamentId,
+                              playerId = p.playerId
+                            ),
+                            busy
+                          )(_ => reload(d))
                       ).amend(aria.label := s"Invite ${p.nickname}")
                     )
             })
@@ -541,8 +596,9 @@ object Tournaments {
                               m.seats.find(_.isChoosing).flatMap(_.chooseBy).fold("")(by => s" · choose by ${when(by)}")
                         )
                       ),
-                      myTurn.fold(emptyNode)(_ => chooser(t, m, game)),
-                      if (d.summary.isOwner && m.status != TournamentMatchStatus.Done) decider(t, m, names, d)
+                      myTurn.fold(emptyNode)(_ => chooser(t = t, m = m, game = game)),
+                      if (d.summary.isOwner && m.status != TournamentMatchStatus.Done)
+                          decider(t = t, m = m, names = names, d = d)
                       else emptyNode
                     )
                 }
@@ -575,13 +631,19 @@ object Tournaments {
               free.map(r => option(value := r.value.toString, roleName.getOrElse(r, r.value.toString)))
             )
           ),
-          busyButton("Choose Role", disabledWhen = picked.signal.map(_.isEmpty))(busy =>
+          busyButton(label = "Choose Role", disabledWhen = picked.signal.map(_.isEmpty))(busy =>
               picked
                   .now()
                   .foreach(r =>
-                      Store.run(ApiClient.chooseRole(t.gameId, t.tournamentId, m.matchId, r), busy)(_ =>
-                          Store.tournament.now().foreach(reload)
-                      )
+                      Store.run(
+                        ApiClient.chooseRole(
+                          gameId = t.gameId,
+                          tournamentId = t.tournamentId,
+                          matchId = m.matchId,
+                          role = r
+                        ),
+                        busy
+                      )(_ => Store.tournament.now().foreach(reload))
                   )
           )
         )
@@ -598,10 +660,11 @@ object Tournaments {
         val ranks = m.seats.map(s => s.entrantId -> Var((m.seats.indexOf(s) + 1).toString))
         div(
           withTip(
-            freshTipId("decide-tip"),
-            "Decide by hand",
-            "For a match that cannot be played, such as one a player never turned up to: it is called off, and its " +
-                "seats ranked as you say. The ranks decide the tournament and move nobody's rating."
+            id = freshTipId("decide-tip"),
+            subject = "Decide by hand",
+            text =
+                "For a match that cannot be played, such as one a player never turned up to: it is called off, and its " +
+                    "seats ranked as you say. The ranks decide the tournament and move nobody's rating."
           )(
             button(
               tpe := "button",
@@ -626,13 +689,18 @@ object Tournaments {
                           )
                         )
                     ),
-                    busyButton("Save Ranks")(busy =>
+                    busyButton(label = "Save Ranks")(busy =>
                         val typed = ranks.map((e, v) => v.now().trim.toIntOption.filter(_ >= 1).map(EntrantRank(e, _)))
                         if (typed.exists(_.isEmpty)) Store.reportProblem("Give every seat a rank of 1 or more.")
                         else
                             Store.run(
                               ApiClient
-                                  .decideMatch(t.gameId, t.tournamentId, m.matchId, typed.flatten.toList),
+                                  .decideMatch(
+                                    gameId = t.gameId,
+                                    tournamentId = t.tournamentId,
+                                    matchId = m.matchId,
+                                    ranks = typed.flatten.toList
+                                  ),
                               busy
                             )(_ => reload(d))
                     )
@@ -658,7 +726,7 @@ object Tournaments {
             s"Stage ${run.stage + 1}" + (if (run.repetition > 0) s", play ${run.repetition + 1}" else "") +
                 (if (run.isCompleted) "" else " (being played)")
           ),
-          run.pools.zipWithIndex.map((pool, i) => poolView(pool, poolName(i), names)),
+          run.pools.zipWithIndex.map((pool, i) => poolView(pool = pool, label = poolName(i), names = names)),
           if (run.sittingOut.isEmpty) emptyNode
           else p(cls := "detail", s"Sitting this one out: ${run.sittingOut.map(names).mkString(", ")}")
         )
@@ -702,7 +770,9 @@ object Tournaments {
               )
             )
           ),
-          nested.fold(emptyNode)(sub => div(cls := "detail-panel", standings(sub, names, None)))
+          nested.fold(emptyNode)(sub =>
+              div(cls := "detail-panel", standings(node = sub, names = names, heading = None))
+          )
         )
     }
 
@@ -740,7 +810,7 @@ object Tournaments {
         div(
           h2("New Tournament"),
           child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
-              case Some(g) => form(g, None, () => ())
+              case Some(g) => form(game = g, existing = None, onSaved = () => ())
               case None    => p(cls := "empty", "Loading…")
           }
         )
@@ -839,19 +909,19 @@ object Tournaments {
             problems.set(chosen.now() match {
                 // The format it was made from, checked again as it is saved.
                 case None if isKeeping => Nil
-                case None              => List(Problem("", "choose a format"))
+                case None              => List(Problem(where = "", message = "choose a format"))
                 case Some(m) =>
                     Validation.validate(
-                      m.design,
-                      TournamentGame.of(game),
-                      settings.maxTurns,
-                      int(poolSize).orElse(Some(r))
+                      design = m.design,
+                      game = TournamentGame.of(game),
+                      maxTurns = settings.maxTurns,
+                      defaultPoolSize = int(poolSize).orElse(Some(r))
                     )
             })
 
         def checkbox(caption: String, v: Var[Boolean], tip: String) = {
             val id = freshTipId(s"$key-tip")
-            withTip(id, caption, tip)(
+            withTip(id = id, subject = caption, text = tip)(
               label(
                 input(
                   tpe := "checkbox",
@@ -863,7 +933,7 @@ object Tournaments {
             )
         }
         def number(caption: String, v: Var[String], tip: String) =
-            Views.tipField(freshTipId(s"$key-tip"), caption, tip)(
+            Views.tipField(id = freshTipId(s"$key-tip"), caption = caption, text = tip)(
               input(tpe := "number", inputMode := "numeric", controlled(value <-- v.signal, onInput.mapToValue --> v))
             )
 
@@ -886,9 +956,9 @@ object Tournaments {
           else
               div(
                 Views.tipField(
-                  freshTipId(s"$key-tip"),
-                  "Format",
-                  "The formats this game's admins offer, grouped by kind."
+                  id = freshTipId(s"$key-tip"),
+                  caption = "Format",
+                  text = "The formats this game's admins offer, grouped by kind."
                 )(
                   select(
                     onChange.mapToValue --> { v =>
@@ -931,49 +1001,60 @@ object Tournaments {
                     case _ => emptyNode
                 },
                 number(
-                  "Default pool size",
-                  poolSize,
-                  "How many play in a pool of any stage that does not set its own size. Filled in from the format."
+                  caption = "Default pool size",
+                  v = poolSize,
+                  tip =
+                      "How many play in a pool of any stage that does not set its own size. Filled in from the format."
                 )
               ),
           h4("Settings"),
           checkbox(
-            "Invitational",
-            invitational,
-            "Only players you invite may enter. You may always enter your own tournament."
+            caption = "Invitational",
+            v = invitational,
+            tip = "Only players you invite may enter. You may always enter your own tournament."
           ),
           checkbox(
-            "Automatic rounds",
-            autoRounds,
-            "Each round begins as soon as the last one ends, rather than when you start it."
+            caption = "Automatic rounds",
+            v = autoRounds,
+            tip = "Each round begins as soon as the last one ends, rather than when you start it."
           ),
-          checkbox("Friendly", friendly, "Its matches change nobody's rating."),
-          checkbox("Late entries", lateEntries, "Players may enter after it has started, joining from its next stage."),
+          checkbox(caption = "Friendly", v = friendly, tip = "Its matches change nobody's rating."),
           checkbox(
-            "Concurrent rounds",
-            concurrentRounds,
-            "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
+            caption = "Late entries",
+            v = lateEntries,
+            tip = "Players may enter after it has started, joining from its next stage."
           ),
-          checkbox("Public", isPublic, "Anybody may see it listed, and watch its matches."),
           checkbox(
-            "Players choose roles",
-            chooseRoles,
-            "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
+            caption = "Concurrent rounds",
+            v = concurrentRounds,
+            tip = "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
+          ),
+          checkbox(caption = "Public", v = isPublic, tip = "Anybody may see it listed, and watch its matches."),
+          checkbox(
+            caption = "Players choose roles",
+            v = chooseRoles,
+            tip = "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
                 "being given them."
           ),
           checkbox(
-            "Live",
-            live,
-            "Its matches are played in real time: the game engine runs the turns and keeps the clock, so a round " +
-                "length is required."
+            caption = "Live",
+            v = live,
+            tip =
+                "Its matches are played in real time: the game engine runs the turns and keeps the clock, so a round " +
+                    "length is required."
           ),
-          number("Most entries", maxEntrants, "Leave blank for no limit."),
-          checkbox("Start when full", autoStart, "It starts by itself as soon as it has its most entries."),
+          number(caption = "Most entries", v = maxEntrants, tip = "Leave blank for no limit."),
+          checkbox(
+            caption = "Start when full",
+            v = autoStart,
+            tip = "It starts by itself as soon as it has its most entries."
+          ),
           Views.tipField(
-            freshTipId(s"$key-tip"),
-            "When to play (optional)",
-            "When you mean it to be played, shown to anyone deciding whether to enter. It does not schedule or start " +
-                "the tournament."
+            id = freshTipId(s"$key-tip"),
+            caption = "When to play (optional)",
+            text =
+                "When you mean it to be played, shown to anyone deciding whether to enter. It does not schedule or start " +
+                    "the tournament."
           )(
             input(
               tpe := "datetime-local",
@@ -982,14 +1063,15 @@ object Tournaments {
           ),
           // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
           Views.parameterFields(game, parameters),
-          number("Minimum rating", minRating, "Leave blank for no minimum."),
-          number("Maximum rating", maxRating, "Leave blank for no maximum."),
-          number("Entries per player", entries, "How many times one player may enter."),
+          number(caption = "Minimum rating", v = minRating, tip = "Leave blank for no minimum."),
+          number(caption = "Maximum rating", v = maxRating, tip = "Leave blank for no maximum."),
+          number(caption = "Entries per player", v = entries, tip = "How many times one player may enter."),
           Views.tipField(
-            freshTipId(s"$key-tip"),
-            "Round length (hours)",
-            "How long a round lasts; you may give a round started by hand another. In a game of turns each player has " +
-                "a chess clock of an equal share of it."
+            id = freshTipId(s"$key-tip"),
+            caption = "Round length (hours)",
+            text =
+                "How long a round lasts; you may give a round started by hand another. In a game of turns each player has " +
+                    "a chess clock of an equal share of it."
           )(
             input(
               tpe := "number",
@@ -1000,15 +1082,15 @@ object Tournaments {
           ),
           if (game.moveType == MoveType.Simultaneous && game.maxTurns.isEmpty)
               number(
-                "Turns per match",
-                maxTurns,
-                "This game does not say how many turns it lasts; a round's time is divided among this many."
+                caption = "Turns per match",
+                v = maxTurns,
+                tip = "This game does not say how many turns it lasts; a round's time is divided among this many."
               )
           else emptyNode,
           div(
             cls := "row",
             button(tpe := "button", "Check", onClick --> (_ => check())),
-            busyButton(if (existing.isDefined) "Save Changes" else "Create Tournament")(busy =>
+            busyButton(label = if (existing.isDefined) "Save Changes" else "Create Tournament")(busy =>
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A tournament needs a name.")
@@ -1016,15 +1098,20 @@ object Tournaments {
                 else
                     modelId.now().foreach { id =>
                         val request = TournamentRequest(
-                          name.now().trim,
-                          id,
-                          description.now().trim,
+                          name = name.now().trim,
+                          tournamentModelId = id,
+                          description = description.now().trim,
                           defaultPoolSize = int(poolSize),
                           settings = settings
                         )
                         val saving: Future[Tournament] = existing match {
-                            case Some(t) => ApiClient.updateTournament(t.gameId, t.tournamentId, request)
-                            case None    => ApiClient.createTournament(game.gameId, request)
+                            case Some(t) =>
+                                ApiClient.updateTournament(
+                                  gameId = t.gameId,
+                                  tournamentId = t.tournamentId,
+                                  request = request
+                                )
+                            case None => ApiClient.createTournament(game.gameId, request)
                         }
                         Store.run(saving, busy) { saved =>
                             onSaved()
@@ -1063,10 +1150,11 @@ object Tournaments {
         val tipId = freshTipId("formats-tip")
         div(
           withTip(
-            tipId,
-            "Tournament Formats",
-            "The formats ticked here are the ones offered when a tournament of this game is created. A tournament " +
-                "already made keeps its format whatever you change here."
+            id = tipId,
+            subject = "Tournament Formats",
+            text =
+                "The formats ticked here are the ones offered when a tournament of this game is created. A tournament " +
+                    "already made keeps its format whatever you change here."
           )(h3("Tournament Formats")),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
           listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
@@ -1078,7 +1166,10 @@ object Tournaments {
                 models.map { m =>
                     val busy = Var(false)
                     val unplayable =
-                        Validation.designProblems(m.design, tg, m.poolSize).filterNot(_.isWarning).headOption
+                        Validation
+                            .designProblems(design = m.design, game = tg, defaultPoolSize = m.poolSize)
+                            .filterNot(_.isWarning)
+                            .headOption
                     def change(on: Boolean): Unit = {
                         val call =
                             if (on) ApiClient.offerTournamentModel(game.gameId, m.tournamentModelId)
@@ -1115,13 +1206,14 @@ object Tournaments {
           else {
               val syncTip = freshTipId("formats-tip")
               withTip(
-                syncTip,
-                "Sync Formats",
-                "Makes every game's formats the ones the code defines: adds new ones and updates changed ones. A " +
-                    "format the code no longer has is removed with its tournaments if nobody has entered one, and " +
-                    "otherwise only taken off every list."
+                id = syncTip,
+                subject = "Sync Formats",
+                text =
+                    "Makes every game's formats the ones the code defines: adds new ones and updates changed ones. A " +
+                        "format the code no longer has is removed with its tournaments if nobody has entered one, and " +
+                        "otherwise only taken off every list."
               )(
-                busyButton("Sync Formats")(busy =>
+                busyButton(label = "Sync Formats")(busy =>
                     Store.run(ApiClient.syncTournamentModels(), busy) { done =>
                         def count(n: Int, what: String) = Option.when(n > 0)(s"$n $what")
                         val parts = List(

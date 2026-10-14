@@ -29,6 +29,21 @@ slow run into a flaky failure. `MatchStartedNotificationSpec.caseTimeout` is the
 `maxColumn=120`, dialect `scala3`. Run `scalafmt` rather than matching surrounding style by eye —
 running it with the defaults instead of this config reformats the entire repository.
 
+## Arguments are passed by name
+
+A call to a method or constructor with three or more parameters passes its arguments by name —
+`register(nickname = n, externalId = id, email = e)`, not `register(n, id, e)`. This is a strong
+preference: a positional call to a wide signature hides which value goes where, and two parameters
+of the same type can be swapped without the compiler noticing. Case-class construction counts.
+
+With two parameters, naming is preferred but not required: leave the call positional where the
+meaning is plain from the arguments, as in `max(a, b)` or a key and its value.
+
+The exceptions are calls the language or the callee rules out. A placeholder (`f(a, b, _)`) cannot be
+named, so a call that uses one stays positional. A varargs list stays positional. A function value has
+no parameter names. And methods from libraries and Java are not ours to name, since their
+parameter names can change underneath us.
+
 ## A new API route is three changes
 
 Adding a `case` to `Router.scala` is a third of an endpoint. The route must also be listed in

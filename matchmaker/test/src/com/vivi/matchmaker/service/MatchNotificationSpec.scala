@@ -25,10 +25,17 @@ class MatchNotificationSpec extends PropertySuite {
     /* An engine that answers whatever the test needs it to. `status` is asked once by `start` and
      * again by `refresh`, and what it says decides whose turn it is -- which is the difference
      * between a match that is being played and one that has quietly finished. */
-    private class StubEngine(answer: () => GameStatusResponse = () => GameStatusResponse(false, Nil))
-        extends GameEngineClient {
+    private class StubEngine(
+        answer: () => GameStatusResponse = () => GameStatusResponse(isCompleted = false, participants = Nil)
+    ) extends GameEngineClient {
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            IO.pure(
+              CreateGameResponse(
+                statusUrl = "https://engine/status/1",
+                playUrl = "https://engine/play/1",
+                publicUrl = None
+              )
+            )
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO(answer())
@@ -43,25 +50,25 @@ class MatchNotificationSpec extends PropertySuite {
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Plain,
-                "Tic-Tac-Toe",
-                "Tic-Tac-Toe",
-                "description",
-                "https://engine.example.com/games",
+                gameId = GameId.unassigned,
+                gameType = GameType.Plain,
+                name = "Tic-Tac-Toe",
+                displayName = "Tic-Tac-Toe",
+                description = "description",
+                url = "https://engine.example.com/games",
                 isActive = true,
                 Seq(
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "attacker",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "attacker",
                     roleType = RoleType.Required,
                     displayName = "attacker"
                   ),
                   GameRole(
-                    GameRoleId(0),
-                    GameId.unassigned,
-                    "defender",
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "defender",
                     roleType = RoleType.Required,
                     displayName = "defender"
                   )
@@ -100,7 +107,7 @@ class MatchNotificationSpec extends PropertySuite {
         notifier: RecordingNotifier = new RecordingNotifier
     ): IO[Fixture] = {
         val services = TestServices.servicesInline(
-          engine,
+          engine = engine,
           callbackBaseUrl = Some("https://matchmaker.example.com"),
           notifier = notifier,
           mail = TestServices.mailSettings
@@ -109,15 +116,23 @@ class MatchNotificationSpec extends PropertySuite {
         for {
             game <- makeGame(seed)
             challenger <- services.registration
-                .register(s"challenger-$seed", s"challenger-$seed", Some(s"challenger-$seed@example.com"))
+                .register(
+                  nickname = s"challenger-$seed",
+                  externalId = s"challenger-$seed",
+                  email = Some(s"challenger-$seed@example.com")
+                )
             accepter <- services.registration
-                .register(s"accepter-$seed", s"accepter-$seed", Some(s"accepter-$seed@example.com"))
+                .register(
+                  nickname = s"accepter-$seed",
+                  externalId = s"accepter-$seed",
+                  email = Some(s"accepter-$seed@example.com")
+                )
             made <- Challenges.startedMatch(
-              services,
-              game,
-              List(
-                Challenges.Seat(challenger, game.roles(0).gameRoleId),
-                Challenges.Seat(accepter, game.roles(1).gameRoleId)
+              services = services,
+              game = game,
+              seats = List(
+                Challenges.Seat(player = challenger, role = game.roles(0).gameRoleId),
+                Challenges.Seat(player = accepter, role = game.roles(1).gameRoleId)
               ),
               roundDuration = timeLimit,
               isPublic = true
@@ -131,15 +146,23 @@ class MatchNotificationSpec extends PropertySuite {
             // The entry and the start have both sent mail of their own. Every property below is about
             // what happens next.
             _ <- IO(notifier.clear())
-        } yield Fixture(services, notifier, game, played, challenger, accepter, seats)
+        } yield Fixture(
+          services = services,
+          notifier = notifier,
+          game = game,
+          played = played,
+          challenger = challenger,
+          accepter = accepter,
+          seats = seats
+        )
     }
 
     private def move(f: Fixture, moved: ParticipantId, next: List[ParticipantId]): IO[Unit] =
         f.services.engine.recordMove(
-          f.game.gameId,
-          f.played.matchId,
-          moved,
-          next,
+          gameId = f.game.gameId,
+          matchId = f.played.matchId,
+          moved = moved,
+          next = next,
           takenAt = Instant.now(),
           startedAt = Instant.now().minusSeconds(30),
           callerExternalId = f.game.externalId
@@ -147,8 +170,8 @@ class MatchNotificationSpec extends PropertySuite {
 
     property("a move tells the player whose turn it now is, and not the player who made it") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
-                move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter))).map { _ =>
+            val result = fixture(seed = seed).flatMap { f =>
+                move(f = f, moved = f.seatOf(f.challenger), next = List(f.seatOf(f.accepter))).map { _ =>
                     f.notifier.recipients == Set(f.address(f.accepter)) &&
                     f.notifier.messages.size == 1 &&
                     f.notifier.messages.head.subject == "It is your turn in your Tic-Tac-Toe match" &&
@@ -164,8 +187,8 @@ class MatchNotificationSpec extends PropertySuite {
      * two there is nobody else, which is why the count is the assertion. */
     property("the player whose turn it is gets one mail, not two") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
-                move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter))).map { _ =>
+            val result = fixture(seed = seed).flatMap { f =>
+                move(f = f, moved = f.seatOf(f.challenger), next = List(f.seatOf(f.accepter))).map { _ =>
                     f.notifier.messages.count(_.recipient == f.address(f.accepter)) == 1
                 }
             }
@@ -181,14 +204,14 @@ class MatchNotificationSpec extends PropertySuite {
     // being played only because they asked for it to. Which makes this the cascade end to end as well.
     property("refusing your-turn still gets the plainer move notification") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
                     _ <- f.services.notifications.updateMine(
-                      f.accepter.externalId,
-                      NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(false)),
+                      callerExternalId = f.accepter.externalId,
+                      preferences = NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(false)),
                       applyToMatches = true
                     )
-                    _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
+                    _ <- move(f = f, moved = f.seatOf(f.challenger), next = List(f.seatOf(f.accepter)))
                 } yield {
                     val mine = f.notifier.messages.filter(_.recipient == f.address(f.accepter))
                     mine.size == 1 &&
@@ -204,15 +227,16 @@ class MatchNotificationSpec extends PropertySuite {
     // muted this one match hears nothing about it while still hearing about everything else.
     property("a player who has muted one match is not written to about it") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
                     _ <- f.services.notifications.updateForMatch(
-                      f.accepter.externalId,
-                      f.game.gameId,
-                      f.played.matchId,
-                      SeatNotifications.all(true).copy(isNotifiedOfYourTurn = false, isNotifiedOfTurnTaken = false)
+                      callerExternalId = f.accepter.externalId,
+                      gameId = f.game.gameId,
+                      matchId = f.played.matchId,
+                      preferences =
+                          SeatNotifications.all(true).copy(isNotifiedOfYourTurn = false, isNotifiedOfTurnTaken = false)
                     )
-                    _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
+                    _ <- move(f = f, moved = f.seatOf(f.challenger), next = List(f.seatOf(f.accepter)))
                 } yield f.notifier.messages.isEmpty
             }
             result.timeout(caseTimeout).unsafeRunSync()
@@ -234,17 +258,27 @@ class MatchNotificationSpec extends PropertySuite {
     property("the mails for one event are sent at the same time, and waited for") {
         forAll(genUniqueString) { seed =>
             val notifier = new ConcurrentNotifier(expected = 2, timeout = 5.seconds)
-            val result = fixture(seed, notifier = notifier).flatMap { f =>
+            val result = fixture(seed = seed, notifier = notifier).flatMap { f =>
                 IO(notifier.arm()) *>
                     f.services.engine
                         .recordResults(
-                          f.game.gameId,
-                          f.played.matchId,
-                          List(
-                            ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true),
-                            ReportedResult(f.seatOf(f.accepter), 2, Map.empty, isWinner = false)
+                          gameId = f.game.gameId,
+                          matchId = f.played.matchId,
+                          results = List(
+                            ReportedResult(
+                              participantId = f.seatOf(f.challenger),
+                              rank = 1,
+                              scores = Map.empty,
+                              isWinner = true
+                            ),
+                            ReportedResult(
+                              participantId = f.seatOf(f.accepter),
+                              rank = 2,
+                              scores = Map.empty,
+                              isWinner = false
+                            )
                           ),
-                          f.game.externalId
+                          callerExternalId = f.game.externalId
                         )
                         .map(_ => notifier.arrived == 2 && notifier.messages.size == 2)
             }
@@ -255,16 +289,26 @@ class MatchNotificationSpec extends PropertySuite {
     // A result is nobody in the match's doing, so everybody in it is told.
     property("a result tells everyone in the match") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 f.services.engine
                     .recordResults(
-                      f.game.gameId,
-                      f.played.matchId,
-                      List(
-                        ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true),
-                        ReportedResult(f.seatOf(f.accepter), 2, Map.empty, isWinner = false)
+                      gameId = f.game.gameId,
+                      matchId = f.played.matchId,
+                      results = List(
+                        ReportedResult(
+                          participantId = f.seatOf(f.challenger),
+                          rank = 1,
+                          scores = Map.empty,
+                          isWinner = true
+                        ),
+                        ReportedResult(
+                          participantId = f.seatOf(f.accepter),
+                          rank = 2,
+                          scores = Map.empty,
+                          isWinner = false
+                        )
                       ),
-                      f.game.externalId
+                      callerExternalId = f.game.externalId
                     )
                     .map { _ =>
                         f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter)) &&
@@ -298,29 +342,35 @@ class MatchNotificationSpec extends PropertySuite {
         permanent: Boolean,
         diagnostic: Option[String] = None
     ): EmailSuppression.Event =
-        EmailSuppression.Event(java.util.UUID.randomUUID().toString, address, reason, permanent, diagnostic)
+        EmailSuppression.Event(
+          eventId = java.util.UUID.randomUUID().toString,
+          email = address,
+          reason = reason,
+          isPermanent = permanent,
+          diagnostic = diagnostic
+        )
 
     private def endMatch(f: Fixture): IO[Unit] =
         f.services.engine
             .recordResults(
-              f.game.gameId,
-              f.played.matchId,
-              List(
-                ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true),
-                ReportedResult(f.seatOf(f.accepter), 2, Map.empty, isWinner = false)
+              gameId = f.game.gameId,
+              matchId = f.played.matchId,
+              results = List(
+                ReportedResult(participantId = f.seatOf(f.challenger), rank = 1, scores = Map.empty, isWinner = true),
+                ReportedResult(participantId = f.seatOf(f.accepter), rank = 2, scores = Map.empty, isWinner = false)
               ),
-              f.game.externalId
+              callerExternalId = f.game.externalId
             )
             .void
 
     property("a bounced address is dropped from the recipients, and nobody else is") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
                     _ <- suppress(
                       event(
-                        f.address(f.accepter),
-                        SuppressionReason.Bounce,
+                        address = f.address(f.accepter),
+                        reason = SuppressionReason.Bounce,
                         permanent = true,
                         Some("smtp; 550 5.1.1 user unknown")
                       )
@@ -334,9 +384,16 @@ class MatchNotificationSpec extends PropertySuite {
 
     property("a complaint is dropped too, and needs no threshold") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
-                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Complaint, true, Some("abuse")))
+                    _ <- suppress(
+                      event(
+                        address = f.address(f.accepter),
+                        reason = SuppressionReason.Complaint,
+                        permanent = true,
+                        diagnostic = Some("abuse")
+                      )
+                    )
                     _ <- endMatch(f)
                 } yield f.notifier.recipients == Set(f.address(f.challenger))
             }
@@ -350,8 +407,9 @@ class MatchNotificationSpec extends PropertySuite {
      * half of that rule the send path is responsible for. */
     property("a single transient failure is counted, not acted on") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
-                val delayed = () => event(f.address(f.accepter), SuppressionReason.Delay, false)
+            val result = fixture(seed = seed).flatMap { f =>
+                val delayed =
+                    () => event(address = f.address(f.accepter), reason = SuppressionReason.Delay, permanent = false)
                 for {
                     _ <- suppress(delayed())
                     _ <- suppress(delayed())
@@ -366,9 +424,11 @@ class MatchNotificationSpec extends PropertySuite {
     // stops holding anything back.
     property("a released address is written to again") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
-                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Bounce, true))
+                    _ <- suppress(
+                      event(address = f.address(f.accepter), reason = SuppressionReason.Bounce, permanent = true)
+                    )
                     _ <- f.services.suppression.retryMine(f.accepter.externalId)
                     _ <- endMatch(f)
                 } yield f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))
@@ -383,13 +443,20 @@ class MatchNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val results = (f: Fixture) =>
                 f.services.engine.recordResults(
-                  f.game.gameId,
-                  f.played.matchId,
-                  List(ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true)),
-                  f.game.externalId
+                  gameId = f.game.gameId,
+                  matchId = f.played.matchId,
+                  results = List(
+                    ReportedResult(
+                      participantId = f.seatOf(f.challenger),
+                      rank = 1,
+                      scores = Map.empty,
+                      isWinner = true
+                    )
+                  ),
+                  callerExternalId = f.game.externalId
                 )
 
-            val result = fixture(seed).flatMap { f =>
+            val result = fixture(seed = seed).flatMap { f =>
                 for {
                     _ <- results(f)
                     sent = f.notifier.messages.size
@@ -403,11 +470,17 @@ class MatchNotificationSpec extends PropertySuite {
     // Cancelling is somebody in the match's doing, so that somebody is the one person not told.
     property("cancelling tells everyone but the owner who did it") {
         forAll(genUniqueString) { seed =>
-            val result = fixture(seed).flatMap { f =>
-                f.services.matches.cancel(f.game.gameId, f.played.matchId, f.challenger.externalId).map { _ =>
-                    f.notifier.recipients == Set(f.address(f.accepter)) &&
-                    f.notifier.messages.head.body.contains("Its creator has called it off.")
-                }
+            val result = fixture(seed = seed).flatMap { f =>
+                f.services.matches
+                    .cancel(
+                      gameId = f.game.gameId,
+                      matchId = f.played.matchId,
+                      callerExternalId = f.challenger.externalId
+                    )
+                    .map { _ =>
+                        f.notifier.recipients == Set(f.address(f.accepter)) &&
+                        f.notifier.messages.head.body.contains("Its creator has called it off.")
+                    }
             }
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -419,14 +492,22 @@ class MatchNotificationSpec extends PropertySuite {
     property("a completion discovered by refresh is news once and only once") {
         forAll(genUniqueString) { seed =>
             @volatile var completed = false
-            val engine = new StubEngine(() => GameStatusResponse(completed, Nil))
+            val engine = new StubEngine(() => GameStatusResponse(isCompleted = completed, participants = Nil))
 
-            val result = fixture(seed, engine).flatMap { f =>
+            val result = fixture(seed = seed, engine = engine).flatMap { f =>
                 for {
                     _ <- IO { completed = true }
-                    _ <- f.services.engine.refresh(f.game.gameId, f.played.matchId, f.challenger.externalId)
+                    _ <- f.services.engine.refresh(
+                      gameId = f.game.gameId,
+                      matchId = f.played.matchId,
+                      callerExternalId = f.challenger.externalId
+                    )
                     afterFirst = f.notifier.messages.size
-                    _ <- f.services.engine.refresh(f.game.gameId, f.played.matchId, f.challenger.externalId)
+                    _ <- f.services.engine.refresh(
+                      gameId = f.game.gameId,
+                      matchId = f.played.matchId,
+                      callerExternalId = f.challenger.externalId
+                    )
                 } yield afterFirst == 2 &&
                     f.notifier.messages.size == afterFirst &&
                     f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))

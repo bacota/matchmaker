@@ -173,7 +173,13 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
             val sides =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Side.One, Side.Two)
-            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId, p.nickname)))
+            Right(
+              players
+                  .zip(sides)
+                  .map((p, side) =>
+                      Seat(side = side, cognitoId = p.cognitoId, participantId = p.participantId, nickname = p.nickname)
+                  )
+            )
         }
 
     def seats(m: RpsMatch): List[Seat] = m.seats

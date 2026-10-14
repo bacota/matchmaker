@@ -9,58 +9,76 @@ import munit.FunSuite
   */
 class PlayAuthSpec extends FunSuite {
 
-    private val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
+    private val login = LoginConfig(
+      hostedLoginUrl = "https://login.test",
+      clientId = "client-1",
+      redirectUri = "http://engine.test/auth/callback",
+      region = "us-east-1"
+    )
 
     test("the gateway mode reads the sub the authorizer verified") {
         val auth = PlayAuth.GatewayClaims(Some(login))
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x", claims = Map("sub" -> "sub-alice"))), Right("sub-alice"))
+        assertEquals(
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", claims = Map("sub" -> "sub-alice"))),
+          Right("sub-alice")
+        )
     }
 
     test("the gateway mode admits nobody when no authorizer ran") {
         val auth = PlayAuth.GatewayClaims(Some(login))
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x")), Left(Refusal.Unauthenticated("sign in to play")))
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x", claims = Map("sub" -> ""))).isLeft, true)
+        assertEquals(
+          auth.callerOf(EngineRequest(method = "GET", path = "/x")),
+          Left(Refusal.Unauthenticated("sign in to play"))
+        )
+        assertEquals(auth.callerOf(EngineRequest(method = "GET", path = "/x", claims = Map("sub" -> ""))).isLeft, true)
         // A bearer token is not read here: in this mode the gateway is what verifies one, and reading
         // it unverified would accept a token the gateway would have rejected.
         assertEquals(
-          auth.callerOf(EngineRequest("GET", "/x", headers = Map("authorization" -> "Bearer whatever"))).isLeft,
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", headers = Map("authorization" -> "Bearer whatever")))
+              .isLeft,
           true
         )
     }
 
     test("the verifying mode takes the token from the Authorization header") {
-        val verifier = new JwtVerifier("https://issuer.test", "client-1") {
+        val verifier = new JwtVerifier(issuer = "https://issuer.test", audience = "client-1") {
             override def verify(token: String): Either[String, String] =
                 if (token == "good") Right("sub-alice") else Left("bad token signature")
         }
         val auth = PlayAuth.VerifiedToken(verifier, Some(login))
 
         assertEquals(
-          auth.callerOf(EngineRequest("GET", "/x", headers = Map("authorization" -> "Bearer good"))),
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", headers = Map("authorization" -> "Bearer good"))),
           Right("sub-alice")
         )
         assertEquals(
-          auth.callerOf(EngineRequest("GET", "/x", headers = Map("authorization" -> "bearer good"))),
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", headers = Map("authorization" -> "bearer good"))),
           Right("sub-alice")
         )
         assertEquals(
-          auth.callerOf(EngineRequest("GET", "/x", headers = Map("authorization" -> "Bearer bad"))).isLeft,
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", headers = Map("authorization" -> "Bearer bad")))
+              .isLeft,
           true
         )
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x", headers = Map("authorization" -> "good"))).isLeft, true)
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x")).isLeft, true)
+        assertEquals(
+          auth.callerOf(EngineRequest(method = "GET", path = "/x", headers = Map("authorization" -> "good"))).isLeft,
+          true
+        )
+        assertEquals(auth.callerOf(EngineRequest(method = "GET", path = "/x")).isLeft, true)
     }
 
     test("the trusted mode takes the caller's word, from the header or the query") {
         assertEquals(
-          PlayAuth.Trusted.callerOf(EngineRequest("GET", "/x", headers = Map("x-player-id" -> "sub-bob"))),
+          PlayAuth.Trusted.callerOf(
+            EngineRequest(method = "GET", path = "/x", headers = Map("x-player-id" -> "sub-bob"))
+          ),
           Right("sub-bob")
         )
         assertEquals(
-          PlayAuth.Trusted.callerOf(EngineRequest("GET", "/x", query = Map("as" -> "sub-bob"))),
+          PlayAuth.Trusted.callerOf(EngineRequest(method = "GET", path = "/x", query = Map("as" -> "sub-bob"))),
           Right("sub-bob")
         )
-        assertEquals(PlayAuth.Trusted.callerOf(EngineRequest("GET", "/x")).isLeft, true)
+        assertEquals(PlayAuth.Trusted.callerOf(EngineRequest(method = "GET", path = "/x")).isLeft, true)
         // No login to offer, so the page shows no sign-in button.
         assertEquals(PlayAuth.Trusted.login, None)
     }
@@ -89,7 +107,14 @@ class PlayAuthSpec extends FunSuite {
         )
         assertEquals(
           configured,
-          Some(LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1"))
+          Some(
+            LoginConfig(
+              hostedLoginUrl = "https://login.test",
+              clientId = "client-1",
+              redirectUri = "http://engine.test/auth/callback",
+              region = "us-east-1"
+            )
+          )
         )
     }
 

@@ -58,7 +58,12 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                 _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
                 // Read plainly: nothing is written.
                 board <- new EloRatingRepo(session)
-                    .leaderboard(gameId, page * Leaderboard.pageSize + 1, (page + 1) * Leaderboard.pageSize, role)
+                    .leaderboard(
+                      game = gameId,
+                      first = page * Leaderboard.pageSize + 1,
+                      last = (page + 1) * Leaderboard.pageSize,
+                      role = role
+                    )
                     .flatMap {
                         case Some(board) => IO.pure(board)
                         case None        => IO.raiseError(noBoard(gameId, role))
@@ -82,7 +87,12 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                     _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
                     // Read plainly: nothing is written.
                     found <- new EloRatingRepo(session)
-                        .findByNicknamePrefix(gameId, prefix.trim, PlayerService.searchLimit, role)
+                        .findByNicknamePrefix(
+                          game = gameId,
+                          prefix = prefix.trim,
+                          limit = PlayerService.searchLimit,
+                          role = role
+                        )
                         .flatMap {
                             case Some(found) => IO.pure(found)
                             case None        => IO.raiseError(noBoard(gameId, role))
@@ -108,7 +118,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                     case Some(game) if role.forall(r => game.roles.exists(_.gameRoleId == r)) => IO.unit
                     case _ => IO.raiseError(noBoard(gameId, role))
                 }
-                rating <- new EloRatingRepo(session).readRated(gameId, playerId, role).flatMap {
+                rating <- new EloRatingRepo(session).readRated(game = gameId, player = playerId, role = role).flatMap {
                     case Some(rating) => IO.pure(rating)
                     case None =>
                         IO.raiseError(
@@ -155,8 +165,8 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                             case Some(_) => IO.unit
                             case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
                         }
-                        _ <- ratingRepo.set(gameId, playerId, rating, caller.playerId)
-                        saved <- ratingRepo.read(gameId, playerId).map(_.get)
+                        _ <- ratingRepo.set(game = gameId, player = playerId, rating = rating, setBy = caller.playerId)
+                        saved <- ratingRepo.read(game = gameId, player = playerId).map(_.get)
                     } yield saved
                 }
             }
@@ -229,7 +239,12 @@ object EloRatingService {
             EloRating.deltas(
               seats.flatMap(seat =>
                   rankOf(seat.participantId).map(rank =>
-                      EloRating.Seat(seat.participantId, seat.playerId, seat.eloRoleStart.get, rank)
+                      EloRating.Seat(
+                        participant = seat.participantId,
+                        player = seat.playerId,
+                        rating = seat.eloRoleStart.get,
+                        rank = rank
+                      )
                   )
               )
             )
@@ -275,7 +290,12 @@ object EloRatingService {
             else {
                 val deltas = EloRating.deltas(
                   ranked.map(row =>
-                      EloRating.Seat(row.participantId, row.playerId, row.eloStart, ranks(row.participantId))
+                      EloRating.Seat(
+                        participant = row.participantId,
+                        player = row.playerId,
+                        rating = row.eloStart,
+                        rank = ranks(row.participantId)
+                      )
                   )
                 )
                 // Over every seat, as `hasDistinctPlayers` is: a seat with no result has no rank, and no delta.
@@ -285,7 +305,8 @@ object EloRatingService {
                 // result, which a role's rating keeps too.
                 val moves = ranked
                     .flatMap { row =>
-                        val record = MatchRecord.of(ranks(row.participantId), ranks.values.toSeq, forfeit)
+                        val record = MatchRecord
+                            .of(rank = ranks(row.participantId), ranks = ranks.values.toSeq, forfeit = forfeit)
                         deltas.get(row.participantId).map(d => (RatingKey(None, row.playerId), d, record)).toList ++
                             inRole
                                 .get(row.participantId)
@@ -296,7 +317,8 @@ object EloRatingService {
                     _ <- ratingRepo.ensureRatedIn(gameId, moves.map(_._1))
                     // In key order, as `ensureRatedIn` went, which is the order the row locks are taken in.
                     _ <- moves.traverse_((key, delta, record) =>
-                        ratingRepo.played(gameId, key.player, delta, record, key.role)
+                        ratingRepo
+                            .played(game = gameId, player = key.player, delta = delta, record = record, role = key.role)
                     )
                 } yield EloDeltas(deltas, inRole)
             }
@@ -334,7 +356,7 @@ object EloRatingService {
         val ratingRepo = new EloRatingRepo(session)
 
         def refuseIfCascading(players: List[PlayerId]): IO[Unit] =
-            participantRepo.laterCompleted(gameId, matchId, players).flatMap { later =>
+            participantRepo.laterCompleted(gameId = gameId, matchId = matchId, players = players).flatMap { later =>
                 IO.raiseWhen(later)(
                   ConflictError(
                     "a player in this match has played another of this game's matches since it finished, so whether " +
@@ -346,7 +368,7 @@ object EloRatingService {
         for {
             seats <- participantRepo.eloSeatsForMatch(gameId, matchId)
             players = seats.map(_.playerId).distinct
-            _ <- participantRepo.lockLaterSeats(gameId, matchId, players)
+            _ <- participantRepo.lockLaterSeats(gameId = gameId, matchId = matchId, players = players)
             // Early, so that the common refusal costs no writes; and again at the end, which is the one that counts.
             _ <- refuseIfCascading(players)
             results <- resultRepo.forMatch(gameId, matchId)
@@ -360,7 +382,14 @@ object EloRatingService {
                         seats.flatMap(seat =>
                             results
                                 .find(_.participantId == seat.participantId)
-                                .map(r => EloRating.Seat(seat.participantId, seat.playerId, seat.eloStart, r.rank))
+                                .map(r =>
+                                    EloRating.Seat(
+                                      participant = seat.participantId,
+                                      player = seat.playerId,
+                                      rating = seat.eloStart,
+                                      rank = r.rank
+                                    )
+                                )
                         )
                       )
                     )
@@ -388,7 +417,7 @@ object EloRatingService {
             moves = results
                 .flatMap { r =>
                     val seat = bySeat(r.participantId)
-                    val record = MatchRecord.of(r.rank, results.map(_.rank), forfeit)
+                    val record = MatchRecord.of(rank = r.rank, ranks = results.map(_.rank), forfeit = forfeit)
                     List(
                       (RatingKey(None, seat.playerId), r.eloDelta, deltas.get(r.participantId), record),
                       (
@@ -408,14 +437,14 @@ object EloRatingService {
             }
             _ <- results.traverse_(r =>
                 resultRepo.setEloDelta(
-                  gameId,
-                  r.participantId,
-                  deltas.get(r.participantId),
-                  inRole.get(r.participantId)
+                  gameId = gameId,
+                  id = r.participantId,
+                  delta = deltas.get(r.participantId),
+                  roleDelta = inRole.get(r.participantId)
                 )
             )
             later <- participantRepo
-                .lockLaterSeats(gameId, matchId, players, noWait = true)
+                .lockLaterSeats(gameId = gameId, matchId = matchId, players = players, noWait = true)
                 .adaptError {
                     case e: skunk.exception.PostgresErrorException if e.code == "55P03" =>
                         ConflictError("another match of a player in this one is finishing right now; try again")

@@ -122,7 +122,12 @@ object ArchiveStore {
         (setting("ARCHIVE_BUCKET"), setting("FRIENDLY_ARCHIVE_BUCKET")) match {
             case (Some(permanent), Some(friendly)) =>
                 val region = setting("AWS_REGION").orElse(setting("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
-                new S3ArchiveStore(permanent, friendly, region, setting("ARCHIVE_ENDPOINT").map(URI.create))
+                new S3ArchiveStore(
+                  permanent = permanent,
+                  friendly = friendly,
+                  region = region,
+                  endpoint = setting("ARCHIVE_ENDPOINT").map(URI.create)
+                )
             case _ => Unavailable
         }
     }
@@ -194,14 +199,14 @@ class S3ArchiveStore(permanent: String, friendly: String, region: String, endpoi
                   .build()
             )
             SignedUpload(
-              signed.url.toString,
-              "PUT",
-              signed.signedHeaders.asScala.toMap.collect {
+              url = signed.url.toString,
+              method = "PUT",
+              headers = signed.signedHeaders.asScala.toMap.collect {
                   // Host is in the url, and every client sets it from there.
                   case (name, values) if !name.equalsIgnoreCase("host") =>
                       name.toLowerCase -> values.asScala.mkString(",")
               },
-              signed.expiration
+              expiresAt = signed.expiration
             )
         }
 
@@ -303,11 +308,11 @@ class LocalArchiveStore(dir: Path, baseUrl: String, now: () => Instant = () => I
     ): IO[SignedUpload] =
         IO.pure(
           SignedUpload(
-            urlOf(bucket, key),
-            "PUT",
-            Map("content-type" -> "application/json", "x-amz-checksum-sha256" -> sha256) ++
+            url = urlOf(bucket, key),
+            method = "PUT",
+            headers = Map("content-type" -> "application/json", "x-amz-checksum-sha256" -> sha256) ++
                 formatVersion.map("x-amz-meta-format-version" -> _),
-            now().plus(ArchiveStore.urlLifetime)
+            expiresAt = now().plus(ArchiveStore.urlLifetime)
           )
         )
 

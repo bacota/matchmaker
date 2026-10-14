@@ -71,7 +71,7 @@ class TournamentRounds[T](
                 begun <- session.transaction.use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError("only the tournament's owner may start a round")
                         )
@@ -81,7 +81,7 @@ class TournamentRounds[T](
                         _ <- IO.raiseWhen(duration.exists(d => d.isZero || d.isNegative))(
                           ValidationError("a round duration must be positive")
                         )
-                        begun <- begin(session, t, duration)
+                        begun <- begin(session = session, t = t, duration = duration)
                     } yield begun
                 }
                 (round, due) = begun
@@ -99,7 +99,8 @@ class TournamentRounds[T](
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
                         case Some(t) if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds =>
                             requireLoaded(session, t).flatMap { loaded =>
-                                if (Progress.isRoundComplete(loaded.state)) begin(session, t, None).map(_._2)
+                                if (Progress.isRoundComplete(loaded.state))
+                                    begin(session = session, t = t, duration = None).map(_._2)
                                 else IO.pure(Nil)
                             }
                         case _ => IO.pure(Nil)
@@ -125,25 +126,44 @@ class TournamentRounds[T](
             _ <- IO.raiseUnless(Progress.isRoundComplete(loaded.state))(
               ConflictError("the round being played is not finished")
             )
-            env <- envFor(session, t, game, loaded.design)
+            env <- envFor(session = session, t = t, game = game, design = loaded.design)
             (next, _) = Progress.nextRound(loaded.state, env)
             result <-
-                if (next.isFinished) finish(session, t, loaded, next).as((None, Nil))
+                if (next.isFinished) finish(session = session, t = t, loaded = loaded, state = next).as((None, Nil))
                 else
                     for {
-                        _ <- stateRepo(session).save(t.gameId, t.tournamentId, loaded, next)
+                        _ <- stateRepo(session).save(
+                          game = t.gameId,
+                          tournament = t.tournamentId,
+                          before = loaded,
+                          after = next
+                        )
                         at = now()
                         _ <- stateRepo(session).beginRound(
-                          t.gameId,
-                          t.tournamentId,
-                          next.round,
-                          at,
-                          duration.orElse(t.settings.roundDuration).map(at.plus)
+                          game = t.gameId,
+                          tournament = t.tournamentId,
+                          round = next.round,
+                          at = at,
+                          deadline = duration.orElse(t.settings.roundDuration).map(at.plus)
                         )
-                        matches <- new TournamentMatchRepo(session).listRound(t.gameId, t.tournamentId, next.round)
+                        matches <- new TournamentMatchRepo(session).listRound(
+                          game = t.gameId,
+                          tournament = t.tournamentId,
+                          round = next.round
+                        )
                         players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
                         seeds <- seedsIn(session, t)
-                        due <- matches.flatTraverse(m => seat(session, game, next, players, seeds, m, at))
+                        due <- matches.flatTraverse(m =>
+                            seat(
+                              session = session,
+                              game = game,
+                              state = next,
+                              players = players,
+                              seeds = seeds,
+                              m = m,
+                              at = at
+                            )
+                        )
                     } yield (Some(next.round), due)
         } yield result
 
@@ -173,12 +193,13 @@ class TournamentRounds[T](
         def forfeits(e: Long) = state.withdrawn(e) || doubled(e) || owners.exists((x, p) => x == e && p.isEmpty)
         val marked =
             m.seats.map(s => if (forfeits(s.entrantId.value)) s.copy(isForfeit = true, chooseOrder = None) else s)
-        val settled = TournamentRounds.settleChoices(marked, allowedRoles(game, m.seats.size), at)
+        val settled =
+            TournamentRounds.settleChoices(seats = marked, allowed = allowedRoles(game, m.seats.size), at = at)
         val status = TournamentRounds.statusOf(settled, game.requiredSeats)
         val matches = new TournamentMatchRepo(session)
         settled.filterNot(m.seats.contains).traverse_(matches.updateSeat(m.gameId, _)) *>
             matches
-                .setStatus(m.gameId, m.matchId, status)
+                .setStatus(game = m.gameId, id = m.matchId, to = status)
                 .as(Option.when(status == TournamentMatchStatus.Due)(m.matchId).toList)
     }
 
@@ -200,8 +221,8 @@ class TournamentRounds[T](
                     val matches = new TournamentMatchRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
-                        tm <- requireMatchForUpdate(session, t, matchId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(tm.status == TournamentMatchStatus.Choosing)(
                           ConflictError("this match is not choosing roles")
                         )
@@ -223,14 +244,14 @@ class TournamentRounds[T](
                             if (s.entrantId == seat.entrantId) s.copy(gameRoleId = Some(role), chosenAt = Some(at))
                             else s
                         )
-                        settled = TournamentRounds.settleChoices(picked, allowed, at)
+                        settled = TournamentRounds.settleChoices(seats = picked, allowed = allowed, at = at)
                         _ <- settled.filterNot(tm.seats.contains).traverse_(matches.updateSeat(gameId, _))
                         status = TournamentRounds.statusOf(settled, game.requiredSeats)
-                        _ <- matches.setStatus(gameId, matchId, status)
+                        _ <- matches.setStatus(game = gameId, id = matchId, to = status)
                     } yield tm.copy(seats = settled, status = status)
                 }
                 _ <- IO.whenA(chosen.status == TournamentMatchStatus.Due)(
-                  endings.tournamentMatchDue(gameId, tournamentId, matchId)
+                  endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = matchId)
                 )
             } yield TournamentService.view(chosen)
         }
@@ -257,12 +278,12 @@ class TournamentRounds[T](
                         tm <- tm
                         game <- game
                     } yield TournamentChoice(
-                      gameId,
-                      tournamentId,
-                      t.name,
-                      game.displayName,
-                      matchId,
-                      TournamentRounds.chooseBy(t, game, tm)
+                      gameId = gameId,
+                      tournamentId = tournamentId,
+                      tournamentName = t.name,
+                      gameName = game.displayName,
+                      matchId = matchId,
+                      chooseBy = TournamentRounds.chooseBy(t = t, game = game, tm = tm)
                     )
                 }
             } yield choices.flatten
@@ -278,19 +299,21 @@ class TournamentRounds[T](
     def createMatch(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Settlement] =
         sessionPool.use { session =>
             for {
-                prepared <- session.transaction.use(_ => prepare(session, gameId, tournamentId, matchId))
+                prepared <- session.transaction.use(_ =>
+                    prepare(session = session, gameId = gameId, tournamentId = tournamentId, matchId = matchId)
+                )
                 settled <- prepared match {
                     case Prepared.Nothing               => IO.pure(Settlement.Settled)
                     case Prepared.Decided(t, roundDone) => afterRecording(t, roundDone).as(Settlement.Settled)
                     case Prepared.Launch(saved, game, players, tiesAllowed) =>
                         engine
                             .launchTournamentMatch(
-                              session,
-                              saved,
-                              game,
-                              players,
-                              tiesAllowed,
-                              undo(session, gameId, matchId)
+                              session = session,
+                              saved = saved,
+                              game = game,
+                              players = players,
+                              tiesAllowed = tiesAllowed,
+                              undo = undo(session = session, gameId = gameId, matchId = matchId)
                             )
                             .attempt
                             .map {
@@ -322,8 +345,9 @@ class TournamentRounds[T](
             case None => IO.pure(Prepared.Nothing)
             case Some(t) =>
                 new TournamentMatchRepo(session).readForUpdate(gameId, matchId).flatMap {
-                    case Some(tm) if tm.status == TournamentMatchStatus.Due => seatsFor(session, t, tm)
-                    case _                                                  => IO.pure(Prepared.Nothing)
+                    case Some(tm) if tm.status == TournamentMatchStatus.Due =>
+                        seatsFor(session = session, t = t, tm = tm)
+                    case _ => IO.pure(Prepared.Nothing)
                 }
         }
 
@@ -339,8 +363,10 @@ class TournamentRounds[T](
                     // Too few left to play: those still seated share first place, and everyone else is last.
                     val ranks =
                         tm.seats.map(s => s -> (if (active.exists(_.entrantId == s.entrantId)) 1 else active.size + 1))
-                    decideUnplayed(session, t, game, tm, ranks).map(done => Prepared.Decided(t, done))
-                } else launch(session, t, game, players, tm, active)
+                    decideUnplayed(session = session, t = t, game = game, tm = tm, ranks = ranks).map(done =>
+                        Prepared.Decided(t, done)
+                    )
+                } else launch(session = session, t = t, game = game, players = players, tm = tm, active = active)
         } yield prepared
 
     private def launch(
@@ -351,7 +377,7 @@ class TournamentRounds[T](
         tm: TournamentMatch,
         active: List[TournamentSeat]
     ): IO[Prepared] = {
-        val clock = TournamentRounds.clockOf(t, game, tm)
+        val clock = TournamentRounds.clockOf(t = t, game = game, tm = tm)
         val at = now()
         val matches = new TournamentMatchRepo(session)
         val roleName = game.roles.map(r => r.gameRoleId -> r.name).toMap
@@ -362,41 +388,59 @@ class TournamentRounds[T](
             entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId)
             characterOf = entries.map(e => e.entrantId -> e.characterId).toMap
             _ <- matches.launch(
-              t.gameId,
-              tm.matchId,
-              at,
+              game = t.gameId,
+              id = tm.matchId,
+              at = at,
               // A challenge is one match, which its tournament's name and round would only describe as such.
-              if (t.tournamentModelId == Challenge.modelId) "" else s"${t.name}, round ${tm.round}",
-              clock.map(_.limit),
-              clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),
-              TournamentRounds.unitFor(clock.map(_.limit)),
-              t.settings.isFriendly,
-              t.settings.gameSettings,
+              description = if (t.tournamentModelId == Challenge.modelId) "" else s"${t.name}, round ${tm.round}",
+              limit = clock.map(_.limit),
+              kind = clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),
+              unit = TournamentRounds.unitFor(clock.map(_.limit)),
+              friendly = t.settings.isFriendly,
+              settings = t.settings.gameSettings,
               // Live only with a clock for the engine to run, which a live tournament always has.
-              t.settings.isLive && clock.isDefined
+              live = t.settings.isLive && clock.isDefined
             )
             seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId.get))
-            starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.hasUnimportantRoles)
+            starting <- EloRatingService.startingRatings(
+              session = session,
+              gameId = t.gameId,
+              seats = seatsOf,
+              byRole = !game.hasUnimportantRoles
+            )
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get
                 matches.launchSeat(
-                  t.gameId,
-                  s.participantId,
-                  player,
-                  Some(starting.overall(player)),
-                  starting.inRole(player, s.gameRoleId.get)
+                  game = t.gameId,
+                  seat = s.participantId,
+                  player = player,
+                  eloStart = Some(starting.overall(player)),
+                  eloRoleStart = starting.inRole(player, s.gameRoleId.get)
                 )
             }
             // A forfeit is a last place, the worst any seat could finish, recorded now: the engine reports only the
             // seats it was told of.
             _ <- forfeited.zipWithIndex.traverse_ { (s, i) =>
-                matches.retireSeat(t.gameId, s.participantId, spare.lift(i)) *>
-                    new ResultRepo(session).createManual(t.gameId, s.participantId, tm.seats.size, isWinner = false)
+                matches.retireSeat(game = t.gameId, seat = s.participantId, role = spare.lift(i)) *>
+                    new ResultRepo(session).createManual(
+                      gameId = t.gameId,
+                      id = s.participantId,
+                      rank = tm.seats.size,
+                      isWinner = false
+                    )
             }
             // What choosing cost each seat is a turn of theirs, charged to their clock like any other.
             _ <- active.traverse_ { s =>
                 (s.chooseStartedAt, s.chosenAt).tupled.traverse_((from, to) =>
-                    new TurnRepo(session).create(Turn(t.gameId, tm.matchId, s.participantId, to, from))
+                    new TurnRepo(session).create(
+                      Turn(
+                        gameId = t.gameId,
+                        matchId = tm.matchId,
+                        participantId = s.participantId,
+                        takenAt = to,
+                        startedAt = from
+                      )
+                    )
                 )
             }
             saved <- new MatchRepo(session).read(t.gameId, tm.matchId).flatMap {
@@ -409,16 +453,16 @@ class TournamentRounds[T](
                 new PlayerRepo(session).read(participant.playerId).flatMap {
                     case Some(player) =>
                         engine.tournamentPlayer(
-                          session,
-                          participant,
-                          player,
-                          roleName(s.gameRoleId.get),
-                          characterOf.get(s.entrantId).flatten
+                          session = session,
+                          participant = participant,
+                          player = player,
+                          roleName = roleName(s.gameRoleId.get),
+                          characterId = characterOf.get(s.entrantId).flatten
                         )
                     case None => IO.raiseError(NotFoundError(s"no player ${participant.playerId}"))
                 }
             }
-        } yield Prepared.Launch(saved, game, enginePlayers, tm.canTie)
+        } yield Prepared.Launch(saved = saved, game = game, players = enginePlayers, canTie = tm.canTie)
     }
 
     /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed: the
@@ -445,7 +489,7 @@ class TournamentRounds[T](
                     session.transaction
                         .use { _ =>
                             for {
-                                t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                                t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                                 done <-
                                     if (t.status != TournamentStatus.Running) IO.pure(None)
                                     else requireGame(session, gameId).flatMap(settle(session, t, _))
@@ -467,12 +511,20 @@ class TournamentRounds[T](
             if (!Progress.isRoundComplete(loaded.state) || loaded.state.round == 0) IO.pure(None)
             else
                 for {
-                    env <- envFor(session, t, game, loaded.design)
+                    env <- envFor(session = session, t = t, game = game, design = loaded.design)
                     advanced = Progress.advance(loaded.state, env)
-                    first <- stateRepo(session).markRoundComplete(t.gameId, t.tournamentId, loaded.state.round)
+                    first <- stateRepo(session).markRoundComplete(
+                      game = t.gameId,
+                      tournament = t.tournamentId,
+                      round = loaded.state.round
+                    )
                     finished <-
-                        if (advanced.isFinished) finish(session, t, loaded, advanced).as(true)
-                        else stateRepo(session).save(t.gameId, t.tournamentId, loaded, advanced).as(false)
+                        if (advanced.isFinished)
+                            finish(session = session, t = t, loaded = loaded, state = advanced).as(true)
+                        else
+                            stateRepo(session)
+                                .save(game = t.gameId, tournament = t.tournamentId, before = loaded, after = advanced)
+                                .as(false)
                 } yield Option.when(first && !finished)(loaded.state.round)
         }
 
@@ -491,10 +543,15 @@ class TournamentRounds[T](
         val alone = ranks.count(_._2 == best) == 1
         for {
             _ <- ranks.traverse_((s, rank) =>
-                new ResultRepo(session).createManual(t.gameId, s.participantId, rank, alone && rank == best)
+                new ResultRepo(session).createManual(
+                  gameId = t.gameId,
+                  id = s.participantId,
+                  rank = rank,
+                  isWinner = alone && rank == best
+                )
             )
-            _ <- callOff(session, t.gameId, tm.matchId)
-            done <- settle(session, t, game)
+            _ <- callOff(session = session, gameId = t.gameId, matchId = tm.matchId)
+            done <- settle(session = session, t = t, game = game)
         } yield done
     }
 
@@ -517,7 +574,7 @@ class TournamentRounds[T](
         }
 
     private def finish(session: Session[IO], t: Tournament, loaded: Loaded, state: TournamentState): IO[Unit] =
-        stateRepo(session).save(t.gameId, t.tournamentId, loaded, state) *>
+        stateRepo(session).save(game = t.gameId, tournament = t.tournamentId, before = loaded, after = state) *>
             new TournamentRepo(session).update(t.copy(status = TournamentStatus.Finished, endedAt = Some(now())))
 
     // ---- the owner's tools -----------------------------------------------------------------
@@ -532,7 +589,7 @@ class TournamentRounds[T](
                 session.transaction.use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError("only the tournament's owner may check a round")
                         )
@@ -547,7 +604,7 @@ class TournamentRounds[T](
                     } yield at
                 }
             }
-            .flatMap(at => endings.tournamentRoundCheck(gameId, tournamentId, at))
+            .flatMap(at => endings.tournamentRoundCheck(gameId = gameId, tournamentId = tournamentId, checkedAt = at))
 
     /** A queued Check round: enforces the clocks of the round's matches being played, forfeits any seat whose time to
       * choose a role has run out, and queues again any match left due. Nothing, for a tournament no longer under way.
@@ -571,9 +628,11 @@ class TournamentRounds[T](
                       case TournamentMatchStatus.Started =>
                           // One match whose engine cannot be reached does not stop the rest being looked at.
                           engine.enforceNow(gameId, tm.matchId).attempt.void
-                      case TournamentMatchStatus.Due => endings.tournamentMatchDue(gameId, tournamentId, tm.matchId)
-                      case TournamentMatchStatus.Choosing => forfeitChooser(gameId, tournamentId, tm.matchId)
-                      case TournamentMatchStatus.Done     => IO.unit
+                      case TournamentMatchStatus.Due =>
+                          endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
+                      case TournamentMatchStatus.Choosing =>
+                          forfeitChooser(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
+                      case TournamentMatchStatus.Done => IO.unit
                   }
               }
             )
@@ -589,11 +648,11 @@ class TournamentRounds[T](
                 .use { _ =>
                     val matches = new TournamentMatchRepo(session)
                     for {
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
-                        tm <- requireMatchForUpdate(session, t, matchId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
                         game <- requireGame(session, gameId)
                         at = now()
-                        late = TournamentRounds.chooseBy(t, game, tm).exists(!at.isBefore(_))
+                        late = TournamentRounds.chooseBy(t = t, game = game, tm = tm).exists(!at.isBefore(_))
                         status <-
                             if (tm.status != TournamentMatchStatus.Choosing || !late) IO.pure(tm.status)
                             else {
@@ -602,16 +661,20 @@ class TournamentRounds[T](
                                     if (out.contains(s.entrantId)) s.copy(isForfeit = true, chooseOrder = None) else s
                                 )
                                 val settled =
-                                    TournamentRounds.settleChoices(forfeited, allowedRoles(game, tm.seats.size), at)
+                                    TournamentRounds.settleChoices(
+                                      seats = forfeited,
+                                      allowed = allowedRoles(game, tm.seats.size),
+                                      at = at
+                                    )
                                 val status = TournamentRounds.statusOf(settled, game.requiredSeats)
                                 settled.filterNot(tm.seats.contains).traverse_(matches.updateSeat(gameId, _)) *>
-                                    matches.setStatus(gameId, matchId, status).as(status)
+                                    matches.setStatus(game = gameId, id = matchId, to = status).as(status)
                             }
                     } yield status
                 }
                 .flatMap(status =>
                     IO.whenA(status == TournamentMatchStatus.Due)(
-                      endings.tournamentMatchDue(gameId, tournamentId, matchId)
+                      endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = matchId)
                     )
                 )
         }
@@ -622,7 +685,7 @@ class TournamentRounds[T](
             session.transaction.use { _ =>
                 for {
                     caller <- requireCaller(session, callerExternalId)
-                    t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                    t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
                       UnauthorizedError("only the tournament's owner may stop it")
                     )
@@ -630,7 +693,12 @@ class TournamentRounds[T](
                       ConflictError("this tournament is not under way")
                     )
                     loaded <- requireLoaded(session, t)
-                    _ <- stateRepo(session).save(gameId, tournamentId, loaded, Progress.requestStop(loaded.state))
+                    _ <- stateRepo(session).save(
+                      game = gameId,
+                      tournament = tournamentId,
+                      before = loaded,
+                      after = Progress.requestStop(loaded.state)
+                    )
                 } yield ()
             }
         }
@@ -652,11 +720,11 @@ class TournamentRounds[T](
                 .use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError("only the tournament's owner may decide a match")
                         )
-                        tm <- requireMatchForUpdate(session, t, matchId)
+                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(
                           ranks.keySet == tm.seats.map(_.entrantId).toSet && ranks.values.forall(_ >= 1)
                         )(
@@ -678,15 +746,15 @@ class TournamentRounds[T](
                         _ <- tm.seats.zip(recorded).traverse_ { (s, r) =>
                             IO.whenA(r.isEmpty)(
                               new ResultRepo(session).createManual(
-                                gameId,
-                                s.participantId,
-                                ranks(s.entrantId),
-                                alone && ranks(s.entrantId) == best
+                                gameId = gameId,
+                                id = s.participantId,
+                                rank = ranks(s.entrantId),
+                                isWinner = alone && ranks(s.entrantId) == best
                               )
                             )
                         }
-                        _ <- callOff(session, gameId, matchId)
-                        done <- settle(session, t, game)
+                        _ <- callOff(session = session, gameId = gameId, matchId = matchId)
+                        done <- settle(session = session, t = t, game = game)
                     } yield (t, Option.when(begun)(matchId), done)
                 }
                 .flatMap { (t, cancelled, done) =>
@@ -714,11 +782,11 @@ class TournamentRounds[T](
                 }
             }
         } yield Env(
-          design,
-          TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
-          ratings.toMap,
-          Some(t.defaultPoolSize),
-          t.settings.hasConcurrentRounds
+          design = design,
+          game = TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
+          ratings = ratings.toMap,
+          defaultPoolSize = Some(t.defaultPoolSize),
+          hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
     private def requireLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
@@ -798,10 +866,10 @@ object TournamentRounds {
     def clockOf(t: Tournament, game: Game, tm: TournamentMatch): Option[MatchClock] =
         t.settings.roundDuration.map(d =>
             Clock.forMatch(
-              TournamentGame.of(game),
-              d,
-              tm.seats.count(!_.isForfeit),
-              tm.canTie,
+              game = TournamentGame.of(game),
+              d = d,
+              seats = tm.seats.count(!_.isForfeit),
+              tiesAllowed = tm.canTie,
               choosing = tm.seats.exists(_.chooseOrder.isDefined),
               t.settings.maxTurns
             )
@@ -812,7 +880,7 @@ object TournamentRounds {
         for {
             seat <- nextChooser(tm.seats)
             from <- seat.chooseStartedAt
-            clock <- clockOf(t, game, tm)
+            clock <- clockOf(t = t, game = game, tm = tm)
         } yield from.plus(Clock.toChoose(clock))
 
     /** The unit a tournament match's limit is shown in. */

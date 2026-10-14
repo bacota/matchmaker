@@ -136,7 +136,7 @@ class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEn
 
     override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
         send(
-          write(TournamentMatchDue(gameId.value, tournamentId.value, matchId.value)),
+          write(TournamentMatchDue(gameId = gameId.value, tournamentId = tournamentId.value, matchId = matchId.value)),
           s"match ${matchId.value} of tournament ${tournamentId.value} was not queued; Check round will create it"
         )
 
@@ -148,7 +148,13 @@ class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEn
 
     override def tournamentRoundCheck(gameId: GameId, tournamentId: TournamentId, checkedAt: Instant): IO[Unit] =
         send(
-          write(TournamentRoundCheck(gameId.value, tournamentId.value, checkedAt.toEpochMilli)),
+          write(
+            TournamentRoundCheck(
+              gameId = gameId.value,
+              tournamentId = tournamentId.value,
+              checkedAt = checkedAt.toEpochMilli
+            )
+          ),
           s"the check of tournament ${tournamentId.value}'s round was not queued; its owner can check it again"
         )
 

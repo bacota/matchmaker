@@ -8,7 +8,7 @@ import com.vivi.engine.{EngineRequest, EngineResponse, InMemoryMatchStore, Live,
   */
 class RoutesContractSpec extends RoutesContract {
 
-    private val average = Fighter(5, 5, 5, 5, 5)
+    private val average = Fighter(strength = 5, speed = 5, agility = 5, workrate = 5, chin = 5)
 
     protected def routes(
         playAuth: PlayAuth,
@@ -18,10 +18,15 @@ class RoutesContractSpec extends RoutesContract {
         now: () => Instant
     ): EngineRequest => EngineResponse =
         Routes(
-          Engine(InMemoryMatchStore[Bout](), matchmaker, "http://engine.test", now),
-          playAuth,
-          matchmakerKey,
-          live
+          engine = Engine(
+            store = InMemoryMatchStore[Bout](),
+            matchmaker = matchmaker,
+            baseUrl = "http://engine.test",
+            now = now
+          ),
+          playAuth = playAuth,
+          matchmakerKey = matchmakerKey,
+          live = live
         )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =
@@ -33,8 +38,20 @@ class RoutesContractSpec extends RoutesContract {
           settings = "{}",
           timeLimitSeconds = None,
           players = List(
-            Protocol.EnginePlayer("sub-alice", 1L, Some("Red"), Some(101L), Some(Fighter.toState(average))),
-            Protocol.EnginePlayer("sub-bob", 2L, Some("Blue"), Some(202L), Some(Fighter.toState(average)))
+            Protocol.EnginePlayer(
+              cognitoId = "sub-alice",
+              participantId = 1L,
+              role = Some("Red"),
+              characterId = Some(101L),
+              characterState = Some(Fighter.toState(average))
+            ),
+            Protocol.EnginePlayer(
+              cognitoId = "sub-bob",
+              participantId = 2L,
+              role = Some("Blue"),
+              characterId = Some(202L),
+              characterState = Some(Fighter.toState(average))
+            )
           ),
           moveCallbackUrl = Some(s"http://matchmaker.test/games/1/matches/$matchId/moves"),
           resultsCallbackUrl = Some(s"http://matchmaker.test/games/1/matches/$matchId/results")

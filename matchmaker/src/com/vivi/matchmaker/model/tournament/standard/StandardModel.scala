@@ -30,14 +30,14 @@ abstract class StandardModel(
     /** The model as it is stored. */
     def model: com.vivi.matchmaker.model.TournamentModel =
         com.vivi.matchmaker.model.TournamentModel(
-          com.vivi.matchmaker.model.TournamentModelId(id),
-          version,
-          name,
-          description,
-          Some(classification),
-          poolSize,
-          hasLateEntries,
-          design,
+          tournamentModelId = com.vivi.matchmaker.model.TournamentModelId(id),
+          version = version,
+          name = name,
+          description = description,
+          classification = Some(classification),
+          poolSize = poolSize,
+          hasLateEntries = hasLateEntries,
+          design = design,
           hasRoleChoice = hasRoleChoice
         )
 }

@@ -11,8 +11,12 @@ object Fixtures {
 
     def game(roles: Int = 2, significant: Boolean = true, recommended: Int = 0): TournamentGame =
         TournamentGame(
-          (1 to roles).toList.map(i => TournamentRole(i, RoleType.Required, None)) ++
-              (1 to recommended).toList.map(i => TournamentRole(roles + i, RoleType.Recommended, None)),
+          roles = (1 to roles).toList.map(i =>
+              TournamentRole(id = i, roleType = RoleType.Required, preferenceLevel = None)
+          ) ++
+              (1 to recommended).toList.map(i =>
+                  TournamentRole(id = roles + i, roleType = RoleType.Recommended, preferenceLevel = None)
+              ),
           hasSignificantRoles = significant,
           moveType = MoveType.Sequential,
           maxTurns = None
@@ -33,14 +37,19 @@ object Fixtures {
 
     /** The strongest seed — the lowest id — always wins; everyone else in order behind. */
     val favourites: Oracle = m =>
-        m.planned.seats.map(_.entrant).sorted.zipWithIndex.map((e, i) => Placing(e, Some(i + 1)))
+        m.planned.seats.map(_.entrant).sorted.zipWithIndex.map((e, i) => Placing(entrant = e, rank = Some(i + 1)))
 
     /** The weakest seed always wins. */
     val upsets: Oracle = m =>
-        m.planned.seats.map(_.entrant).sorted.reverse.zipWithIndex.map((e, i) => Placing(e, Some(i + 1)))
+        m.planned.seats
+            .map(_.entrant)
+            .sorted
+            .reverse
+            .zipWithIndex
+            .map((e, i) => Placing(entrant = e, rank = Some(i + 1)))
 
     /** Every match a draw, scores level: the case only the Ties rule can settle. */
-    val draws: Oracle = m => m.planned.seats.map(s => Placing(s.entrant, Some(1), Some(10.0)))
+    val draws: Oracle = m => m.planned.seats.map(s => Placing(entrant = s.entrant, rank = Some(1), score = Some(10.0)))
 
     /** Random places, with draws only where the match allows them. */
     def random(seed: Long): Oracle = {
@@ -48,7 +57,10 @@ object Fixtures {
         m => {
             val order = rng.shuffle(m.planned.seats.map(_.entrant))
             if (m.canTie && rng.nextInt(5) == 0) order.map(Placing(_, Some(1), Some(1.0)))
-            else order.zipWithIndex.map((e, i) => Placing(e, Some(i + 1), Some((10 - i).toDouble)))
+            else
+                order.zipWithIndex.map((e, i) =>
+                    Placing(entrant = e, rank = Some(i + 1), score = Some((10 - i).toDouble))
+                )
         }
     }
 
@@ -70,8 +82,8 @@ object Fixtures {
         extraRatings: Map[Long, Int] = Map.empty
     ): Played = {
         val (ids, ratings) = field(n)
-        val env = Env(design, g, ratings ++ extraRatings)
-        var state = Tournament.start(ids, env)
+        val env = Env(design = design, game = g, ratings = ratings ++ extraRatings)
+        var state = Tournament.start(entrants = ids, env = env)
         var rounds = List.empty[List[RoundMatch]]
         var guard = 0
         while (!state.isFinished && guard < maxRounds) {
@@ -79,7 +91,14 @@ object Fixtures {
             state = next
             if (!state.isFinished) {
                 rounds = rounds :+ matches
-                matches.foreach(m => state = Tournament.record(state, m.poolId, m.planned.no, oracle(m)))
+                matches.foreach(m =>
+                    state = Tournament.record(
+                      state = state,
+                      poolId = m.poolId,
+                      matchNo = m.planned.no,
+                      placings = oracle(m)
+                    )
+                )
                 assert(Tournament.isRoundComplete(state), "every match of the round was recorded")
                 state = between(state, state.round)
             }

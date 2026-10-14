@@ -208,7 +208,7 @@ object Auth {
       * window can do it within the click that asked for it — a browser blocks a popup opened later than that.
       */
     def handOff(url: String): Future[String] =
-        handOff(url, idToken, () => refreshToken, () => freshIdToken())
+        handOff(url = url, current = idToken, refresh = () => refreshToken, fresh = () => freshIdToken())
 
     /** [[handOff]] with the session it reads passed in rather than read from `sessionStorage`, which is what lets it be
       * tested where there is none. `refresh` is read after `fresh` has run, since a refresh may have stored a new one.
@@ -222,7 +222,7 @@ object Auth {
         if (url.contains("#")) Future.successful(url)
         else
             current match {
-                case Some(id) => Future.successful(withSession(url, id, refresh()))
+                case Some(id) => Future.successful(withSession(url = url, id = id, refresh = refresh()))
                 case None =>
                     fresh()
                         .map(_.fold(url)(withSession(url, _, refresh())))

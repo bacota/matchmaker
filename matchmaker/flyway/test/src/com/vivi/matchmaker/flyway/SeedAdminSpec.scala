@@ -45,7 +45,7 @@ class SeedAdminSpec extends FunSuite {
     test("an unknown external id gets a new admin player") {
         val external = externalId()
 
-        SeedAdmin.seed(connection, external, nickname())
+        SeedAdmin.seed(connection = connection, externalId = external, nickname = nickname())
 
         assertEquals(isAdmin(external), Some(true))
     }
@@ -54,8 +54,8 @@ class SeedAdminSpec extends FunSuite {
         val external = externalId()
         val nick = nickname()
 
-        SeedAdmin.seed(connection, external, nick)
-        val second = SeedAdmin.seed(connection, external, nick)
+        SeedAdmin.seed(connection = connection, externalId = external, nickname = nick)
+        val second = SeedAdmin.seed(connection = connection, externalId = external, nickname = nick)
 
         assert(second.contains("already present"), second)
         assertEquals(isAdmin(external), Some(true))
@@ -66,9 +66,9 @@ class SeedAdminSpec extends FunSuite {
     test("an existing non-admin player is granted admin rather than duplicated") {
         val external = externalId()
         val nick = nickname()
-        insertPlayer(external, nick, admin = false)
+        insertPlayer(external = external, nick = nick, admin = false)
 
-        val message = SeedAdmin.seed(connection, external, "some-other-name")
+        val message = SeedAdmin.seed(connection = connection, externalId = external, nickname = "some-other-name")
 
         assert(message.contains("granted admin"), message)
         assertEquals(isAdmin(external), Some(true))
@@ -77,9 +77,9 @@ class SeedAdminSpec extends FunSuite {
     test("an existing player keeps the nickname it already has") {
         val external = externalId()
         val nick = nickname()
-        insertPlayer(external, nick, admin = false)
+        insertPlayer(external = external, nick = nick, admin = false)
 
-        SeedAdmin.seed(connection, external, "some-other-name")
+        SeedAdmin.seed(connection = connection, externalId = external, nickname = "some-other-name")
 
         val statement = connection.prepareStatement("SELECT nickname FROM player WHERE external_id = ?")
         try {
@@ -93,8 +93,10 @@ class SeedAdminSpec extends FunSuite {
     // Rather than silently renaming the administrator to something nobody would recognize.
     test("a nickname already taken by someone else fails") {
         val taken = nickname()
-        insertPlayer(externalId(), taken, admin = false)
+        insertPlayer(external = externalId(), nick = taken, admin = false)
 
-        intercept[org.postgresql.util.PSQLException](SeedAdmin.seed(connection, externalId(), taken))
+        intercept[org.postgresql.util.PSQLException](
+          SeedAdmin.seed(connection = connection, externalId = externalId(), nickname = taken)
+        )
     }
 }

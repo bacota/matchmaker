@@ -29,8 +29,20 @@ class ProtocolSpec extends FunSuite {
       settings = "{}",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), None, None),
-        Protocol.EnginePlayer("sub-bob", 22L, Some("Blue"), None, None)
+        Protocol.EnginePlayer(
+          cognitoId = "sub-alice",
+          participantId = 11L,
+          role = Some("Red"),
+          characterId = None,
+          characterState = None
+        ),
+        Protocol.EnginePlayer(
+          cognitoId = "sub-bob",
+          participantId = 22L,
+          role = Some("Blue"),
+          characterId = None,
+          characterState = None
+        )
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
       resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
@@ -38,7 +50,7 @@ class ProtocolSpec extends FunSuite {
 
     private def engine() = {
         val store = InMemoryMatchStore[StrategoMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
         (engine, store)
     }
@@ -53,9 +65,9 @@ class ProtocolSpec extends FunSuite {
 
     test("setups and moves read as matchmaker's turns, timestamps and all") {
         val (engine, _) = this.engine()
-        engine.deploy("m-1", "sub-alice", names(setup(Side.Red, Map(30 -> Rank.Scout))))
-        engine.deploy("m-1", "sub-bob", names(setup(Side.Blue)))
-        engine.move("m-1", "sub-alice", 30, 40)
+        engine.deploy(matchId = "m-1", cognitoId = "sub-alice", ranks = names(setup(Side.Red, Map(30 -> Rank.Scout))))
+        engine.deploy(matchId = "m-1", cognitoId = "sub-bob", ranks = names(setup(Side.Blue)))
+        engine.move(matchId = "m-1", cognitoId = "sub-alice", from = 30, to = 40)
 
         val status = engine.status("m-1").toOption.get
         val asMatchmaker = read[MmGameStatusResponse](write(status))
@@ -66,9 +78,9 @@ class ProtocolSpec extends FunSuite {
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {
         val (engine, store) = this.engine()
-        engine.deploy("m-1", "sub-alice", names(setup(Side.Red, Map(30 -> Rank.Scout))))
-        engine.deploy("m-1", "sub-bob", names(setup(Side.Blue, Map(60 -> Rank.Flag))))
-        engine.move("m-1", "sub-alice", 30, 60)
+        engine.deploy(matchId = "m-1", cognitoId = "sub-alice", ranks = names(setup(Side.Red, Map(30 -> Rank.Scout))))
+        engine.deploy(matchId = "m-1", cognitoId = "sub-bob", ranks = names(setup(Side.Blue, Map(60 -> Rank.Flag))))
+        engine.move(matchId = "m-1", cognitoId = "sub-alice", from = 30, to = 60)
 
         val results = engine.resultsOf(store.get("m-1").get)
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
@@ -82,11 +94,12 @@ class ProtocolSpec extends FunSuite {
     test("a move body is either a setup or a pair of squares, each without the other's fields") {
         assertEquals(
           read[Protocol.MoveRequest]("""{"from":30,"to":40}"""),
-          Protocol.MoveRequest(None, Some(30), Some(40))
+          Protocol.MoveRequest(setup = None, from = Some(30), to = Some(40))
         )
         assertEquals(read[Protocol.MoveRequest]("""{"setup":["Flag"]}""").setup, Some(List("Flag")))
         // A hidden rank is a null, which is how the page tells hidden from shown — and nothing else of it is sent.
-        val hidden = write(Protocol.PieceView(60, "Blue", None, false, true))
+        val hidden =
+            write(Protocol.PieceView(square = 60, side = "Blue", rank = None, isRevealed = false, isMoved = true))
         assertEquals(hidden, """{"square":60,"side":"Blue","rank":null,"isRevealed":false,"isMoved":true}""")
     }
 }

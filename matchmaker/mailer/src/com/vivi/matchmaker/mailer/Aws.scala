@@ -18,7 +18,11 @@ object AwsCredentials {
         for {
             accessKeyId <- env("AWS_ACCESS_KEY_ID")
             secretAccessKey <- env("AWS_SECRET_ACCESS_KEY")
-        } yield AwsCredentials(accessKeyId, secretAccessKey, env("AWS_SESSION_TOKEN"))
+        } yield AwsCredentials(
+          accessKeyId = accessKeyId,
+          secretAccessKey = secretAccessKey,
+          sessionToken = env("AWS_SESSION_TOKEN")
+        )
 }
 
 class AwsError(message: String, cause: Throwable = null) extends RuntimeException(message, cause)
@@ -52,7 +56,7 @@ class SigV4(
     def post(url: String, body: String, service: String, headers: Map[String, String]): String = {
         val uri = URI.create(url)
         val signed = credentials match {
-            case Some(creds) => sign(uri, headers, body, service, creds)
+            case Some(creds) => sign(uri = uri, headers = headers, body = body, service = service, creds = creds)
             case None        => Map.empty[String, String]
         }
 

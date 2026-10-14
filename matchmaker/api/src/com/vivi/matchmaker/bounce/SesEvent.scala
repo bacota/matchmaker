@@ -115,11 +115,11 @@ object SesEvent {
             recipients(obj.get("bouncedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 val subType = obj.get("bounceSubType").flatMap(_.strOpt)
                 EmailSuppression.Event(
-                  identity("Bounce", messageId, obj, address),
-                  address,
-                  SuppressionReason.Bounce,
-                  permanent,
-                  diagnostic.orElse(
+                  eventId = identity(kind = "Bounce", messageId = messageId, detail = obj, recipient = address),
+                  email = address,
+                  reason = SuppressionReason.Bounce,
+                  isPermanent = permanent,
+                  diagnostic = diagnostic.orElse(
                     subType.map(sub => s"bounce ${obj.get("bounceType").flatMap(_.strOpt).getOrElse("")}/$sub".trim)
                   )
                 )
@@ -133,11 +133,11 @@ object SesEvent {
             val feedback = obj.get("complaintFeedbackType").flatMap(_.strOpt)
             recipients(obj.get("complainedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 EmailSuppression.Event(
-                  identity("Complaint", messageId, obj, address),
-                  address,
-                  SuppressionReason.Complaint,
-                  true,
-                  feedback.orElse(diagnostic)
+                  eventId = identity(kind = "Complaint", messageId = messageId, detail = obj, recipient = address),
+                  email = address,
+                  reason = SuppressionReason.Complaint,
+                  isPermanent = true,
+                  diagnostic = feedback.orElse(diagnostic)
                 )
             }
         }
@@ -149,11 +149,11 @@ object SesEvent {
             val reason = obj.get("delayType").flatMap(_.strOpt)
             recipients(obj.get("delayedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 EmailSuppression.Event(
-                  identity("DeliveryDelay", messageId, obj, address),
-                  address,
-                  SuppressionReason.Delay,
-                  false,
-                  reason.orElse(diagnostic)
+                  eventId = identity(kind = "DeliveryDelay", messageId = messageId, detail = obj, recipient = address),
+                  email = address,
+                  reason = SuppressionReason.Delay,
+                  isPermanent = false,
+                  diagnostic = reason.orElse(diagnostic)
                 )
             }
         }

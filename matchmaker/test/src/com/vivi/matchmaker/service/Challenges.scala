@@ -45,18 +45,30 @@ object Challenges {
         hostedBy match {
             case None =>
                 for {
-                    t <- offered(services, game, seats, friendly, roundDuration, live, isPublic, settings)
-                    started <- startAndChoose(services, game, t, seats)
+                    t <- offered(
+                      services = services,
+                      game = game,
+                      seats = seats,
+                      friendly = friendly,
+                      roundDuration = roundDuration,
+                      live = live,
+                      isPublic = isPublic,
+                      settings = settings
+                    )
+                    started <- startAndChoose(services = services, game = game, t = t, seats = seats)
                 } yield (t, started)
             case Some(host) =>
                 for {
                     _ <- offeredIn(game)
                     _ <- TestSession.resource.use(session =>
-                        new GameAdminRepo(session).grant(host.playerId, game.gameId, host.playerId).attempt.void
+                        new GameAdminRepo(session)
+                            .grant(player = host.playerId, game = game.gameId, grantedBy = host.playerId)
+                            .attempt
+                            .void
                     )
                     t <- services.tournaments.createChallenge(
-                      game.gameId,
-                      ChallengeRequest(
+                      gameId = game.gameId,
+                      request = ChallengeRequest(
                         isPlaying = false,
                         poolSize = Some(seats.size),
                         roundDuration = roundDuration,
@@ -68,12 +80,23 @@ object Challenges {
                         isOpen = false,
                         invitations = seats.map(_.player.playerId)
                       ),
-                      host.externalId
+                      callerExternalId = host.externalId
                     )
                     _ <- seats.traverse_(s =>
-                        services.tournaments.enter(game.gameId, t.tournamentId, s.character, s.player.externalId)
+                        services.tournaments.enter(
+                          gameId = game.gameId,
+                          tournamentId = t.tournamentId,
+                          characterId = s.character,
+                          callerExternalId = s.player.externalId
+                        )
                     )
-                    started <- choose(services, game, t.tournamentId, seats, host)
+                    started <- choose(
+                      services = services,
+                      game = game,
+                      t = t.tournamentId,
+                      seats = seats,
+                      viewer = host
+                    )
                 } yield (t.tournamentId, started)
         }
 
@@ -93,12 +116,15 @@ object Challenges {
             _ <- offeredIn(game)
             _ <- IO.whenA(!friendly)(
               TestSession.resource.use(session =>
-                  new GameAdminRepo(session).grant(host.player.playerId, game.gameId, host.player.playerId).attempt.void
+                  new GameAdminRepo(session)
+                      .grant(player = host.player.playerId, game = game.gameId, grantedBy = host.player.playerId)
+                      .attempt
+                      .void
               )
             )
             t <- services.tournaments.createChallenge(
-              game.gameId,
-              ChallengeRequest(
+              gameId = game.gameId,
+              request = ChallengeRequest(
                 characterId = host.character,
                 poolSize = Some(seats.size),
                 roundDuration = roundDuration,
@@ -107,18 +133,27 @@ object Challenges {
                 isFriendly = friendly,
                 isPublic = isPublic
               ),
-              host.player.externalId
+              callerExternalId = host.player.externalId
             )
             _ <- seats.tail.traverse_(s =>
-                services.tournaments.enter(game.gameId, t.tournamentId, s.character, s.player.externalId)
+                services.tournaments.enter(
+                  gameId = game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = s.character,
+                  callerExternalId = s.player.externalId
+                )
             )
         } yield t.tournamentId
     }
 
     /** Starts an offered challenge and chooses its roles: its match, created once the last of them is chosen. */
     def startAndChoose(services: Services[String], game: Game, t: TournamentId, seats: List[Seat]): IO[MatchId] =
-        services.tournaments.start(game.gameId, t, seats.head.player.externalId) *>
-            choose(services, game, t, seats, seats.head.player)
+        services.tournaments.start(
+          gameId = game.gameId,
+          tournamentId = t,
+          callerExternalId = seats.head.player.externalId
+        ) *>
+            choose(services = services, game = game, t = t, seats = seats, viewer = seats.head.player)
 
     /** Chooses a started challenge's roles, each seat as it wants, as its turn comes. Its match, once it has been
       * created in the engine.
@@ -137,7 +172,8 @@ object Challenges {
         settled: TournamentMatchStatus => Boolean = status =>
             status == TournamentMatchStatus.Started || status == TournamentMatchStatus.Done
     ): IO[MatchId] = {
-        def detail = services.tournaments.detail(game.gameId, t, viewer.externalId)
+        def detail =
+            services.tournaments.detail(gameId = game.gameId, tournamentId = t, callerExternalId = viewer.externalId)
         def step(remaining: Int): IO[MatchId] =
             if (remaining <= 0) IO.raiseError(new IllegalStateException(s"challenge $t never had its match created"))
             else
@@ -151,11 +187,11 @@ object Challenges {
                                     val player = d.entries.find(_.entrantId == chooser.entrantId).flatMap(_.playerId)
                                     val seat = seats.find(s => player.contains(s.player.playerId)).get
                                     services.rounds.chooseRole(
-                                      game.gameId,
-                                      t,
-                                      m.matchId,
-                                      seat.role,
-                                      seat.player.externalId
+                                      gameId = game.gameId,
+                                      tournamentId = t,
+                                      matchId = m.matchId,
+                                      role = seat.role,
+                                      callerExternalId = seat.player.externalId
                                     ) *>
                                         step(remaining - 1)
                                 // Created in the engine, or decided without it, unless the caller waits for less.

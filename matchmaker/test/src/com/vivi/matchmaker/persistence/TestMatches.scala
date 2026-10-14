@@ -22,12 +22,12 @@ object TestMatches {
     private val holder = TournamentModelId("test-match-holder")
 
     private val holderModel = TournamentModel(
-      holder,
-      1,
-      "Match holder",
-      "",
-      None,
-      None,
+      tournamentModelId = holder,
+      version = 1,
+      name = "Match holder",
+      description = "",
+      classification = None,
+      poolSize = None,
       hasLateEntries = false,
       TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
     )
@@ -93,19 +93,23 @@ object TestMatches {
             for {
                 t <- new TournamentRepo(session).create(
                   Tournament(
-                    m.gameId,
-                    TournamentId.unassigned,
-                    "match",
-                    "",
-                    owner,
-                    holder,
-                    2,
-                    TournamentSettings(),
-                    TournamentStatus.Running,
+                    gameId = m.gameId,
+                    tournamentId = TournamentId.unassigned,
+                    name = "match",
+                    description = "",
+                    owner = owner,
+                    tournamentModelId = holder,
+                    defaultPoolSize = 2,
+                    settings = TournamentSettings(),
+                    status = TournamentStatus.Running,
                     startedAt = Some(java.time.Instant.now())
                   )
                 )
-                _ <- new StageRepo(session).copy(m.gameId, t.tournamentId, holderModel.design)
+                _ <- new StageRepo(session).copy(
+                  game = m.gameId,
+                  tournament = t.tournamentId,
+                  design = holderModel.design
+                )
                 root <- new PoolRepo(session).createRoot(m.gameId, t.tournamentId)
                 g = m.gameId.value
                 id = t.tournamentId.value
@@ -228,7 +232,14 @@ object TestMatches {
                     case Some(e) => IO.pure(e)
                     case None =>
                         new EntrantRepo(session)
-                            .create(p.gameId, gameType, tournament, p.playerId, character, eloStart)
+                            .create(
+                              game = p.gameId,
+                              gt = gameType,
+                              tournament = tournament,
+                              player = p.playerId,
+                              character = character,
+                              rating = eloStart
+                            )
                             .map(_.entrantId.value)
                 }
                 id <- session.unique(insertParticipant)(

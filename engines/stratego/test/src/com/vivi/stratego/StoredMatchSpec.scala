@@ -21,23 +21,26 @@ class StoredMatchSpec extends FunSuite {
     private val stratego =
         StrategoMatch(
           matchId = "m-1",
-          seats = List(Seat(Side.Red, "sub-alice", 11L), Seat(Side.Blue, "sub-bob", 22L)),
+          seats = List(
+            Seat(side = Side.Red, cognitoId = "sub-alice", participantId = 11L),
+            Seat(side = Side.Blue, cognitoId = "sub-bob", participantId = 22L)
+          ),
           board = Board(
             Board.empty.cells
-                .updated(0, Some(Piece(0, Side.Red, Rank.Flag)))
-                .updated(60, Some(Piece(40, Side.Blue, Rank.Sergeant, isRevealed = true)))
-                .updated(99, Some(Piece(79, Side.Blue, Rank.Flag)))
+                .updated(0, Some(Piece(id = 0, side = Side.Red, rank = Rank.Flag)))
+                .updated(60, Some(Piece(id = 40, side = Side.Blue, rank = Rank.Sergeant, isRevealed = true)))
+                .updated(99, Some(Piece(id = 79, side = Side.Blue, rank = Rank.Flag)))
           ),
           turns = List(
-            MoveRecord(11L, Side.Red, at(1), at(0)),
-            MoveRecord(22L, Side.Blue, at(2), at(0)),
+            MoveRecord(participantId = 11L, side = Side.Red, takenAt = at(1), startedAt = at(0)),
+            MoveRecord(participantId = 22L, side = Side.Blue, takenAt = at(2), startedAt = at(0)),
             MoveRecord(
-              11L,
-              Side.Red,
-              at(3),
-              at(2),
-              Some(Step(30, 30, 60)),
-              Some(Battle(Rank.Scout, Rank.Sergeant, Result.DefenderWins))
+              participantId = 11L,
+              side = Side.Red,
+              takenAt = at(3),
+              startedAt = at(2),
+              step = Some(Step(pieceId = 30, from = 30, to = 60)),
+              battle = Some(Battle(attacker = Rank.Scout, defender = Rank.Sergeant, result = Result.DefenderWins))
             )
           ),
           isPublic = true,
@@ -69,7 +72,15 @@ class StoredMatchSpec extends FunSuite {
 
     test("a concession is stored on its turn, and reads back; a turn that is not one stores nothing new") {
         val conceded =
-            stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), isConcession = true))
+            stratego.copy(turns =
+                stratego.turns :+ MoveRecord(
+                  participantId = 22L,
+                  side = Side.Blue,
+                  takenAt = at(9),
+                  startedAt = at(9),
+                  isConcession = true
+                )
+            )
         val stored = write(conceded)
         assertEquals(read[StrategoMatch](stored), conceded)
         assertEquals("\"isConcession\":true".r.findAllIn(stored).size, 1)
