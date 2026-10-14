@@ -24,8 +24,8 @@
 # per-engine scripts when only an engine changed — they are much faster and touch far less.
 #
 # Which engines are deployed is not this script's decision. It is deploy_tictactoe, deploy_rps,
-# deploy_boxing and deploy_stratego in environments/<env>.settings.tfvars, the same flags terraform reads; an engine
-# that is off there is skipped here, and said so.
+# deploy_boxing, deploy_stratego and deploy_wavinghands in environments/<env>.settings.tfvars, the same
+# flags terraform reads; an engine that is off there is skipped here, and said so.
 #
 # Which of them are *rebuilt* is, and it is the last field of ENGINES below. An engine marked `keep`
 # stays deployed but is not tested or rebuilt: terraform is handed the jar already in out/, whose
@@ -45,6 +45,7 @@ readonly ENGINES=(
   "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps:keep"
   "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing:build"
   "stratego:engines.stratego:out/engines/stratego/assembly.dest/out.jar:deploy_stratego:build"
+  "wavinghands:engines.wavinghands:out/engines/wavinghands/assembly.dest/out.jar:deploy_wavinghands:build"
 )
 
 usage() {

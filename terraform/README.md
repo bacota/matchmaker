@@ -232,6 +232,7 @@ engine:
 | `rps_subdomain` | `rps` | `rps.matchmaker-dev.vivi.com` |
 | `boxing_subdomain` | `simple-boxing` | `simple-boxing.matchmaker-dev.vivi.com` |
 | `stratego_subdomain` | `capture-the-flag` | `capture-the-flag.matchmaker-dev.vivi.com` |
+| `wavinghands_subdomain` | `waving-hands` | `waving-hands.matchmaker-dev.vivi.com` |
 
 An empty subdomain gives that engine no friendly url, and with no ui domain none of them has one:
 they stay on their generated execute-api hosts.
