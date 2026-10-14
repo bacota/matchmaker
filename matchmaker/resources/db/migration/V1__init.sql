@@ -608,6 +608,14 @@ CREATE TABLE invitation (
     tournament_id  BIGINT NOT NULL,
     invitation_id  BIGINT GENERATED ALWAYS AS IDENTITY,
     game_type      CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
+    -- Not data, and read by nothing: these two exist so that the keys at the ALTER below can insist that an
+    -- invitation has the subtype its game_type says. A subtype's own key to this table names game_type, which the
+    -- subtype pins to its one value, so a subtype row can only belong to an invitation of its kind. The other way
+    -- round needs a key that applies to only some rows, which a key cannot be told. But a key with a NULL column is
+    -- not checked, so each of these is game_type for its own kind and NULL otherwise: the key to player_invitation
+    -- through player_kind is checked only for a 'P' invitation, the key to character_invitation through
+    -- character_kind only for a 'C' one. Between them an invitation has its subtype, never the other one, and never
+    -- none. entrant and participant do the same.
     player_kind    CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
     character_kind CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
     create_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -655,6 +663,8 @@ CREATE TABLE character_invitation (
 
 CREATE INDEX ON character_invitation (game_id, character_id);
 
+-- Deferred, because an invitation and its subtype each name the other, so whichever is written first has nothing to
+-- name yet: the two are written in one statement (InvitationRepo, CharacterInvitationRepo).
 ALTER TABLE invitation
     ADD FOREIGN KEY (game_id, tournament_id, invitation_id, player_kind)
         REFERENCES player_invitation (game_id, tournament_id, invitation_id, game_type) DEFERRABLE INITIALLY DEFERRED,
@@ -677,6 +687,7 @@ CREATE TABLE entrant (
     entered_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Set by withdrawing, cleared by coming back.
     withdrawn_at    TIMESTAMPTZ,
+    -- Only so that the keys at the ALTER below can insist on the subtype game_type says: see invitation's.
     player_kind     CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
     character_kind  CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -727,6 +738,7 @@ CREATE TABLE character_entrant (
 
 CREATE INDEX character_entrant_character ON character_entrant (game_id, character_id);
 
+-- Deferred, as invitation's are: an entry and its subtype are written in one statement (EntrantRepo).
 ALTER TABLE entrant
     ADD FOREIGN KEY (game_id, tournament_id, entrant_id, player_kind)
         REFERENCES player_entrant (game_id, tournament_id, entrant_id, game_type) DEFERRABLE INITIALLY DEFERRED,
@@ -1005,6 +1017,7 @@ CREATE TABLE participant (
     notify_turn_taken    BOOLEAN NOT NULL,
     notify_your_turn     BOOLEAN NOT NULL,
     notify_match_ended   BOOLEAN NOT NULL,
+    -- Only so that the keys at the ALTER below can insist on the subtype game_type says: see invitation's.
     player_kind          CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
     character_kind       CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
     create_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1067,6 +1080,7 @@ CREATE TABLE character_participant (
 CREATE INDEX ON character_participant (game_id, character_id);
 CREATE INDEX ON character_participant (game_id, tournament_id, entrant_id, character_id);
 
+-- Deferred, as invitation's are: a seat and its subtype are written in one transaction (TournamentStateRepo.writeSeat).
 ALTER TABLE participant
     ADD FOREIGN KEY (game_id, participant_id, player_kind)
         REFERENCES player_participant (game_id, participant_id, game_type) DEFERRABLE INITIALLY DEFERRED,
