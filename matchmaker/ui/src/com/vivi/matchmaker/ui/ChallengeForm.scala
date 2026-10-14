@@ -167,7 +167,7 @@ object ChallengeForm {
           Store.administers(game.gameId, player) --> administers,
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           if (most.exists(_ < least))
-              p(cls := "empty", s"${game.displayName} has too few roles to be played as a challenge.")
+               p(cls := "empty", s"${game.displayName} has too few ${if (game.isRoleless) "players" else "roles"} to be played as a challenge.")
           else emptyNode,
           // Shown even when there is only one, so the challenger can see who they are playing as -- and not at all to
           // an admin who will not play.
