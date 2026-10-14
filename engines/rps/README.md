@@ -166,7 +166,9 @@ any other. The deploy scripts print the urls; the form wants:
   `./terraform/tf.sh <env> output -raw rps_api_key` prints. Matchmaker stores it with the game and
   never shows it again; entering a new one on the game's edit form replaces it.
 - **Type**: plain (leave "Requires characters" unticked)
-- **Roles**: `One` and `Two`, neither optional
+- **Seats**: Any number of players, **Fewest players** 2 and **Most players** 2 — no roles, since neither side
+  has an advantage; the engine seats the players One and Two in the order matchmaker sends them
+- **Moves**: Simultaneous, which a game without roles always is
 - **Parameters**: none
 
 ## What this engine is not

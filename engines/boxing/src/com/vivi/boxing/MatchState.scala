@@ -221,7 +221,9 @@ object Bout extends Game[Bout, Corner, Plan] {
     val MinRounds = 3
     val MaxRounds = 25
 
-    /** Seats the fighters, honouring the roles matchmaker sent when they name the two corners.
+    /** Seats the fighters: the first named in the red corner, the second in the blue. Matchmaker registers boxing
+      * without roles, two fighters a bout, so it sends none: the corners are alike, and both fighters plan each round
+      * at once.
       *
       * Every corner must carry a character: this is a character game, and the fighter *is* the character. A seat
       * without one means the game was registered in matchmaker as a plain game, which is a mistake to report at the
@@ -249,11 +251,7 @@ object Bout extends Game[Bout, Corner, Plan] {
                   " are not"
             )
         else {
-            val requested = players.map(p => p.role.flatMap(Side.parse))
-            val sides =
-                if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
-                else List(Side.Red, Side.Blue)
-            Right(players.zip(sides).map { (p, side) =>
+            Right(players.zip(List(Side.Red, Side.Blue)).map { (p, side) =>
                 Corner(
                   side = side,
                   cognitoId = p.cognitoId,

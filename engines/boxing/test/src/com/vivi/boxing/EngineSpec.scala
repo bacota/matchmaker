@@ -27,7 +27,7 @@ class EngineSpec extends FunSuite with QuietTests {
     private def createRequest(
         red: Option[Fighter] = Some(average),
         blue: Option[Fighter] = Some(average),
-        roles: List[Option[String]] = List(Some("Red"), Some("Blue")),
+        roles: List[Option[String]] = List(None, None),
         parameters: Map[String, String] = Map("rounds" -> "3"),
         settings: String = "{}",
         isPublic: Boolean = false
@@ -85,7 +85,8 @@ class EngineSpec extends FunSuite with QuietTests {
     // Creating a bout
     // ---------------------------------------------------------------------------
 
-    test("creating a bout seats both fighters in the corners their roles name, and hands back the urls") {
+    test("creating a bout seats the fighters red then blue in the order they are named, and hands back the urls") {
+        // Roles, were any sent, change nothing: matchmaker registers boxing without them.
         val (_, _, store, _, response) =
             fixture(createRequest(roles = List(Some("Blue"), Some("Red")), isPublic = true))
         val created = response.toOption.get
@@ -93,8 +94,8 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(created.statusUrl, "http://engine.test/matches/m-1/status")
         assertEquals(created.playUrl, "http://engine.test/matches/m-1/play")
         assertEquals(created.publicUrl, Some("http://engine.test/matches/m-1/board"))
-        assertEquals(bout(store).cornerOf(Side.Blue).map(_.participantId), Some(11L))
-        assertEquals(bout(store).cornerOf(Side.Red).map(_.characterId), Some(202L))
+        assertEquals(bout(store).cornerOf(Side.Red).map(_.participantId), Some(11L))
+        assertEquals(bout(store).cornerOf(Side.Blue).map(_.characterId), Some(202L))
     }
 
     test("each corner carries its player's nickname, as matchmaker sent it, for the page to show") {
