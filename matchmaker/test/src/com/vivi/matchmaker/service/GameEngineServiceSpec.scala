@@ -130,6 +130,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 character <- new CharacterRepo[String](session).create(
                   Character(CharacterId(0), game.gameId, "character", "description", "", Some(owner.playerId))
                 )
+                _ <- Challenges.offeredIn(game)
             } yield Fixture(owner, game, character)
         }
 
