@@ -7,7 +7,7 @@ import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{TournamentGame, Validation}
-import com.vivi.matchmaker.model.tournament.standard.StandardModels
+import com.vivi.matchmaker.model.tournament.standard.{StandardModel, StandardModels}
 import com.vivi.matchmaker.persistence._
 
 /** The models every game's tournaments are made from: the standard formats the code defines ([[StandardModels]]), which
@@ -138,15 +138,7 @@ object TournamentModelService {
         val tournaments = new TournamentRepo(session)
         for {
             _ <- lockSync(session)
-            // Each model is locked before it is looked at, and decided from what is read under the lock.
-            written <- StandardModels.all.traverse { m =>
-                val id = TournamentModelId(m.id)
-                repo.lockForUpdate(id) *> repo.read(id).flatMap {
-                    case None                                          => repo.create(m.model).as(Some(Left(id)))
-                    case Some(s) if !s.active || s.version < m.version => repo.replace(m.model).as(Some(Right(id)))
-                    case Some(_)                                       => IO.pure(None)
-                }
-            }
+            written <- StandardModels.all.traverse(m => write(repo, m))
             stored <- repo.listClassified
             gone = stored.filterNot(s => StandardModels.find(s.tournamentModelId.value).isDefined)
             removed <- gone.traverse { s =>
@@ -170,6 +162,34 @@ object TournamentModelService {
           deactivated = removed.flatten.collect { case Left(id) => id },
           deleted = removed.flatten.collect { case Right(id) => id }
         )
+    }
+
+    /* One model the code defines, made what the code says: added if it is not stored, rewritten if the code's version
+     * is newer or it had been deactivated. Left if added, Right if rewritten. Under the sync lock, which the caller
+     * holds; the model is locked before it is looked at, and decided from what is read under the lock. */
+    private def write(
+        repo: TournamentModelRepo,
+        m: StandardModel
+    ): IO[Option[Either[TournamentModelId, TournamentModelId]]] = {
+        val id = TournamentModelId(m.id)
+        repo.lockForUpdate(id) *> repo.read(id).flatMap {
+            case None                                          => repo.create(m.model).as(Some(Left(id)))
+            case Some(s) if !s.active || s.version < m.version => repo.replace(m.model).as(Some(Right(id)))
+            case Some(_)                                       => IO.pure(None)
+        }
+    }
+
+    /** Makes the stored `m` what the code defines, as a sync would, within the caller's transaction -- for a model that
+      * is used whether or not a site admin has synced the models yet, as every game's challenges use the challenge
+      * model. Only takes the sync lock when there is something to write.
+      */
+    def ensure(session: Session[IO], m: StandardModel): IO[Unit] = {
+        val repo = new TournamentModelRepo(session)
+        // Read plainly to see whether there is anything to do: when there is, it is decided again under the locks.
+        repo.read(TournamentModelId(m.id)).flatMap {
+            case Some(s) if s.active && s.version >= m.version => IO.unit
+            case _                                             => lockSync(session) *> write(repo, m).void
+        }
     }
 
     /** Offers in `game` every active model it can play -- whose design has no problem for it but warnings: what a new

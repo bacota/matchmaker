@@ -176,6 +176,7 @@ class TournamentService[T](
                     for {
                         caller <- requireCaller(session, callerExternalId)
                         game <- requireGame(session, gameId)
+                        _ <- TournamentModelService.ensure(session, Challenge)
                         model <- requireModel(session, gameId, Challenge.modelId)
                         _ <- IO.raiseWhen(!request.plays && !request.autoStart)(
                           ValidationError(

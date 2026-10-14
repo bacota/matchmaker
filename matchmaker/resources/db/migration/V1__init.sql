@@ -423,24 +423,6 @@ CREATE TABLE tournament_model_game (
 -- For the foreign key: without it, deleting a model would scan every game's choices.
 CREATE INDEX ON tournament_model_game (tournament_model_id);
 
--- The challenge model (`standard.Challenge`), written here as a sync would write version 1 of it, because
--- every game's challenges are made from it whether or not a site admin has synced the models yet, and
--- whether or not the game offers it among its tournaments' formats. A sync leaves it as it is until the code
--- gives it a later version.
-INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                              late_entries, choose_roles, first_stage_model_id)
-VALUES ('challenge', 1, 'Challenge',
-        'One match, of everyone who enters. The players choose their roles once it starts.', 'Challenge',
-        NULL, false, true, 'stage-1');
-INSERT INTO stage_model (tournament_model_id, stage_model_id, kind, pool_size, name, description,
-                         concurrent_rounds, bracketed, repetitions, remaining_participants, demote, max_stratum,
-                         min_stratum, points_for_win, points_for_draw, points_bonus, promote, rubber_match,
-                         ties_allowed, strict_strata, tie_breaker_stage, seed_policy, current_stage_model_id)
-VALUES ('challenge', 'stage-1', 'A', NULL, '', '', false, false, 1, NULL, NULL, 0, 0, 2, 1, false, NULL, false,
-        true, true, false, 'CONST', NULL);
-INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, rotate_roles)
-VALUES ('challenge', 'stage-1', false);
-
 
 -- =====================================================================
 -- Tournaments
