@@ -939,8 +939,19 @@ object Tournaments {
           isAutoStarted = autoStart.now() && int(maxEntrants).isDefined,
           playersPerMatch = playersPerMatch
         )
+        /* "A number of players" with no number is not "everyone in the pool", though both leave `playersPerMatch`
+         * empty: refused here, so that a blank or mistyped count is never saved as the other mode. */
+        def countProblem: List[Problem] =
+            Option
+                .when(game.isRoleless && !wholePool.now() && perMatch.now().trim.toIntOption.forall(_ < 1))(
+                  Problem(
+                    where = "",
+                    message = "players per match has to be a whole number above 0, or choose everyone in the pool"
+                  )
+                )
+                .toList
         def check(): Unit =
-            problems.set(chosen.now() match {
+            problems.set(countProblem ++ (chosen.now() match {
                 // The format it was made from, checked again as it is saved.
                 case None if isKeeping => Nil
                 case None              => List(Problem(where = "", message = "choose a format"))
@@ -951,7 +962,7 @@ object Tournaments {
                       maxTurns = settings.maxTurns,
                       defaultPoolSize = int(poolSize).orElse(Some(r))
                     )
-            })
+            }))
 
         def checkbox(caption: String, v: Var[Boolean], tip: String) = {
             val id = freshTipId(s"$key-tip")
