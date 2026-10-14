@@ -246,6 +246,24 @@ object GameForm {
     }
 
     /** A game's maximum turns as typed: blank for none, otherwise a whole number above 0. */
+    /** A game without roles' range of players, as typed: the fewest, a whole number above 0, and the most, blank for no
+      * limit or no fewer than the fewest.
+      */
+    private def playersOf(least: String, most: String): Either[String, (Int, Option[Int])] =
+        for {
+            fewest <- least.trim.toIntOption
+                .filter(_ > 0)
+                .toRight("Fewest players has to be a whole number above 0.")
+            limit <- most.trim match {
+                case "" => Right(None)
+                case trimmed =>
+                    trimmed.toIntOption
+                        .filter(_ >= fewest)
+                        .map(Some(_))
+                        .toRight("Most players has to be a whole number no smaller than fewest players, or blank.")
+            }
+        } yield (fewest, limit)
+
     private def maxTurnsOf(raw: String): Either[String, Option[Int]] =
         raw.trim match {
             case "" => Right(None)
@@ -311,8 +329,11 @@ object GameForm {
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.isActive))
-        // No role has an advantage in winning: ratings are then kept overall only.
-        val unimportantRoles = Var(existing.exists(_.hasUnimportantRoles))
+        // Played without roles, by any number of players in a range: a tournament says how many each match seats.
+        // The range as typed.
+        val roleless = Var(existing.exists(_.isRoleless))
+        val minPlayers = Var(existing.flatMap(_.minPlayers).fold("2")(_.toString))
+        val maxPlayers = Var(existing.flatMap(_.maxPlayers).fold("")(_.toString))
         // How players take turns, and how many a simultaneous game lasts; max turns as typed.
         val moveType: Var[MoveType] = Var(existing.map(_.moveType).getOrElse(MoveType.Sequential))
         val maxTurns = Var(existing.flatMap(_.maxTurns).fold("")(_.toString))
@@ -330,7 +351,7 @@ object GameForm {
         // be — the control does not have to change when the second arrives, only the enum.
         val timeoutAction: Var[TimeoutAction] =
             Var(existing.map(_.timeoutAction).getOrElse(TimeoutAction.Forfeit))
-        // A new game starts with one empty role, because it cannot be created without one, and no
+        // A new game starts with one empty role, because a game with roles cannot be created without one, and no
         // parameters, because plenty of games have none. An existing one starts with what it has.
         val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
         val parameters = Var(
@@ -446,24 +467,60 @@ object GameForm {
                 )
               )
           },
-          roleEditor(formKey, roles),
-          // Beside the roles it is about. Unticked, ratings are kept by role as well as overall.
+          // Before the roles, because it decides whether there are any.
           {
-              val tipId = s"$formKey-unimportant-roles-tip"
+              val tipId = s"$formKey-seats-tip"
               withTip(
                 id = tipId,
-                subject = "Unimportant Roles",
-                text = "Check this if no role has any advantage in winning the game."
+                subject = "Seats",
+                text = "Whether each player takes one of the game's roles, or the game is played by any number of " +
+                    "players with no roles at all. A tournament of a game without roles says how many players each " +
+                    "match has. Such a game is always played with everyone moving at once."
               )(
                 label(
-                  input(
-                    tpe := "checkbox",
+                  cls := "field",
+                  "Seats",
+                  select(
                     aria.describedBy := tipId,
-                    controlled(checked <-- unimportantRoles.signal, onClick.mapToChecked --> unimportantRoles)
-                  ),
-                  "Unimportant Roles"
+                    onChange.mapToValue --> { code =>
+                        roleless.set(code == "open")
+                        // Nobody goes first without roles: everyone moves at once.
+                        if (code == "open") moveType.set(MoveType.Simultaneous)
+                    },
+                    value <-- roleless.signal.map(if (_) "open" else "roles"),
+                    option(value := "roles", "Players take roles"),
+                    option(value := "open", "Any number of players")
+                  )
                 )
               )
+          },
+          // Kept in their Vars while hidden, so switching back and forth does not lose what was typed.
+          child <-- roleless.signal.map { open =>
+              if (!open) roleEditor(formKey, roles)
+              else
+                  div(
+                    field(
+                      "Fewest players",
+                      input(
+                        tpe := "number",
+                        inputMode := "numeric",
+                        minAttr := "1",
+                        controlled(value <-- minPlayers.signal, onInput.mapToValue --> minPlayers)
+                      )
+                    ),
+                    tipField(
+                      id = s"$formKey-max-players-tip",
+                      caption = "Most players",
+                      text = "The most players one match can have. Leave blank if there is no limit."
+                    )(
+                      input(
+                        tpe := "number",
+                        inputMode := "numeric",
+                        minAttr := "1",
+                        controlled(value <-- maxPlayers.signal, onInput.mapToValue --> maxPlayers)
+                      )
+                    )
+                  )
           }, {
               val tipId = s"$formKey-move-type-tip"
               withTip(
@@ -477,6 +534,9 @@ object GameForm {
                   "Moves",
                   select(
                     aria.describedBy := tipId,
+                    // A game without roles is always simultaneous.
+                    // Qualified: `disabled` here is the Var that disables the game.
+                    com.raquo.laminar.api.L.disabled <-- roleless.signal,
                     onChange.mapToValue --> (code => moveType.set(MoveType.fromCode(code))),
                     value <-- moveType.signal.map(_.code),
                     MoveType.values.toSeq.map(mt => option(value := mt.code, mt.label))
@@ -517,14 +577,17 @@ object GameForm {
                 )
           ) { busy =>
               val drafted = for {
-                  roleModels <- rolesOf(roles.now())
+                  // A game without roles has none to send, whatever the hidden role editor holds.
+                  roleModels <- if (roleless.now()) Right(Nil) else rolesOf(roles.now())
+                  range <-
+                      if (roleless.now()) playersOf(minPlayers.now(), maxPlayers.now()).map(Some(_)) else Right(None)
                   parameterModels <- parametersOf(parameters.now())
                   turns <- maxTurnsOf(maxTurns.now())
-              } yield (roleModels, parameterModels, turns)
+              } yield (roleModels, range, parameterModels, turns)
 
               drafted match {
                   case Left(problem) => Store.reportProblem(problem)
-                  case Right((roleModels, parameterModels, turns)) =>
+                  case Right((roleModels, range, parameterModels, turns)) =>
                       val game = Game(
                         // Unassigned means create and the server assigns the real id — the same sentinel
                         // the challenge form uses; a real id means update that game.
@@ -545,8 +608,9 @@ object GameForm {
                         // from it is matched against.
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
-                        hasUnimportantRoles = unimportantRoles.now(),
-                        moveType = moveType.now(),
+                        minPlayers = range.map(_._1),
+                        maxPlayers = range.flatMap(_._2),
+                        moveType = if (range.isDefined) MoveType.Simultaneous else moveType.now(),
                         maxTurns = turns,
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
@@ -569,7 +633,9 @@ object GameForm {
                               url.set("")
                               engineIdentity.set("")
                               characterUrl.set("")
-                              unimportantRoles.set(false)
+                              roleless.set(false)
+                              minPlayers.set("2")
+                              maxPlayers.set("")
                               moveType.set(MoveType.Sequential)
                               maxTurns.set("")
                               roles.set(List(emptyRole))

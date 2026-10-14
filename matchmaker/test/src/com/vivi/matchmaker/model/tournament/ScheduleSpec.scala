@@ -82,10 +82,35 @@ class ScheduleSpec extends ScalaCheckSuite {
           List(Some(2), Some(1))
         )
 
-        val unimportant = game(significant = false)
+        // Nothing to hand out, or to choose, in a game without roles -- even in a tournament whose seats always choose.
+        val open = roleless().copy(hasRoleChoice = true)
         assertEquals(
-          Schedule.roles(subset = List(3L, 7L), seating = unimportant.seatingRoles, game = unimportant).map(_.role),
-          List(Some(1), Some(2))
+          Schedule.roles(subset = List(3L, 7L), seating = open.seatingRoles, game = open),
+          List(SeatPlan(entrant = 3L, role = None), SeatPlan(entrant = 7L, role = None))
         )
+    }
+
+    test("a game without roles plays each pool as one match when the tournament says no number") {
+        for (n <- 2 to 12) {
+            val members = (1 to n).toList.map(_.toLong)
+            val g = roleless()
+            val matches = Schedule.roundRobin(members = members, game = g, rotateRoles = true, concurrent = 1)
+            assertEquals(Schedule.matchCount(n = n, game = g, rotateRoles = true), 1L)
+            assertEquals(matches.map(_.seats.map(_.entrant)), List(members))
+            assert(matches.flatMap(_.seats).forall(s => s.role.isEmpty && s.chooseOrder.isEmpty))
+        }
+    }
+
+    test("a game without roles plays every subset of its players per match, and a smaller pool all together") {
+        for (n <- 1 to 9; k <- 2 to 4) {
+            val members = (1 to n).toList.map(_.toLong)
+            val g = roleless(perMatch = Some(k))
+            val matches = Schedule.roundRobin(members = members, game = g, rotateRoles = true, concurrent = 1)
+            val expected = if (n < 2) 0 else if (n <= k) 1 else (1 to k).foldLeft(1L)((acc, i) => acc * (n - k + i) / i)
+            assertEquals(Schedule.matchCount(n = n, game = g, rotateRoles = true), expected.toLong, s"n=$n k=$k")
+            assertEquals(matches.size.toLong, expected.toLong, s"n=$n k=$k")
+            assert(matches.forall(_.seats.sizeIs == math.min(n, k)), s"n=$n k=$k")
+            assert(matches.flatMap(_.seats).forall(s => s.role.isEmpty && s.chooseOrder.isEmpty))
+        }
     }
 }

@@ -186,7 +186,9 @@ any other. The deploy scripts print the urls; the form wants:
   `./terraform/tf.sh <env> output -raw boxing_api_key` prints. Matchmaker stores it with the game and
   never shows it again; entering a new one on the game's edit form replaces it.
 - **Type**: requires characters
-- **Roles**: `Red` and `Blue`, neither optional
+- **Seats**: Any number of players, **Fewest players** 2 and **Most players** 2 — no roles, since the corners are
+  alike; the engine puts the first fighter matchmaker sends in red and the second in blue
+- **Moves**: Simultaneous, which a game without roles always is
 - **Character page url**: the `boxing_character_url` output — where a player builds a fighter
 - **Parameters**: `rounds`, display name `Rounds`, values `3, 4, … 25`, default `10`
 

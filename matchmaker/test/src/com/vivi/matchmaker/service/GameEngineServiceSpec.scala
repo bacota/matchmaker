@@ -222,7 +222,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     isCompleted = false,
                     due = None,
                     character.characterId,
-                    role
+                    Some(role)
                   ),
                   eloStart = EloRating.initial,
                   eloRoleStart = Some(EloRating.initial)

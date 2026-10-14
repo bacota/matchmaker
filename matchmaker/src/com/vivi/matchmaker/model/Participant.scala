@@ -15,9 +15,10 @@ sealed trait Participant {
     def due: Option[Instant]
 
     /** The role this seat plays. A seat may wait for one while its match's roles are chosen, but a match is not played
-      * until every seat has one, and a participant is read only from a match that is.
+      * until every seat has one, and a participant is read only from a match that is. `None` for a seat of a game
+      * without roles, which has none to play.
       */
-    def gameRoleId: GameRoleId
+    def gameRoleId: Option[GameRoleId]
 }
 
 case class PlainParticipant(
@@ -28,7 +29,7 @@ case class PlainParticipant(
     isPending: Boolean,
     isCompleted: Boolean,
     due: Option[Instant],
-    gameRoleId: GameRoleId
+    gameRoleId: Option[GameRoleId]
 ) extends Participant
 
 case class CharacterParticipant(
@@ -40,5 +41,5 @@ case class CharacterParticipant(
     isCompleted: Boolean,
     due: Option[Instant],
     characterId: CharacterId,
-    gameRoleId: GameRoleId
+    gameRoleId: Option[GameRoleId]
 ) extends Participant

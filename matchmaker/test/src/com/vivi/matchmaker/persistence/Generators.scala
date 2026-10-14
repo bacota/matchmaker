@@ -59,7 +59,6 @@ object Generators {
             active <- Gen.oneOf(true, false)
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
-            unimportantRoles <- Gen.oneOf(true, false)
             // Two roles, always: every seat names one, so a game with no roles is a game nothing
             // can be played in. Two rather than one because two players in one match may not share a
             // role.
@@ -89,8 +88,19 @@ object Generators {
           ),
           parameters = Seq.empty,
           externalId = externalId,
-          characterUrl = characterUrl,
-          hasUnimportantRoles = unimportantRoles
+          characterUrl = characterUrl
+        )
+
+    /** A plain game without roles, of `least` to `most` players a match: played with everyone moving at once, as such a
+      * game always is, for one turn a match, so that a tournament's round is that turn's time.
+      */
+    def genRolelessGame(least: Int, most: Option[Int]): Game =
+        genGame(GameType.Plain).sample.get.copy(
+          roles = Seq.empty,
+          minPlayers = Some(least),
+          maxPlayers = most,
+          moveType = MoveType.Simultaneous,
+          maxTurns = Some(1)
         )
 
     def genGameWithRole: Gen[Game] =
@@ -183,7 +193,7 @@ object Generators {
           isCompleted = completed,
           due = due,
           characterId = characterId,
-          gameRoleId = gameRoleId
+          gameRoleId = Some(gameRoleId)
         )
 
     /** As `genParticipant`, for a game that has no characters. */
@@ -205,7 +215,7 @@ object Generators {
           isPending = pending,
           isCompleted = completed,
           due = due,
-          gameRoleId = gameRoleId
+          gameRoleId = Some(gameRoleId)
         )
 
     def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =

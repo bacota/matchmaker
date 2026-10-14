@@ -154,12 +154,11 @@ case class RpsMatch(
   */
 object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
 
-    /** Seats the players, honouring the roles matchmaker sent when it sent usable ones.
+    /** Seats the players: the first named takes One, the second Two.
       *
-      * A game configured in matchmaker with roles named `One` and `Two` gets exactly those seats. With no roles, or
-      * roles this engine does not recognise, the first player named takes One — the engine still has to produce a
-      * playable game, and refusing would make role configuration a prerequisite for trying it out. It costs nothing to
-      * be relaxed about it here: unlike X and O, neither side of this game has any advantage over the other.
+      * Matchmaker registers this game without roles, two players a match, so it sends none — and needs none: unlike X
+      * and O, neither side of this game has any advantage over the other, and both throw at once. One and Two are only
+      * how the engine tells the seats apart.
       */
     def seat(players: List[Protocol.EnginePlayer]): Either[String, List[Seat]] =
         if (players.sizeIs != 2) Left(s"rock-paper-scissors is a two-player game; ${players.size} player(s) were sent")
@@ -169,13 +168,9 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
             // game it would also mean one person seeing both throws.
             Left("the two seats must belong to two different players")
         else {
-            val requested = players.map(p => p.role.flatMap(Side.parse))
-            val sides =
-                if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
-                else List(Side.One, Side.Two)
             Right(
               players
-                  .zip(sides)
+                  .zip(List(Side.One, Side.Two))
                   .map((p, side) =>
                       Seat(side = side, cognitoId = p.cognitoId, participantId = p.participantId, nickname = p.nickname)
                   )

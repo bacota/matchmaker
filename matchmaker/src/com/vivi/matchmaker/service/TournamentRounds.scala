@@ -355,9 +355,11 @@ class TournamentRounds[T](
         for {
             game <- requireGame(session, t.gameId)
             players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
-            active = tm.seats.filter(s =>
-                !s.isForfeit && s.gameRoleId.isDefined && players.get(s.entrantId).flatten.isDefined
-            )
+            active = tm.seats.filter { s =>
+                val isSeated = players.get(s.entrantId).flatten.isDefined
+                // A seat of a game without roles has no role to wait for.
+                !s.isForfeit && (s.gameRoleId.isDefined || game.isRoleless) && isSeated
+            }
             prepared <-
                 if (active.sizeIs < math.max(game.requiredSeats, 2) || active.sizeIs < tm.seats.count(!_.isForfeit)) {
                     // Too few left to play: those still seated share first place, and everyone else is last.
@@ -381,7 +383,8 @@ class TournamentRounds[T](
         val at = now()
         val matches = new TournamentMatchRepo(session)
         val roleName = game.roles.map(r => r.gameRoleId -> r.name).toMap
-        // Roles nobody plays, for the seats that forfeit: a seat of a match being played always has one.
+        // Roles nobody plays, for the seats that forfeit: a seat of a match being played always has one, in a game
+        // that has roles.
         val spare = allowedRoles(game, tm.seats.size).filterNot(active.flatMap(_.gameRoleId).toSet)
         val forfeited = tm.seats.filterNot(s => active.exists(_.participantId == s.participantId))
         for {
@@ -401,12 +404,12 @@ class TournamentRounds[T](
               // Live only with a clock for the engine to run, which a live tournament always has.
               live = t.settings.isLive && clock.isDefined
             )
-            seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId.get))
+            seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId))
             starting <- EloRatingService.startingRatings(
               session = session,
               gameId = t.gameId,
               seats = seatsOf,
-              byRole = !game.hasUnimportantRoles
+              byRole = !game.isRoleless
             )
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get
@@ -415,7 +418,7 @@ class TournamentRounds[T](
                   seat = s.participantId,
                   player = player,
                   eloStart = Some(starting.overall(player)),
-                  eloRoleStart = starting.inRole(player, s.gameRoleId.get)
+                  eloRoleStart = starting.inRole(player, s.gameRoleId)
                 )
             }
             // A forfeit is a last place, the worst any seat could finish, recorded now: the engine reports only the
@@ -456,7 +459,7 @@ class TournamentRounds[T](
                           session = session,
                           participant = participant,
                           player = player,
-                          roleName = roleName(s.gameRoleId.get),
+                          roleName = s.gameRoleId.map(roleName),
                           characterId = characterOf.get(s.entrantId).flatten
                         )
                     case None => IO.raiseError(NotFoundError(s"no player ${participant.playerId}"))
@@ -783,7 +786,7 @@ class TournamentRounds[T](
             }
         } yield Env(
           design = design,
-          game = TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
+          game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings.toMap,
           defaultPoolSize = Some(t.defaultPoolSize),
           hasConcurrentRounds = t.settings.hasConcurrentRounds
@@ -866,7 +869,7 @@ object TournamentRounds {
     def clockOf(t: Tournament, game: Game, tm: TournamentMatch): Option[MatchClock] =
         t.settings.roundDuration.map(d =>
             Clock.forMatch(
-              game = TournamentGame.of(game),
+              game = TournamentGame.of(game, t.settings.playersPerMatch),
               d = d,
               seats = tm.seats.count(!_.isForfeit),
               tiesAllowed = tm.canTie,

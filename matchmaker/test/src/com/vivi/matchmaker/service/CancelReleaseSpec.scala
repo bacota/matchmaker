@@ -89,7 +89,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     isPending = true,
                     isCompleted = false,
                     None,
-                    game.roles.head.gameRoleId
+                    Some(game.roles.head.gameRoleId)
                   ),
                   eloStart = EloRating.initial
                 )

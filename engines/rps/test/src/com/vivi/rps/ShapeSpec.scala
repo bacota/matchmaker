@@ -32,12 +32,8 @@ class ShapeSpec extends FunSuite {
         assertEquals(Shape.parse(""), None)
     }
 
-    test("the two sides are named the several ways a role might spell them") {
-        assertEquals(Side.parse("One"), Some(Side.One))
-        assertEquals(Side.parse("1"), Some(Side.One))
-        assertEquals(Side.parse("player two"), Some(Side.Two))
-        assertEquals(Side.parse("P2"), Some(Side.Two))
-        assertEquals(Side.parse("X"), None)
+    test("each side's other is the other side") {
         assertEquals(Side.One.other, Side.Two)
+        assertEquals(Side.Two.other, Side.One)
     }
 }

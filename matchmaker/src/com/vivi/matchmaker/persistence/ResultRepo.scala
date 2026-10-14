@@ -58,7 +58,7 @@ class ResultRepo(session: Session[IO]) {
           MatchId,
           ParticipantId,
           String,
-          String,
+          Option[String],
           Option[Int],
           Option[Map[String, Any]],
           Option[Boolean],
@@ -76,15 +76,16 @@ class ResultRepo(session: Session[IO]) {
           LEFT JOIN player pl ON pl.player_id = p.player_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           LEFT JOIN character ch ON ch.game_id = cp.game_id AND ch.character_id = cp.character_id
-          JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
+          -- Outer: a seat of a game without roles has none.
+          LEFT JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           -- Begun: a tournament's match is_cancelled before it began has seats with no ratings and no results.
           WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND m.start IS NOT NULL
             AND ((m.completed_at IS NOT NULL) OR m.is_cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
             .query(
-              gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
-                  bool.opt *: int4 *: int4.opt
+              gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text.opt *: int4.opt *: scores.opt *:
+                  bool.opt *: bool.opt *: int4 *: int4.opt
             )
 
     /** Every seat of every finished match this player is in, with its outcome — one row per seat, the winner of each
@@ -254,7 +255,7 @@ object ResultRepo {
         matchId: MatchId,
         participantId: ParticipantId,
         nickname: String,
-        roleName: String,
+        roleName: Option[String],
         rank: Option[Int],
         scores: Map[String, Any],
         isWinner: Boolean,

@@ -181,7 +181,7 @@ object TestMatches {
           Boolean,
           Boolean,
           Option[java.time.Instant],
-          GameRoleId,
+          Option[GameRoleId],
           Int,
           Option[Int],
           TournamentId,
@@ -196,7 +196,7 @@ object TestMatches {
                   is_notified_of_your_turn, is_notified_of_match_ended)
               SELECT ${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, ${SkunkCodecs.gameType},
                      ${SkunkIdCodecs.playerId}, $bool, CASE WHEN $bool THEN now() END, ${SkunkCodecs.instant.opt},
-                     ${SkunkIdCodecs.gameRoleId}, $int4, ${int4.opt}, ${SkunkIdCodecs.tournamentId}, $int8,
+                     ${SkunkIdCodecs.gameRoleId.opt}, $int4, ${int4.opt}, ${SkunkIdCodecs.tournamentId}, $int8,
                      COALESCE(pg.is_notified_of_match_started, pl.is_notified_of_match_started, TRUE),
                      COALESCE(pg.is_notified_of_turn_taken, pl.is_notified_of_turn_taken, TRUE),
                      COALESCE(pg.is_notified_of_your_turn, pl.is_notified_of_your_turn, TRUE),

@@ -79,20 +79,29 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
 
     private case class Fixture(w: World, game: Game, owner: Player, players: List[Player], t: Tournament)
 
-    /** A plain two-role game, `n` players entered in a tournament of `design` owned by a further player, started. */
+    /** A plain two-role game — or with `roles` false a two-player game without roles, whose seats have nothing to
+      * choose — `n` players entered in a tournament of `design` owned by a further player, started.
+      */
     private def started(
         n: Int,
         design: String = "single-elimination",
         roles: Boolean = true,
         settings: TournamentSettings =
-            TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
+            TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2))),
+        game: Option[Game] = None,
+        poolSize: Option[Int] = None
     ): IO[Fixture] = {
         val w = world()
         val s = w.services
         for {
             game <- TestSession.resource.use(
               new GameRepo[String](_)
-                  .create(Generators.genGame(GameType.Plain).sample.get.copy(hasUnimportantRoles = !roles))
+                  .create(
+                    game.getOrElse(
+                      if (roles) Generators.genGame(GameType.Plain).sample.get
+                      else Generators.genRolelessGame(least = 2, most = Some(2))
+                    )
+                  )
             )
             // Only the owner has an address, so the only mail sent is to them.
             owner <- s.registration.register(
@@ -106,8 +115,12 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             model <- TestSession.resource.use(TournamentFixtures.model(_, game, design))
             t <- s.tournaments.create(
               gameId = game.gameId,
-              request =
-                  TournamentRequest(name = "Cup", tournamentModelId = model.tournamentModelId, settings = settings),
+              request = TournamentRequest(
+                name = "Cup",
+                tournamentModelId = model.tournamentModelId,
+                settings = settings,
+                defaultPoolSize = poolSize
+              ),
               callerExternalId = owner.externalId
             )
             _ <- s.tournaments.open(
@@ -315,7 +328,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assert(early.left.exists(_.isInstanceOf[ConflictError]))
     }
 
-    test("where roles do not matter nobody chooses, and with automatic rounds the next begins as the last ends") {
+    test("in a game without roles nobody chooses, and with automatic rounds the next begins as the last ends") {
         val (statuses, finalState) = run(for {
             f <- started(
               n = 4,
@@ -338,6 +351,33 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(d.summary.tournament.status, TournamentStatus.Finished)
         // Its rounds start themselves, so its owner is waited on for nothing.
         assertEquals(sent, Nil)
+    }
+
+    test("a game without roles plays everyone in a pool as one match, its seats sent to the engine with no role") {
+        val (request, sizes, d) = run(for {
+            f <- started(
+              n = 4,
+              design = "challenge",
+              game = Some(Generators.genRolelessGame(least = 2, most = None)),
+              poolSize = Some(4)
+            )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            matches <- round(f)
+            request = f.w.engine.lastRequest
+            _ <- reportAll(f)
+            d <- detail(f)
+        } yield (request, matches.map(m => (m.status, m.seats.size)), d))
+        // Due at once, with nothing to choose, and created in the engine as one match of all four.
+        assertEquals(sizes, List((TournamentMatchStatus.Started, 4)))
+        val players = request.map(_.players).getOrElse(fail("the match was never created in the engine"))
+        assertEquals(players.size, 4)
+        assert(players.forall(_.role.isEmpty), players.toString)
+        assertEquals(d.summary.tournament.status, TournamentStatus.Finished)
+        assertEquals(d.state.flatMap(_.root.ranking).map(_.size), Some(4))
     }
 
     test("only the seat whose turn it is may choose, and only a role still free") {

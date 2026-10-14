@@ -146,13 +146,12 @@ object Ratings {
           )
         )
 
-    /** Under the overall rankings of a game whose roles matter, a dropdown that shows one role's rankings — asked for,
-      * rather than shown, since most visitors want the overall ones. Not there for a game whose admin says no role has
-      * an advantage, which keeps no ratings by role, nor for a game of one role, whose only role's rankings would be
-      * the overall ones again.
+    /** Under the overall rankings of a game with roles, a dropdown that shows one role's rankings — asked for, rather
+      * than shown, since most visitors want the overall ones. Not there for a game without roles, which keeps no
+      * ratings by role, nor for a game of one role, whose only role's rankings would be the overall ones again.
       */
     private def roleRankings(game: Game, player: Player): Node =
-        if (game.hasUnimportantRoles || game.roles.sizeIs < 2) emptyNode
+        if (game.roles.sizeIs < 2) emptyNode
         else {
             val chosen = Var(Option.empty[GameRole])
             val id = s"role-rankings-${game.gameId.value}"

@@ -138,14 +138,14 @@ class GameEngineService[T](
         session: Session[IO],
         participant: Participant,
         player: Player,
-        roleName: String,
+        roleName: Option[String],
         characterId: Option[CharacterId]
     ): IO[EnginePlayer] =
         characterId.flatTraverse(new CharacterRepo[T](session).read).map { c =>
             EnginePlayer(
               cognitoId = player.externalId,
               participantId = participant.participantId.value,
-              role = Some(roleName),
+              role = roleName,
               characterId = c.map(_.characterId.value),
               characterState = c.map(ch => codec.encode(ch.state)),
               nickname = Some(player.nickname),

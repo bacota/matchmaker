@@ -142,9 +142,10 @@ object Json {
         characterUrl: Option[String] = None,
         // Whether a key is stored, for the admin form; never the key. Ignored on a save.
         hasApiKey: Boolean = false,
-        // No role of the game has any advantage in winning it. Defaulted so that a client
-        // written before it existed still parses, and keeps ratings by role.
-        hasUnimportantRoles: Boolean = false,
+        // For a game without roles, the range of players a match may seat; both absent for a game
+        // whose roles are its seats.
+        minPlayers: Option[Int] = None,
+        maxPlayers: Option[Int] = None,
         // How players take turns, and how many a simultaneous game lasts. Defaulted as above.
         moveType: MoveType = MoveType.Sequential,
         maxTurns: Option[Int] = None
@@ -168,7 +169,8 @@ object Json {
             timeoutAction = game.timeoutAction,
             characterUrl = game.characterUrl,
             hasApiKey = game.hasApiKey,
-            hasUnimportantRoles = game.hasUnimportantRoles,
+            minPlayers = game.minPlayers,
+            maxPlayers = game.maxPlayers,
             moveType = game.moveType,
             maxTurns = game.maxTurns
           ),
@@ -187,7 +189,8 @@ object Json {
             timeoutAction = dto.timeoutAction,
             characterUrl = dto.characterUrl,
             hasApiKey = dto.hasApiKey,
-            hasUnimportantRoles = dto.hasUnimportantRoles,
+            minPlayers = dto.minPlayers,
+            maxPlayers = dto.maxPlayers,
             moveType = dto.moveType,
             maxTurns = dto.maxTurns
           )
@@ -359,7 +362,8 @@ object Json {
         matchId: MatchId,
         participantId: ParticipantId,
         nickname: String,
-        roleName: String,
+        // None for a seat of a game without roles.
+        roleName: Option[String],
         rank: Option[Int],
         scores: Map[String, ujson.Value],
         isWinner: Boolean,

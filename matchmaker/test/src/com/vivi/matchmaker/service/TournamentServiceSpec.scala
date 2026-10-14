@@ -33,10 +33,14 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             models.getOrElse(key, throw new IllegalArgumentException(s"no model of $key"))
     }
 
-    /** A plain two-player game offering the standard formats as models, its owner, and `n` other registered players. */
-    private def fixture(n: Int = 4, gameType: GameType = GameType.Plain): IO[Fixture] =
+    /** A plain two-player game — or the game without roles given — offering the standard formats as models, its owner,
+      * and `n` other registered players.
+      */
+    private def fixture(n: Int = 4, gameType: GameType = GameType.Plain, roleless: Option[Game] = None): IO[Fixture] =
         for {
-            game <- TestSession.resource.use(new GameRepo[String](_).create(Generators.genGame(gameType).sample.get))
+            game <- TestSession.resource.use(
+              new GameRepo[String](_).create(roleless.getOrElse(Generators.genGame(gameType).sample.get))
+            )
             // Each in a transaction of its own, as the services write one: a model and its stages name each other.
             offered <- TestSession.resource.use(session =>
                 StandardModels.all.traverse(m => TournamentFixtures.model(session = session, game = game, key = m.id))
@@ -507,6 +511,76 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(none.left.exists(_.isInstanceOf[ValidationError]))
         assert(theirs.left.exists(_.isInstanceOf[ValidationError]))
         assert(mine.characterId.isDefined)
+    }
+
+    test("players per match is refused for a game with roles, and outside a game without roles' range of players") {
+        def attempt(game: Option[Game], playersPerMatch: Option[Int], poolSize: Option[Int] = None) =
+            run(fixture(0, roleless = game).flatMap { f =>
+                tournaments
+                    .create(
+                      gameId = f.game.gameId,
+                      request = request(
+                        f = f,
+                        standard = "challenge",
+                        settings = TournamentSettings(isInvitational = false, playersPerMatch = playersPerMatch)
+                      ).copy(defaultPoolSize = poolSize),
+                      callerExternalId = f.owner.externalId
+                    )
+                    .attempt
+            })
+        def refused(e: Either[Throwable, Tournament]) = e.left.exists(_.isInstanceOf[ValidationError])
+        val open = Generators.genRolelessGame(least = 2, most = Some(4))
+        assert(refused(attempt(game = None, playersPerMatch = Some(2))))
+        assert(refused(attempt(game = Some(open), playersPerMatch = Some(5))))
+        assert(refused(attempt(game = Some(open), playersPerMatch = Some(1))))
+        // Everyone in a pool in one match: a pool bigger than the game takes is refused.
+        assert(refused(attempt(game = Some(open), playersPerMatch = None, poolSize = Some(6))))
+        val fine = attempt(game = Some(open), playersPerMatch = Some(3)).toOption.get
+        assertEquals(fine.settings.playersPerMatch, Some(3))
+        // Its R is the players per match, which is the pool size the format suggests.
+        assertEquals(fine.defaultPoolSize, 3)
+    }
+
+    test("a game without roles, everyone in the pool, its pool set to the entries before the start, is one match") {
+        val (pools, round) = run(
+          for {
+              f <- fixture(5, roleless = Some(Generators.genRolelessGame(least = 2, most = None)))
+              t <- tournaments.create(
+                gameId = f.game.gameId,
+                request = request(f = f, standard = "challenge").copy(defaultPoolSize = Some(2)),
+                callerExternalId = f.owner.externalId
+              )
+              _ <- tournaments.open(gameId = f.game.gameId, tournamentId = t.tournamentId, f.owner.externalId)
+              _ <- f.players.traverse(p =>
+                  tournaments.enter(
+                    gameId = f.game.gameId,
+                    tournamentId = t.tournamentId,
+                    characterId = None,
+                    callerExternalId = p.externalId
+                  )
+              )
+              // What the form's "one pool of everyone entered" sends.
+              _ <- tournaments.update(
+                gameId = f.game.gameId,
+                tournamentId = t.tournamentId,
+                request = request(f = f, standard = "challenge").copy(defaultPoolSize = Some(f.players.size)),
+                callerExternalId = f.owner.externalId
+              )
+              _ <- tournaments.start(gameId = f.game.gameId, tournamentId = t.tournamentId, f.owner.externalId)
+              detail <- tournaments.detail(
+                gameId = f.game.gameId,
+                tournamentId = t.tournamentId,
+                callerExternalId = f.owner.externalId
+              )
+          } yield (
+            detail.state.get.root.runs.head.pools.map(_.members.size),
+            detail.state.get.root.runs.head.pools.flatMap(_.matches).map(_.planned.seats)
+          )
+        )
+        assertEquals(pools, List(5))
+        // One match of all five, nobody given a role or choosing one.
+        assertEquals(round.map(_.size), List(5))
+        assert(round.flatten.forall(s => s.role.isEmpty && s.chooseOrder.isEmpty))
     }
 
     test("starting seeds the entrants by rating and forms the first stage's pools; it needs two entries") {

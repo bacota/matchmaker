@@ -110,7 +110,8 @@ object ChallengeForm {
       * usually that the game is for them.
       *
       * A challenge names no role: its players choose theirs once it starts, the strongest first. What it does name is
-      * how many it seats — between the game's required roles and all of them — which is also when it is full.
+      * how many it seats — between the game's required roles and all of them, or in a game without roles its range of
+      * players — which is also when it is full.
       */
     private[ui] def newChallengeForm(
         game: Game,
@@ -137,8 +138,11 @@ object ChallengeForm {
         // How many it seats: the game's R to start with, and anything from enough to fill its required roles to every
         // one of its roles.
         val least = math.max(2, game.requiredSeats)
-        val most = game.roles.size
-        val seats = Var(math.min(most, math.max(least, game.poolSeats)))
+        // A game without roles takes any number in its range, `None` most for no limit.
+        val most: Option[Int] = game.mostSeats
+        val seats = Var(math.max(least, game.poolSeats).min(most.getOrElse(Int.MaxValue)))
+        // As typed, where the number is typed rather than picked: a range too wide to list.
+        val seatsTyped = Var(seats.now().toString)
         // Whether this player administers the game, which is what lets them offer a match they will not play in, or
         // one that is not friendly: `Store.administers`, held here so that the button can read it when it is pressed.
         val administers = Var(player.isAdmin)
@@ -162,8 +166,8 @@ object ChallengeForm {
           cls := "card",
           Store.administers(game.gameId, player) --> administers,
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
-          if (most < least)
-              p(cls := "empty", s"${game.displayName} has too few roles to be played as a challenge.")
+          if (most.exists(_ < least))
+               p(cls := "empty", s"${game.displayName} has too few ${if (game.isRoleless) "players" else "roles"} to be played as a challenge.")
           else emptyNode,
           // Shown even when there is only one, so the challenger can see who they are playing as -- and not at all to
           // an admin who will not play.
@@ -234,28 +238,47 @@ object ChallengeForm {
                   )
           },
           // Offered only when there is a choice to make: a game whose roles are all required seats exactly that many.
-          if (most > least)
-              withTip(
-                id = "seats-tip",
-                subject = "Players",
-                text =
-                    s"How many play, from $least to $most. It is full, and starts if you ask it to, when that many have " +
-                        "entered; you can also start it with fewer, as long as there are at least " + least + "."
-              )(
+          if (most.forall(_ > least)) {
+              val tip =
+                  most.fold(s"How many play: at least $least.")(m => s"How many play, from $least to $m.") +
+                      " It is full, and starts if you ask it to, when that many have entered; you can also start it " +
+                      s"with fewer, as long as there are at least $least."
+              withTip(id = "seats-tip", subject = "Players", text = tip)(
                 label(
                   cls := "field",
                   "Players",
-                  select(
-                    aria.describedBy := "seats-tip",
-                    onChange.mapToValue --> (raw =>
-                        raw.toIntOption.filter(n => n >= least && n <= most).foreach(seats.set)
-                    ),
-                    value <-- seats.signal.map(_.toString),
-                    (least to most).map(n => option(value := n.toString, n.toString))
-                  )
+                  most match {
+                      // A list for a range short enough to read down; a number to type for anything wider.
+                      case Some(m) if m - least < 30 =>
+                          select(
+                            aria.describedBy := "seats-tip",
+                            onChange.mapToValue --> (raw =>
+                                raw.toIntOption.filter(n => n >= least && n <= m).foreach(seats.set)
+                            ),
+                            value <-- seats.signal.map(_.toString),
+                            (least to m).map(n => option(value := n.toString, n.toString))
+                          )
+                      case _ =>
+                          input(
+                            tpe := "number",
+                            inputMode := "numeric",
+                            minAttr := least.toString,
+                            most.fold(emptyMod)(m => maxAttr := m.toString),
+                            aria.describedBy := "seats-tip",
+                            controlled(
+                              value <-- seatsTyped.signal,
+                              onInput.mapToValue --> { raw =>
+                                  seatsTyped.set(raw)
+                                  raw.trim.toIntOption
+                                      .filter(n => n >= least && most.forall(n <= _))
+                                      .foreach(seats.set)
+                              }
+                            )
+                          )
+                  }
                 )
               )
-          else emptyNode,
+          } else emptyNode,
           // Built once: the game's parameters do not change while the form is open.
           parameterFields(game, parameters),
           invitee.fold(emptyNode)(asked =>
@@ -397,7 +420,7 @@ object ChallengeForm {
             disabledWhen = timeLimit.signal
                 .combineWith(live.signal, ownCharacter.signal, seated, inviteeCharacter.signal)
                 .map { case (limit, isLive, own, inIt, asked) =>
-                    most < least || limitProblem(limit, isLive).isDefined ||
+                    most.exists(_ < least) || limitProblem(limit, isLive).isDefined ||
                     // A character game's challenger plays as one of their characters.
                     (characterGame && inIt && own.isEmpty) ||
                     // And its invitee is asked through one of theirs: until one is chosen there is nothing to send.

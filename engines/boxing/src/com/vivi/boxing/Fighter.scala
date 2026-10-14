@@ -230,12 +230,3 @@ enum Side {
         case Blue => Red
     }
 }
-
-object Side {
-    def parse(s: String): Option[Side] =
-        s.trim.toLowerCase match {
-            case "red" | "red corner" | "1" | "one"   => Some(Red)
-            case "blue" | "blue corner" | "2" | "two" => Some(Blue)
-            case _                                    => None
-        }
-}

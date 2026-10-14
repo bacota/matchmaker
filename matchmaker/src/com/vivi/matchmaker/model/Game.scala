@@ -136,10 +136,12 @@ case class Game(
      * game carries. What the admin form shows in its place, so that an admin can tell a game whose
      * engine will refuse every call from one that is ready. Read-only: a save sets the key, not this. */
     hasApiKey: Boolean = false,
-    /* The admin saying that no role of the game has any advantage in winning it. Unticked, a
-     * rated match moves its players' ratings in the roles they played as well as overall, and each
-     * role has a leaderboard of its own. */
-    hasUnimportantRoles: Boolean = false,
+    /* For a game without roles, how many players a match may seat: `minPlayers` is set, and
+     * `maxPlayers` is the most or `None` for no limit. `None` and `None` for a game whose roles are
+     * its seats, which is every game until an admin says otherwise. A game has one or the other,
+     * never both: see [[isRoleless]]. */
+    minPlayers: Option[Int] = None,
+    maxPlayers: Option[Int] = None,
     /* Whether players move in turn or all at once. Sequential for every game until an admin says
      * otherwise. */
     moveType: MoveType = MoveType.Sequential,
@@ -148,9 +150,20 @@ case class Game(
     maxTurns: Option[Int] = None
 ) {
 
-    /** The game's "R": how many seats a tournament pool is sized by — its required and recommended roles. */
-    def poolSeats: Int = roles.count(_.roleType != RoleType.Optional)
+    /** Whether the game is played without roles, by any number of players in its range: a tournament then says how many
+      * each match seats, and every seat is the same. Such a game is always simultaneous, so no seat goes first. A rated
+      * match of it moves its players' overall ratings only.
+      */
+    def isRoleless: Boolean = minPlayers.isDefined
+
+    /** The game's "R": how many seats a tournament pool is sized by — its required and recommended roles, or the fewest
+      * players a game without roles can start with, which is what a tournament that says no more starts from.
+      */
+    def poolSeats: Int = minPlayers.getOrElse(roles.count(_.roleType != RoleType.Optional))
 
     /** How many seats must be filled for a match to start. */
-    def requiredSeats: Int = roles.count(_.roleType == RoleType.Required)
+    def requiredSeats: Int = minPlayers.getOrElse(roles.count(_.roleType == RoleType.Required))
+
+    /** The most seats a match can have: one per role, or a game without roles' maximum, `None` for no limit. */
+    def mostSeats: Option[Int] = if (isRoleless) maxPlayers else Some(roles.size)
 }

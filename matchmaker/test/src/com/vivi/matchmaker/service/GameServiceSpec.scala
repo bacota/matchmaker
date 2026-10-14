@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
@@ -776,5 +777,37 @@ class GameServiceSpec extends PropertySuite {
         }
 
         assert(result.unsafeRunSync())
+    }
+
+    test("createOrUpdate stores a game without roles with its range of players, and reads it back the same") {
+        val result = for {
+            admin <- makeAdmin()
+            game = Generators.genRolelessGame(least = 3, most = Some(12))
+            created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield (created, listed)
+        val (created, listed) = result.unsafeRunSync()
+        assertEquals((created.roles, created.minPlayers, created.maxPlayers), (Seq.empty, Some(3), Some(12)))
+        assertEquals(listed.map(g => (g.roles, g.minPlayers, g.maxPlayers)), Some((Seq.empty, Some(3), Some(12))))
+    }
+
+    // A game has roles or a range of players, never both nor neither; a game without roles is played with everyone
+    // moving at once; and a range has to be one.
+    test("createOrUpdate refuses a game with both roles and a range, neither, a backwards range, or turns in order") {
+        val roleless = Generators.genRolelessGame(least = 2, most = None)
+        val bad = List(
+          Generators.genGameWithRole.sample.get.copy(minPlayers = Some(2), moveType = MoveType.Simultaneous),
+          roleless.copy(minPlayers = None),
+          roleless.copy(minPlayers = Some(5), maxPlayers = Some(4)),
+          roleless.copy(minPlayers = Some(0)),
+          roleless.copy(moveType = MoveType.Sequential)
+        )
+        val result = for {
+            admin <- makeAdmin()
+            attempts <- bad.traverse(game => gameService.createOrUpdate(admin.externalId, game).attempt)
+        } yield attempts
+        result.unsafeRunSync().zipWithIndex.foreach { (attempt, i) =>
+            assert(attempt.left.exists(_.isInstanceOf[ValidationError]), s"case $i: $attempt")
+        }
     }
 }

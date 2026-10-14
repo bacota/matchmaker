@@ -77,10 +77,12 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(response.publicUrl, None)
     }
 
-    test("the roles matchmaker sends decide which seat is which") {
-        val (_, _, _, _, m) = fixture(roles = List(Some("Two"), Some("One")))
-        assertEquals(m.seatOf(Side.Two).get.participantId, 11L)
-        assertEquals(m.seatOf(Side.One).get.participantId, 22L)
+    test("the players take One and Two in the order matchmaker names them, whatever roles come with them") {
+        for (roles <- List(List(None, None), List(Some("Two"), Some("One")))) {
+            val (_, _, _, _, m) = fixture(roles = roles)
+            assertEquals(m.seatOf(Side.One).get.participantId, 11L)
+            assertEquals(m.seatOf(Side.Two).get.participantId, 22L)
+        }
     }
 
     test("a game for anything but two players is refused") {

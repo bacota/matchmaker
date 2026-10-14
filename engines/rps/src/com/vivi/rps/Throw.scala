@@ -45,12 +45,3 @@ enum Side {
         case Two => One
     }
 }
-
-object Side {
-    def parse(s: String): Option[Side] =
-        s.trim.toLowerCase match {
-            case "1" | "one" | "p1" | "player 1" | "player one" => Some(One)
-            case "2" | "two" | "p2" | "player 2" | "player two" => Some(Two)
-            case _                                              => None
-        }
-}

@@ -110,7 +110,13 @@ class TournamentService[T](
               entries = entries,
               invited = invited.map((id, name) => PlayerName(id, name)),
               // Pools still being played shown as their finished matches stand.
-              state = state.map(s => Standings.provisional(state = s, design = design, game = TournamentGame.of(game))),
+              state = state.map(s =>
+                  Standings.provisional(
+                    state = s,
+                    design = design,
+                    game = TournamentGame.of(game, summary.tournament.settings.playersPerMatch)
+                  )
+              ),
               round = round.map { m =>
                   val by = TournamentRounds.chooseBy(t = summary.tournament, game = game, tm = m)
                   val v = TournamentService.view(m)
@@ -833,7 +839,7 @@ class TournamentService[T](
             problems = Validation
                 .validate(
                   design = design,
-                  game = TournamentGame.of(game),
+                  game = TournamentGame.of(game, t.settings.playersPerMatch),
                   maxTurns = t.settings.maxTurns,
                   defaultPoolSize = Some(t.defaultPoolSize)
                 )
@@ -879,7 +885,7 @@ class TournamentService[T](
     private def env(t: Tournament, design: TournamentDesign, game: Game, ratings: Map[Long, Int]): Env =
         Env(
           design = design,
-          game = TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
+          game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings,
           defaultPoolSize = Some(t.defaultPoolSize),
           hasConcurrentRounds = t.settings.hasConcurrentRounds
@@ -917,9 +923,13 @@ class TournamentService[T](
             case None    => IO.raiseError(NotFoundError(s"no tournament ${t.tournamentId} in game ${t.gameId}"))
         }
 
-    /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R. */
+    /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R — for a game
+      * without roles, the players per match the request asks for.
+      */
     private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Int =
-        request.defaultPoolSize.orElse(model.poolSize).getOrElse(game.poolSeats)
+        request.defaultPoolSize
+            .orElse(model.poolSize)
+            .getOrElse(TournamentGame.of(game, request.settings.playersPerMatch).poolSeats)
 
     /* Everything wrong with a tournament's settings, as one refusal. `settings` are the request's as the model makes
      * them (`TournamentService.settingsFor`). */
@@ -942,6 +952,11 @@ class TournamentService[T](
               ),
               Option.when(s.maxTurns.exists(_ < 1))("the maximum number of turns must be at least 1"),
               Option.when(s.maxEntrants.exists(_ < 1))("it must take at least one entry"),
+              // A game with roles seats one player per role, which is not the owner's to change.
+              Option.when(s.playersPerMatch.isDefined && !game.isRoleless)(
+                s"${game.displayName} seats one player per role, so a tournament of it cannot say how many players a " +
+                    "match has"
+              ),
               Option.when(s.isAutoStarted && s.maxEntrants.isEmpty)(
                 "only a tournament that takes a limited number of entries can start itself when it is full"
               ),
@@ -957,7 +972,7 @@ class TournamentService[T](
                 Validation
                     .validate(
                       design = model.design,
-                      game = TournamentGame.of(game),
+                      game = TournamentGame.of(game, s.playersPerMatch),
                       maxTurns = s.maxTurns,
                       defaultPoolSize = Some(poolSize)
                     )
