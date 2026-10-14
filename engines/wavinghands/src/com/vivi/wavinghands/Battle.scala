@@ -254,163 +254,108 @@ object Rules {
     def replay(wizards: List[(Long, String)], turns: List[List[Orders]]): BattleState =
         turns.foldLeft(BattleState(wizards.map((id, name) => WizardState(participantId = id, name = name))))(play)
 
-    private case class Cast(caster: Long, spell: Spell, target: Target, order: CastOrder, isReflected: Boolean = false)
-
-    /** One turn: every active wizard's orders, carried out at once. */
+    /** One turn: every active wizard's orders, carried out at once.
+      *
+      * First the spells that act on one another are [[settle]]d over the whole turn. Then every spell that got through
+      * is applied in [[Priority]] order by [[Effects.apply]], then the stabs and the monsters' attacks, each step
+      * taking the turn as it stands to the turn with that step done. Last, [[endOfTurn]] writes what lasts into the
+      * battle, and the turn's state is thrown away.
+      */
     def play(state: BattleState, orders: List[Orders]): BattleState = {
-        val turn = state.turnsPlayed + 1
-        val events = scala.collection.mutable.ListBuffer.empty[String]
-        def name(t: Target) = state.nameOf(t)
-        def who(id: Long) = state.wizard(id).fold("someone")(_.name)
         val ordersOf = orders.map(o => o.participantId -> o).toMap
-        val acting = state.active.filter(w => ordersOf.contains(w.participantId))
+        val (settled, landing) = settle(state, ordersOf)
+        val applied = landing.sortBy(c => Effects.priority(c.spell).ordinal).foldLeft(settled)((t, c) => Effects(c, t))
+        endOfTurn(attack(stab(applied, ordersOf), ordersOf), ordersOf)
+    }
 
-        // Gestures first: every acting wizard's turn is added to their history.
-        val gestured = state.wizards.map { w =>
-            ordersOf.get(w.participantId).filter(_ => w.isActive) match {
-                case Some(o) => w.copy(history = w.history :+ effective(o.left, o.right))
-                case None    => w
-            }
-        }
-        // A wizard who has died or surrendered is out of the duel, and nothing more can reach them.
-        def exists(t: Target): Boolean = t match {
-            case Target.Wizard(id)  => state.wizard(id).exists(_.isActive)
-            case Target.Monster(id) => state.monster(id).exists(!_.isDead)
-            case Target.Nobody      => false
-        }
+    /** The wizards still fighting who gave orders this turn. */
+    private def acting(state: BattleState, ordersOf: Map[Long, Orders]): List[WizardState] =
+        state.active.filter(w => ordersOf.contains(w.participantId))
 
-        // Every spell cast, with its target as written.
-        val cast: List[Cast] = acting.flatMap { w =>
+    /** What the turn's spells do to one another, which no spell can work out alone: dispel magic stops every other
+      * spell; a magic mirror turns spells back on their casters and a counter-spell stops those aimed at its subject; a
+      * spell at nobody, or at something gone, is wasted; and enchantments that contradict each other on one subject
+      * cancel out. Gives the turn as it begins, and the spells that land, in the order they were cast.
+      */
+    def settle(state: BattleState, ordersOf: Map[Long, Orders]): (TurnState, List[Cast]) = {
+        val cast: List[Cast] = acting(state, ordersOf).flatMap { w =>
             ordersOf(w.participantId).casts.flatMap(c =>
-                Spells.byId(c.spell).map(s => Cast(w.participantId, s, c.target, c))
+                Spells.byId(c.spell).map(s => Cast(caster = w.participantId, spell = s, target = c.target, order = c))
             )
         }
-        cast.foreach(c => events += s"${who(c.caster)} casts ${c.spell.name} at ${name(c.target)}.")
+        val dispels = cast.filter(_.spell == Spells.DispelMagic)
+        val begun = cast.foldLeft(
+          TurnState(battle = state, turn = state.turnsPlayed + 1, cast = cast, isDispelled = dispels.nonEmpty)
+        )((t, c) => t.say(s"${t.who(c.caster)} casts ${c.spell.name} at ${t.name(c.target)}."))
 
         // Dispel magic stops every other spell this turn, ends every enchantment and destroys every monster.
-        val dispels = cast.filter(_.spell == Spells.DispelMagic)
-        val isDispelled = dispels.nonEmpty
-        val working: List[Cast] =
-            if (isDispelled) {
-                cast.filterNot(_.spell == Spells.DispelMagic)
-                    .foreach(c => events += s"${who(c.caster)}'s ${c.spell.name} is dispelled.")
-                dispels
+        val (afterStopping, working) =
+            if (begun.isDispelled) {
+                val stopped = cast
+                    .filterNot(_.spell == Spells.DispelMagic)
+                    .foldLeft(begun)((t, c) => t.say(s"${t.who(c.caster)}'s ${c.spell.name} is dispelled."))
+                (stopped, dispels)
             } else {
                 val countered = cast.filter(_.spell == Spells.CounterSpell).map(_.target).toSet
                 val mirrored = cast.filter(_.spell == Spells.MagicMirror).map(_.target).toSet -- countered
-                val aimed = cast.map { c =>
-                    if (c.spell.isReflectable && mirrored(c.target) && c.target != Target.Wizard(c.caster)) {
-                        events += s"${c.spell.name} from ${who(c.caster)} is reflected by ${name(c.target)}'s magic mirror."
-                        c.copy(target = Target.Wizard(c.caster), isReflected = true)
-                    } else c
+                val (reflecting, aimed) = cast.foldLeft((begun, Vector.empty[Cast])) { case ((t, acc), c) =>
+                    if (c.spell.isReflectable && mirrored(c.target) && c.target != Target.Wizard(c.caster))
+                        (
+                          t.say(
+                            s"${c.spell.name} from ${t.who(c.caster)} is reflected by ${t.name(c.target)}'s magic mirror."
+                          ),
+                          acc :+ c.copy(target = Target.Wizard(c.caster), isReflected = true)
+                        )
+                    else (t, acc :+ c)
                 }
                 val unstoppable = Set(Spells.CounterSpell, Spells.FingerOfDeath)
-                aimed.filter { c =>
-                    val stopped = countered(c.target) && !unstoppable(c.spell)
-                    if (stopped)
-                        events += s"${who(c.caster)}'s ${c.spell.name} is stopped by a counter-spell on ${name(c.target)}."
-                    !stopped
+                aimed.foldLeft((reflecting, List.empty[Cast])) { case ((t, acc), c) =>
+                    if (countered(c.target) && !unstoppable(c.spell))
+                        (
+                          t.say(
+                            s"${t.who(c.caster)}'s ${c.spell.name} is stopped by a counter-spell on ${t.name(c.target)}."
+                          ),
+                          acc
+                        )
+                    else (t, acc :+ c)
                 }
             }
-        // Only those whose target is there to be hit; a spell at nobody, or at something gone, is wasted.
-        val landing = working.filter { c =>
-            val there = exists(c.target)
-            if (!there && c.target != Target.Nobody)
-                events += s"${who(c.caster)}'s ${c.spell.name} finds nothing to hit."
-            there
-        }
-        def at(spell: Spell): List[Cast] = landing.filter(_.spell == spell)
 
-        // Whose enchantments end this turn, those landing now included.
-        val removed: Target => Boolean = t => isDispelled || at(Spells.RemoveEnchantment).exists(_.target == t)
-
-        // Enchantments landing now, less those undone by their contradictions or removed as they land.
-        val enchanting = landing.filter(_.spell.school == School.Enchantment).groupBy(_.target).map { (t, cs) =>
-            val contradictory = cs.map(_.spell.id).distinct.filter(Spells.Contradictory)
-            val kept =
-                if (contradictory.sizeIs > 1) {
-                    events += s"The enchantments on ${name(t)} cancel each other out."
-                    cs.filterNot(c => Spells.Contradictory(c.spell.id))
-                } else cs
-            t -> (if (removed(t)) Nil else kept)
-        }
-        def enchanted(t: Target, spell: Spell): Option[Cast] = enchanting.getOrElse(t, Nil).find(_.spell == spell)
-
-        def shielded(t: Target): Boolean =
-            at(Spells.Shield).exists(_.target == t) || at(Spells.CounterSpell).exists(_.target == t) ||
-                dispels.exists(_.target == t) || enchanted(t, Spells.ProtectionFromEvil).isDefined ||
-                (t match {
-                    case Target.Wizard(id) =>
-                        !removed(t) && state.wizard(id).exists(_.protectedThrough.exists(_ >= turn))
-                    case _ => false
-                })
-
-        def resistsHeat(t: Target): Boolean =
-            !removed(t) && (enchanted(t, Spells.ResistHeat).isDefined ||
-                (t match {
-                    case Target.Wizard(id) => state.wizard(id).exists(_.isResistantToHeat)
-                    case _                 => false
-                }))
-
-        val harm = scala.collection.mutable.Map.empty[Target, Int].withDefaultValue(0)
-        val healing = scala.collection.mutable.Map.empty[Target, Int].withDefaultValue(0)
-        val killed = scala.collection.mutable.Set.empty[Target]
-
-        def hurt(t: Target, points: Int, by: String, blockedByShield: Boolean): Unit =
-            if (blockedByShield && shielded(t)) events += s"$by is blocked by a shield on ${name(t)}."
-            else {
-                harm(t) += points
-                events += s"$by hits ${name(t)} for $points."
-            }
-
-        landing.foreach { c =>
-            val by = s"${who(c.caster)}'s ${c.spell.name}"
-            c.spell match {
-                case Spells.Missile          => hurt(c.target, 1, by, blockedByShield = true)
-                case Spells.CauseLightWounds => hurt(c.target, 2, by, blockedByShield = false)
-                case Spells.CauseHeavyWounds => hurt(c.target, 3, by, blockedByShield = false)
-                case Spells.LightningBolt    => hurt(c.target, 5, by, blockedByShield = false)
-                case Spells.Fireball =>
-                    if (resistsHeat(c.target)) events += s"$by washes harmlessly over ${name(c.target)}."
-                    else hurt(c.target, 5, by, blockedByShield = false)
-                case Spells.FingerOfDeath =>
-                    killed += c.target
-                    events += s"$by strikes ${name(c.target)} dead."
-                case Spells.CureLightWounds => healing(c.target) += 1
-                case Spells.CureHeavyWounds => healing(c.target) += 2
-                case _                      => ()
-            }
+        // Only those whose target is there to be hit.
+        val (afterAiming, there) = working.foldLeft((afterStopping, List.empty[Cast])) { case ((t, acc), c) =>
+            if (t.exists(c.target)) (t, acc :+ c)
+            else if (c.target == Target.Nobody) (t, acc)
+            else (t.say(s"${t.who(c.caster)}'s ${c.spell.name} finds nothing to hit."), acc)
         }
 
-        // Stabs: blocked only by a shield.
-        acting.foreach { w =>
+        // Contradictory enchantments on one subject undo each other; others landing with them are unaffected.
+        val enchantedTargets = there.filter(_.spell.school == School.Enchantment).map(_.target).distinct
+        enchantedTargets.foldLeft((afterAiming, there)) { case ((t, landing), target) =>
+            val contradictory = landing
+                .filter(c => c.target == target && c.spell.school == School.Enchantment)
+                .map(_.spell.id)
+                .distinct
+                .filter(Spells.Contradictory)
+            if (contradictory.sizeIs > 1)
+                (
+                  t.say(s"The enchantments on ${t.name(target)} cancel each other out."),
+                  landing.filterNot(c => c.target == target && Spells.Contradictory(c.spell.id))
+                )
+            else (t, landing)
+        }
+    }
+
+    /** The stabs: blocked only by a shield. */
+    private def stab(turn: TurnState, ordersOf: Map[Long, Orders]): TurnState =
+        acting(turn.battle, ordersOf).foldLeft(turn) { (t, w) =>
             ordersOf(w.participantId).stab
-                .filter(s => exists(s.target) && s.target != Target.Wizard(w.participantId))
-                .foreach(s => hurt(s.target, 1, s"${w.name}'s stab", blockedByShield = true))
+                .filter(s => t.exists(s.target) && s.target != Target.Wizard(w.participantId))
+                .fold(t)(s => t.hurt(s.target, 1, s"${w.name}'s stab", blockedByShield = true))
         }
 
-        // Summons: each makes a monster for its target's side, which may attack at once.
-        val nextId = state.monsters.map(_.id).maxOption.getOrElse(0) + 1
-        val summoned: List[(MonsterState, Option[Target])] = landing
-            .filter(_.spell.school == School.Summons)
-            .flatMap { c =>
-                val controller = c.target match {
-                    case Target.Wizard(id)  => Some(id)
-                    case Target.Monster(id) => state.monster(id).map(_.controller)
-                    case Target.Nobody      => None
-                }
-                controller.map { owner =>
-                    val (kind, strength) = Spells.Monsters(c.spell.id)
-                    // Its first attack is its summoner's to choose only when the summoner controls it.
-                    val first = Option.when(owner == c.caster)(c.order.monsterTarget).flatten
-                    (MonsterState(id = 0, kind = kind, strength = strength, controller = owner), first)
-                }
-            }
-            .zipWithIndex
-            .map { case ((m, first), i) => (m.copy(id = nextId + i), first) }
-        summoned.foreach((m, _) => events += s"A ${m.kind} appears, serving ${who(m.controller)}.")
-
-        // Monster attacks: every monster alive at the start of the turn, and every one summoned during it.
+    /** The monsters' attacks: every monster alive at the start of the turn, and every one summoned during it. */
+    private def attack(turn: TurnState, ordersOf: Map[Long, Orders]): TurnState = {
+        val state = turn.battle
         val attacking: List[(MonsterState, Option[Target])] =
             state.monsters.filterNot(_.isDead).map { m =>
                 val ordered = state
@@ -422,44 +367,55 @@ object Rules {
                     if (m.hasAmnesia) m.lastTarget
                     else ordered.orElse(soleOpponent(state, m.controller))
                 (m, target)
-            } ++ summoned.map((m, first) => (m, first.orElse(soleOpponent(state, m.controller))))
-        attacking.foreach { (m, target) =>
-            val by = s"${who(m.controller)}'s ${m.kind}"
-            if (m.isParalysed) events += s"$by is paralysed and does not attack."
-            else target.filter(exists).foreach(t => hurt(t, m.strength, by, blockedByShield = true))
+            } ++ turn.summoned.map((m, first) => (m, first.orElse(soleOpponent(state, m.controller))))
+        attacking.foldLeft(turn.copy(monsterTargets = attacking.flatMap((m, t) => t.map(m.id -> _)).toMap)) {
+            case (t, (m, target)) =>
+                val by = s"${t.who(m.controller)}'s ${m.kind}"
+                if (m.isParalysed) t.say(s"$by is paralysed and does not attack.")
+                else target.filter(t.exists).fold(t)(x => t.hurt(x, m.strength, by, blockedByShield = true))
         }
+    }
 
-        // Wizards: wounds, cures, death, enchantments for the turn to come, and surrender.
-        val wizards = gestured.map { w =>
+    /** The battle after the turn: each wizard's gestures, wounds, cures and death, enchantments for the turn to come,
+      * and surrender; each monster's wounds and death — destroyed by dispel magic, or by remove enchantment, after
+      * attacking — and the turn's report.
+      */
+    private def endOfTurn(turn: TurnState, ordersOf: Map[Long, Orders]): BattleState = {
+        val state = turn.battle
+        val now = turn.turn
+        val events = scala.collection.mutable.ListBuffer.from(turn.events)
+        val wizards = state.wizards.map { w =>
             val t = Target.Wizard(w.participantId)
             if (w.isDead) w
             else {
-                val damage = math.max(0, w.damage + harm(t) - healing(t))
-                val dies = killed(t) || damage >= Lethal
                 val o = ordersOf.get(w.participantId).filter(_ => w.isActive)
+                val damage = math.max(0, w.damage + turn.harm.getOrElse(t, 0) - turn.healing.getOrElse(t, 0))
+                val dies = turn.killed(t) || damage >= Lethal
+                val history = o.fold(w.history)(o => w.history :+ effective(o.left, o.right))
                 val surrenders = o.exists(o => effective(o.left, o.right) == (Gesture.P, Gesture.P))
-                val gone = removed(t)
+                val gone = turn.isRemoved(t)
                 if (gone && (w.isResistantToHeat || w.protectedThrough.isDefined))
                     events += s"${w.name}'s enchantments are removed."
                 val paralysis =
-                    enchanted(t, Spells.Paralysis).map(c => w.paralysed.getOrElse(c.order.hand.getOrElse(Hand.Left)))
-                val anti = enchanted(t, Spells.AntiSpell).isDefined
+                    turn.enchanted(t, Spells.Paralysis)
+                        .map(c => w.paralysed.getOrElse(c.order.hand.getOrElse(Hand.Left)))
                 val next = w.copy(
                   damage = damage,
                   isDead = dies,
                   isSurrendered = w.isSurrendered || (surrenders && !dies),
-                  eliminatedAt = w.eliminatedAt.orElse(Option.when(dies || surrenders)(turn)),
-                  usableFrom = if (anti) w.history.size else w.usableFrom,
-                  hasAmnesia = enchanted(t, Spells.Amnesia).isDefined,
-                  hasFear = enchanted(t, Spells.Fear).isDefined,
+                  eliminatedAt = w.eliminatedAt.orElse(Option.when(dies || surrenders)(now)),
+                  history = history,
+                  usableFrom = if (turn.enchanted(t, Spells.AntiSpell).isDefined) history.size else w.usableFrom,
+                  hasAmnesia = turn.enchanted(t, Spells.Amnesia).isDefined,
+                  hasFear = turn.enchanted(t, Spells.Fear).isDefined,
                   paralysed = paralysis,
                   protectedThrough =
-                      if (enchanted(t, Spells.ProtectionFromEvil).isDefined) Some(turn + 3)
+                      if (turn.enchanted(t, Spells.ProtectionFromEvil).isDefined) Some(now + 3)
                       else if (gone) None
-                      else w.protectedThrough.filter(_ > turn),
-                  isResistantToHeat = !gone && (w.isResistantToHeat || enchanted(t, Spells.ResistHeat).isDefined),
+                      else w.protectedThrough.filter(_ > now),
+                  isResistantToHeat = !gone && (w.isResistantToHeat || turn.enchanted(t, Spells.ResistHeat).isDefined),
                   // Used once cast, whether or not it got through.
-                  usedOnce = w.usedOnce ++ cast
+                  usedOnce = w.usedOnce ++ turn.cast
                       .filter(_.caster == w.participantId)
                       .flatMap(c =>
                           c.spell.series
@@ -472,31 +428,28 @@ object Rules {
                 next
             }
         }
-
-        // Monsters: wounds, cures, death — destroyed by dispel magic, or by remove enchantment, after attacking.
-        val monsters = (state.monsters ++ summoned.map(_._1)).map { m =>
+        val monsters = (state.monsters ++ turn.summoned.map(_._1)).map { m =>
             val t = Target.Monster(m.id)
             if (m.isDead) m
             else {
-                val damage = math.max(0, m.damage + harm(t) - healing(t))
-                val destroyed = isDispelled || at(Spells.RemoveEnchantment).exists(_.target == t)
-                val dies = killed(t) || damage >= m.strength || destroyed
-                if (dies) events += s"${who(m.controller)}'s ${m.kind} is destroyed."
+                val damage = math.max(0, m.damage + turn.harm.getOrElse(t, 0) - turn.healing.getOrElse(t, 0))
+                val destroyed = turn.isDispelled || turn.removed(t)
+                val dies = turn.killed(t) || damage >= m.strength || destroyed
+                if (dies) events += s"${turn.who(m.controller)}'s ${m.kind} is destroyed."
                 m.copy(
                   damage = damage,
                   isDead = dies,
-                  lastTarget = attacking.find(_._1.id == m.id).flatMap(_._2),
-                  hasAmnesia = enchanted(t, Spells.Amnesia).isDefined,
-                  isParalysed = enchanted(t, Spells.Paralysis).isDefined
+                  lastTarget = turn.monsterTargets.get(m.id),
+                  hasAmnesia = turn.enchanted(t, Spells.Amnesia).isDefined,
+                  isParalysed = turn.enchanted(t, Spells.Paralysis).isDefined
                 )
             }
         }
-
         BattleState(
           wizards = wizards,
           monsters = monsters,
-          reports = state.reports :+ TurnReport(turn, events.toList),
-          turnsPlayed = turn
+          reports = state.reports :+ TurnReport(now, events.toList),
+          turnsPlayed = now
         )
     }
 
