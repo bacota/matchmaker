@@ -119,7 +119,7 @@ object Engine {
             }
         def target(raw: String): Either[String, Target] =
             Target.parse(raw) match {
-                case Some(t @ Target.Wizard(id)) if m.wizard(id).isDefined                => Right(t)
+                case Some(t @ Target.Wizard(id)) if battle.wizard(id).exists(_.isActive)  => Right(t)
                 case Some(t @ Target.Monster(id)) if battle.monster(id).exists(!_.isDead) => Right(t)
                 case Some(Target.Nobody)                                                  => Right(Target.Nobody)
                 case _ => Left(s"there is no '$raw' to aim at")
@@ -249,7 +249,7 @@ object Engine {
             m.wizards.flatMap(x =>
                 battle
                     .wizard(x.participantId)
-                    .filterNot(_.isDead)
+                    .filter(_.isActive)
                     .map(b =>
                         TargetView(
                           Target.Wizard(x.participantId).code,

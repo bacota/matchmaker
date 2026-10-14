@@ -272,8 +272,9 @@ object Rules {
                 case None    => w
             }
         }
+        // A wizard who has died or surrendered is out of the duel, and nothing more can reach them.
         def exists(t: Target): Boolean = t match {
-            case Target.Wizard(id)  => state.wizard(id).exists(!_.isDead)
+            case Target.Wizard(id)  => state.wizard(id).exists(_.isActive)
             case Target.Monster(id) => state.monster(id).exists(!_.isDead)
             case Target.Nobody      => false
         }

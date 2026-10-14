@@ -271,6 +271,27 @@ class RulesSpec extends FunSuite {
         assertEquals(Duel.rank(done, done.wizard(A).get), Some(3))
     }
 
+    test("a wizard who has surrendered is out of the duel: no stab reaches them, and none may be aimed at them") {
+        val m = turn(duel(3), A -> req("P P"))
+        // Orders the engine would refuse, written as the rules would carry them out: a stab at the surrendered wizard.
+        val stab = Orders(
+          participantId = B,
+          left = Gesture.Stab,
+          right = Gesture.Nothing,
+          casts = Nil,
+          stab = Some(StabOrder(hand = Hand.Left, target = Target.Wizard(A))),
+          monsters = Map.empty,
+          takenAt = at,
+          startedAt = at
+        )
+        val idle = Engine.orders(m, m.battle.wizard(C3).get, MoveRequest("-", "-"), at).toOption.get
+        val after = m.copy(turns = m.turns :+ List(stab, idle))
+        assertEquals(damage(after, A), 0)
+        assert(Engine.orders(m, m.battle.wizard(B).get, req("stab -", _.copy(stab = Some("wizard:1"))), at).isLeft)
+        val targets = Engine.yourTurn(m, m.battle.wizard(B).get, Map(A -> "Ann", B -> "Bob", C3 -> "Cat")).targets
+        assert(!targets.map(_.code).contains("wizard:1"), targets)
+    }
+
     test("with three wizards an attack spell needs a target; with none named it goes to nobody") {
         val m = gestures(duel(3), A, "S -", "D -")
         assertEquals(damage(m, B) + damage(m, C3), 0)
