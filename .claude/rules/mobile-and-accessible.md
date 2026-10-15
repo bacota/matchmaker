@@ -34,3 +34,8 @@ For the code touched, check and fix:
 
 Check in a headless browser at 375px with touch, and at desktop width, where practical, and say
 plainly when a change was only read rather than exercised.
+
+`e2e/a11y/check.mjs` does the mechanical part on every screen: axe-core's WCAG 2.2 AA rules, plus
+horizontal scroll, 16px fields and 44px targets on the phone. Its header says how to run it. The
+`ui-reviewer` agent (`.claude/agents/ui-reviewer.md`) reviews what the check cannot judge — focus,
+keyboard use, announcements, whether labels make sense — when asked for it.
