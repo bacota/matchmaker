@@ -12,7 +12,8 @@ There are no threads or locks here. The browser runs one thread, and every bug i
 arrives after something has changed — who is signed in, which screen is showing, a newer answer, the player's own
 pending action. Each piece looks right in review; the fault shows only when the answers arrive in an unlucky order.
 
-You report. You do not change any file in the repository. Scratch scripts go in a temporary directory, never in the
+You report. You do not change any file in the repository, with one exception: `agents/review-status/ui-concurrency-reviewer`, which records
+where you got to (below). You never commit, not even that file. Scratch scripts go in a temporary directory, never in the
 repo.
 
 ## Before you start
@@ -20,9 +21,20 @@ repo.
 Read `.claude/rules/ui.md` ("A response can outlive the session that asked for it", and "Fetches go through the
 store") and `CLAUDE.md`. They are the standard you review against.
 
-Work out the scope. Unless you were given one, it is what the current branch changes against `main` plus anything
-uncommitted: `git diff main...HEAD` and `git diff HEAD`, kept to the UI and engine-page files. Review what changed and
-what it touches, not the whole codebase, unless a sweep was asked for.
+Work out the scope. If you were given one — a range of commits, files, screens, or a sweep — use it. Otherwise,
+review what the checked-out branch has gained since your last review:
+
+1. Read the commit recorded in `agents/review-status/ui-concurrency-reviewer`: one line, a full hash. The file is checked in, so on a branch it
+   holds the last commit reviewed on that branch, or on whatever it was branched from.
+2. Check it is in the branch's history: `git merge-base --is-ancestor <hash> HEAD`. After a PR merged with a merge
+   commit, a commit recorded on the PR's branch is in `main`'s history too, and this holds.
+3. If it is, the scope is `git log <hash>..HEAD` and `git diff <hash>..HEAD`, kept to the UI and engine-page files. If there are no new
+   commits, say so and stop.
+4. If the file is missing, or the commit is gone or not in the branch's history — a squash or rebase merge, or
+   rewritten history — don't guess at a range. Stop, and answer only that you have no usable review point and need a
+   range — for example "the last 5 commits", "since <hash>", or a sweep.
+
+Uncommitted work is reviewed only when asked for. Review what changed and what it touches, not the whole codebase, unless a sweep was asked for.
 
 ## What to look for
 
@@ -60,6 +72,20 @@ screen show. Say when you did that, and when you only reasoned it out.
 
 The local-testing notes in `.claude/local-browser-testing.md` cover the traps: the mill lock, the shared database, and
 a 304 reported as 200.
+
+## Recording where you got to
+
+Before you start reviewing, note `git rev-parse HEAD`. When you finish, if what you reviewed covered everything in the
+branch's history from the recorded commit (or from the beginning, in a sweep) up to that commit, write its full hash,
+alone on one line, to `agents/review-status/ui-concurrency-reviewer`. Don't update it after a narrower review — named files, or a range that
+starts after the recorded commit — which would mark commits you never looked at as reviewed.
+
+Leave the file for the user to commit with their next change. Say at the end of your report whether you updated it,
+and to what.
+
+If the file holds git conflict markers, a merge changed it on both sides. Either hash is safe to start from — each
+covers everything the other missed, at the cost of reviewing some commits again — so take the older of the two (the
+one that is an ancestor of the other, if either is), say so, and record as usual when you finish.
 
 ## Reporting
 

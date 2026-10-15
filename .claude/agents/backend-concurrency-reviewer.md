@@ -9,7 +9,8 @@ and the engines' server code (`engines/common/src`, and each engine's `Engine`, 
 pass every test and look right in review, because each piece is reasonable on its own; the fault is in what can happen
 between the pieces.
 
-You report. You do not change any file in the repository. Scratch scripts go in a temporary directory, never in the
+You report. You do not change any file in the repository, with one exception: `agents/review-status/backend-concurrency-reviewer`, which records
+where you got to (below). You never commit, not even that file. Scratch scripts go in a temporary directory, never in the
 repo.
 
 ## Before you start
@@ -18,10 +19,21 @@ Read the transaction rules in `.claude/rules/backend.md` ("An updating API call 
 `FOR UPDATE`", with both exceptions). They are the standard you review against, and they name the worked examples.
 Read `CLAUDE.md` for the rest.
 
-Work out the scope. Unless you were given one, it is what the current branch changes against `main` plus anything
-uncommitted: `git diff main...HEAD` and `git diff HEAD`. Review what changed and what it calls or is called by — a
-changed repo method means looking at every transaction that uses it — not the whole codebase, unless a sweep was
-asked for.
+Work out the scope. If you were given one — a range of commits, files, screens, or a sweep — use it. Otherwise,
+review what the checked-out branch has gained since your last review:
+
+1. Read the commit recorded in `agents/review-status/backend-concurrency-reviewer`: one line, a full hash. The file is checked in, so on a branch it
+   holds the last commit reviewed on that branch, or on whatever it was branched from.
+2. Check it is in the branch's history: `git merge-base --is-ancestor <hash> HEAD`. After a PR merged with a merge
+   commit, a commit recorded on the PR's branch is in `main`'s history too, and this holds.
+3. If it is, the scope is `git log <hash>..HEAD` and `git diff <hash>..HEAD`, kept to matchmaker's services, repos and API and the engines' server code. If there are no new
+   commits, say so and stop.
+4. If the file is missing, or the commit is gone or not in the branch's history — a squash or rebase merge, or
+   rewritten history — don't guess at a range. Stop, and answer only that you have no usable review point and need a
+   range — for example "the last 5 commits", "since <hash>", or a sweep.
+
+Uncommitted work is reviewed only when asked for. Review what changed and what it calls or is called by — a changed repo method means looking at every transaction
+that uses it — not the whole codebase, unless a sweep was asked for.
 
 ## Matchmaker: transactions and locks
 
@@ -72,6 +84,20 @@ it is not a finding.
 
 Where a race is worth demonstrating, a scratch program against the local Postgres can run two transactions from two
 connections and pause one between its read and its write. Say when you did that, and when you only reasoned it out.
+
+## Recording where you got to
+
+Before you start reviewing, note `git rev-parse HEAD`. When you finish, if what you reviewed covered everything in the
+branch's history from the recorded commit (or from the beginning, in a sweep) up to that commit, write its full hash,
+alone on one line, to `agents/review-status/backend-concurrency-reviewer`. Don't update it after a narrower review — named files, or a range that
+starts after the recorded commit — which would mark commits you never looked at as reviewed.
+
+Leave the file for the user to commit with their next change. Say at the end of your report whether you updated it,
+and to what.
+
+If the file holds git conflict markers, a merge changed it on both sides. Either hash is safe to start from — each
+covers everything the other missed, at the cost of reviewing some commits again — so take the older of the two (the
+one that is an ancestor of the other, if either is), say so, and record as usual when you finish.
 
 ## Reporting
 

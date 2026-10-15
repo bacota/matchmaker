@@ -26,4 +26,4 @@ matchmaker/ui/config.js
 # The accessibility check's dependencies: `npm ci` in e2e/a11y.
 e2e/a11y/node_modules/
 
-reviews
+agents/reviews/
