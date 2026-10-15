@@ -1,0 +1,13 @@
+{
+  "name": "matchmaker-a11y",
+  "private": true,
+  "type": "module",
+  "description": "Accessibility and mobile checks of matchmaker's UI and an engine's play pages. See check.mjs.",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "playwright-core": "1.61.1"
+  }
+}
