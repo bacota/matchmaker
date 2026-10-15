@@ -1121,6 +1121,13 @@ button.toggle {
     padding: 0.6rem 0;
   }
 
+  /* And as wide as they are tall, or a short word -- "Play", a three-letter nickname -- is a 28px-wide
+     sliver. Start-aligned, so the word stays where it was and the extra width is on its trailing side. */
+  button.link {
+    min-width: 2.75rem;
+    text-align: start;
+  }
+
   /* Further apart as well as bigger: adjacent targets that are each big enough are still easy
      to confuse when they touch. */
   button.link + button.link {
@@ -1137,12 +1144,21 @@ button.toggle {
   .row form.compound input,
   .search input,
   .inline-form .compound input,
+  .field input:not([type="checkbox"]):not([type="radio"]),
   select {
     min-height: 2.75rem;
   }
 
   /* A checkbox is hit by its caption as well, so the label is the target and gets the height. */
   .card label {
+    min-height: 2.75rem;
+  }
+
+  /* A list of checkboxes, such as the formats a game offers: each label is inline, where `min-height` does nothing,
+     so it is made a box first. */
+  ul.plain > li > label {
+    display: inline-flex;
+    align-items: center;
     min-height: 2.75rem;
   }
 }

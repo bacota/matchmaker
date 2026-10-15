@@ -51,7 +51,7 @@ object Html {
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { text-align: center; padding: 2rem 1rem; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.25rem; min-height: 2rem; }
   #grid { display: grid; grid-template-columns: repeat(3, 5.5rem); grid-template-rows: repeat(3, 5.5rem); gap: 4px;
           background: var(--line); border: 4px solid var(--line); border-radius: 8px; margin: 0 auto; }

@@ -40,7 +40,7 @@ object Html {
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { max-width: 48rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
   h2 { font-size: 1.125rem; margin: 1.75rem 0 .5rem; }
   #status { font-size: 1.375rem; font-weight: 700; margin: 0 0 1rem; min-height: 2rem; }
   .cards { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }

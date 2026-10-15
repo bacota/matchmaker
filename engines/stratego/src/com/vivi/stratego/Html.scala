@@ -101,7 +101,7 @@ object Html {
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { text-align: center; padding: 1.5rem 16px; width: 100%; max-width: 40rem; box-sizing: border-box; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.25rem; min-height: 2rem; }
   #board { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; width: 100%; max-width: 36rem;
            margin: 0 auto; padding: 2px; box-sizing: border-box; background: var(--line); border-radius: 6px; }

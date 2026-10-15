@@ -43,7 +43,7 @@ object Html {
   body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 2rem 16px; max-width: 32rem; text-align: center; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
   h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 .25rem; min-height: 2rem; }
   #rule { margin: 0 0 1.25rem; opacity: .8; }

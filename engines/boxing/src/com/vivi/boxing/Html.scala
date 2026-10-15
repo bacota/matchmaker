@@ -96,7 +96,7 @@ object Html {
   body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; text-align: center; }
   /* The rules, a tap away, in a dialog over the page. */
 ${rulesDialogCss}
   h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
@@ -684,7 +684,7 @@ $rulesCss"""
   body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; text-align: center; }
   /* The rules, a tap away, in a dialog over the page. */
 ${rulesDialogCss}
   h2 { font-size: 1.25rem; margin: 1.5rem 0 .5rem; }

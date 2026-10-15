@@ -1,6 +1,6 @@
 /* Accessibility and mobile check of matchmaker's UI and the tic-tac-toe engine's play pages.
  *
- * Matchmaker and the engine run from their assembly jars on ports of their own, against a database made for the run
+ * Matchmaker and the engine run from their modules' classes on ports of their own, against a database made for the run
  * and dropped after it, and a fixture is built over HTTP: two players, a game, an open challenge, a match being
  * played, a finished one and an invitation. Each screen is then opened in headless Chromium twice -- at 375px with
  * touch, as a phone, and at desktop width -- and checked:
@@ -9,11 +9,13 @@
  *   - on the phone only, by the checks axe does not make: no page-wide horizontal scroll, form fields of at least
  *     16px (smaller ones make iOS zoom on focus), and touch targets of at least 44px.
  *
- *     cd e2e/a11y && npm ci
- *     mill -j 4 --ticker false matchmaker.api.assembly + engines.tictactoe.assembly + matchmaker.ui.fastLinkJS
- *     node e2e/a11y/check.mjs
+ *     ./a11y-check.sh
  *
- * The run asks mill for flyway's classpath, so it waits on a mill holding the build lock (a running `runMain`).
+ * which installs the npm packages on first use, links the UI with fastLinkJS and runs this. UI_BUNDLE=<dir> checks a
+ * different linked UI, such as fullLinkJS's.
+ *
+ * The run asks mill for the classpaths, compiling what needs it, so it waits on a mill holding the build lock (a
+ * running `runMain`).
  * Needs the local Postgres the tests use, whose `matchmaker` user may create databases. Ports 18081, 18091, 18191
  * and 15173 must be free. Chromium is the one `playwright-core` installs (`npx playwright-core install chromium`),
  * or CHROME=<path>. Logs, screenshots and report.json go to e2e/out/a11y/.
@@ -41,6 +43,8 @@ const UI = `http://localhost:${UI_PORT}`;
 const RUN = randomBytes(4).toString("hex");
 const DB = `matchmaker_a11y_${RUN}`;
 const EXTERNAL_ID = `a11y-${RUN}`;
+// The linked UI to serve: fastLinkJS's unless told otherwise.
+const UI_BUNDLE = process.env.UI_BUNDLE ?? join(REPO, "out", "matchmaker", "ui", "fastLinkJS.dest");
 
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 const PHONE = { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -100,16 +104,29 @@ function psql(sql, db = DB) {
     }).trim();
 }
 
+/* A module's runtime classpath, as mill reports it, compiled if it needs to be. The jars are run from their modules'
+ * classes rather than from assemblies: flyway's assembly drops the service file that registers its Postgres support,
+ * and the others are what a deploy uploads, which a check has no business rebuilding. */
+function classpath(module) {
+    const refs = JSON.parse(
+        execFileSync("mill", ["-j", "4", "--ticker", "false", "show", `${module}.runClasspath`], {
+            cwd: REPO,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"]
+        })
+    );
+    return refs.map(ref => ref.replace(/^q?ref:v\d+:[0-9a-f]+:/, "")).join(":");
+}
+
 /* The UI as `python3 -m http.server` would serve it, with two differences: main.js is read from mill's output rather
  * than through the symlink a developer makes, and config.js is not served at all -- each browser context answers it
  * itself, with the player it is signed in as. Nothing in matchmaker/ui is written to. */
 function serveUi() {
     const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".map": "application/json" };
-    const built = join(REPO, "out", "matchmaker", "ui", "fastLinkJS.dest");
     const server = createServer((req, res) => {
         const path = new URL(req.url, UI).pathname;
         const name = path === "/" ? "index.html" : path.slice(1);
-        const file = name.startsWith("main.js") ? join(built, name) : join(REPO, "matchmaker", "ui", name);
+        const file = name.startsWith("main.js") ? join(UI_BUNDLE, name) : join(REPO, "matchmaker", "ui", name);
         if (name.includes("..") || !existsSync(file)) {
             res.writeHead(404).end();
             return;
@@ -259,22 +276,12 @@ let uiServer;
 let created = false;
 try {
     mkdirSync(OUT, { recursive: true });
-    for (const jar of ["matchmaker/api", "engines/tictactoe"])
-        if (!existsSync(join(REPO, "out", jar, "assembly.dest", "out.jar"))) throw new Error(`build ${jar.replace("/", ".")}.assembly first`);
-    if (!existsSync(join(REPO, "out", "matchmaker", "ui", "fastLinkJS.dest", "main.js"))) throw new Error("build matchmaker.ui.fastLinkJS first");
+    if (!existsSync(join(UI_BUNDLE, "main.js"))) throw new Error(`no main.js in ${UI_BUNDLE}: build matchmaker.ui.fastLinkJS first`);
 
     psql(`CREATE DATABASE ${DB}`, "matchmaker");
     created = true;
-    // From the module's classpath rather than an assembly, whose merge drops the service file that registers
-    // flyway's Postgres support.
-    const flyway = JSON.parse(
-        execFileSync("mill", ["-j", "4", "--ticker", "false", "show", "matchmaker.flyway.runClasspath"], {
-            cwd: REPO,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"]
-        })
-    ).map(ref => ref.replace(/^q?ref:v\d+:[0-9a-f]+:/, ""));
-    execFileSync("java", ["-cp", flyway.join(":"), "com.vivi.matchmaker.flyway.Migrate"], {
+    const [flyway, api, engine] = ["matchmaker.flyway", "matchmaker.api", "engines.tictactoe"].map(classpath);
+    execFileSync("java", ["-cp", flyway, "com.vivi.matchmaker.flyway.Migrate"], {
         env: {
             ...process.env,
             FLYWAY_URL: `jdbc:postgresql://localhost:5432/${DB}`,
@@ -285,14 +292,14 @@ try {
         stdio: ["ignore", "ignore", "inherit"]
     });
 
-    start("matchmaker", "java", ["-cp", join(REPO, "out/matchmaker/api/assembly.dest/out.jar"), "com.vivi.matchmaker.api.LocalServer"], {
+    start("matchmaker", "java", ["-cp", api, "com.vivi.matchmaker.api.LocalServer"], {
         PORT: "18081",
         DB_NAME: DB,
         LOCAL_CORS_ORIGINS: UI,
         MATCHMAKER_BASE_URL: MM,
         ARCHIVE_DIR: join(OUT, "archive")
     });
-    start("engine", "java", ["-cp", join(REPO, "out/engines/tictactoe/assembly.dest/out.jar"), "com.vivi.tictactoe.LocalServer"], {
+    start("engine", "java", ["-cp", engine, "com.vivi.tictactoe.LocalServer"], {
         PORT: "18091",
         LIVE_PORT: "18191",
         GAME_EXTERNAL_ID: EXTERNAL_ID,

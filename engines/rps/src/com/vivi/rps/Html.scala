@@ -55,7 +55,7 @@ object Html {
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { text-align: center; padding: 2rem 1rem; max-width: 30rem; }
-  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.25rem; min-height: 2rem; }
   #throws { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; margin: 0 0 1rem; padding: 0; border: 0; }
   /* 44px minimum in both directions: these are the only controls on the page, and a throw made
