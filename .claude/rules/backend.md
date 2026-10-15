@@ -2,6 +2,7 @@
 paths:
   - "matchmaker/src/**"
   - "matchmaker/api/**"
+  - "matchmaker/test/**"
   - "terraform/modules/api/**"
 ---
 
@@ -78,3 +79,31 @@ with, since anything else on the row may have changed meanwhile.
 The other half of that gap is that the second half cannot be undone by rolling back the first —
 once the engine has made its game, the only way out is forward. Repairing rather than unwinding
 (`refresh`) is the pattern for that.
+
+## Challenges are tournaments
+
+A challenge is a tournament of the standard `challenge` model (`standard.Challenge`): one stage, played once, one
+pool. There is no challenge table to bring back — every match and seat is a tournament's. The decisions behind it are
+in `design/challenges-as-tournaments-plan.md`.
+
+The challenge model follows every tournament rule, and nothing special-cases it:
+
+- It is not seeded in SQL, which would state it a second time beside `standard.Challenge`. `/tournament-models/sync`
+  writes it like any other model.
+- A game offers it as it offers any format, and `requireModel` has no exception for it.
+- `createChallenge` sets `maxEntrants` to the pool size, which is what lets a full challenge start by itself.
+
+Roles are chosen after a challenge starts, in seed order, never at acceptance — `has_role_choice` on the tournament
+and its model.
+
+In tests, `Challenges.offeredIn(game)` offers the model, and `Challenges.startedMatch` plays the real flow, waiting for
+the asynchronous round and match. `TestMatches` writes a match or seat directly, and `TestServices.servicesInline`
+runs the ending queue synchronously, for mail specs.
+
+## Errors
+
+Failure is a `Throwable`: services raise `ServiceError` into `IO`, and `api/Errors.toResponse` maps a `Throwable`
+to an HTTP response. `Authenticator.callerOf` still returns `Either[Response, String]`; converting it to `Try` was
+tried and reverted, so that change is not settled.
+
+There is no server-side rate limiting. It is deferred to a WAF in production.
