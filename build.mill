@@ -402,4 +402,18 @@ object engines extends Module {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
   }
+
+  /** Hilo: every player picks a number from 1 to the number of players, all at once, and the highest number nobody
+    * else picked wins. A game without roles, for two or more players, and the simplest one that is.
+    *
+    * `mill -j 4 --ticker false engines.hilo.runMain com.vivi.hilo.LocalServer` runs it locally;
+    * `mill -j 4 --ticker false engines.hilo.assembly` builds the Lambda jar, whose handler is
+    * `com.vivi.hilo.Handler::handleRequest`.
+    */
+  object hilo extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
+  }
 }

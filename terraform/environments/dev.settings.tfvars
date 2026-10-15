@@ -34,11 +34,12 @@ refresh_token_validity_days = 30
 
 // The bundled engines. Independent of each other — tic-tac-toe is a game of alternating turns,
 // rps one where both players move at once, boxing a character game played in rounds, and stratego
-// a game of hidden information with a simultaneous setup, and wavinghands a duel without roles for
-// any number of wizards.
+// a game of hidden information with a simultaneous setup, wavinghands a duel without roles for any
+// number of wizards, and hilo a number game without roles for any number of players.
 deploy_tictactoe   = true
 deploy_rps         = true
 deploy_boxing      = true
 deploy_stratego    = true
 deploy_wavinghands = true
+deploy_hilo        = true
 deploy_mail        = true

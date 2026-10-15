@@ -377,6 +377,21 @@ variable "wavinghands_jar_path" {
   default     = "../out/engines/wavinghands/assembly.dest/out.jar"
 }
 
+variable "deploy_hilo" {
+  description = <<-EOT
+    Deploy the bundled Hilo engine (modules/engine) alongside matchmaker, and wire the keys between
+    them. Independent of the other engines — any combination may be deployed.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "hilo_jar_path" {
+  description = "Path to the assembled hilo jar. Only read when deploy_hilo is true."
+  type        = string
+  default     = "../out/engines/hilo/assembly.dest/out.jar"
+}
+
 # ---------------------------------------------------------------------------
 # Mail
 # ---------------------------------------------------------------------------
@@ -452,4 +467,10 @@ variable "wavinghands_subdomain" {
   description = "Waving Hands' friendly url, under ui_domain_name: waving-hands.<ui_domain_name>. Empty for none."
   type        = string
   default     = "waving-hands"
+}
+
+variable "hilo_subdomain" {
+  description = "Hilo's friendly url, under ui_domain_name: hilo.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "hilo"
 }

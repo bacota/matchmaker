@@ -74,6 +74,13 @@ resource "random_password" "wavinghands_api_key" {
   special = false
 }
 
+resource "random_password" "hilo_api_key" {
+  count = var.deploy_hilo ? 1 : 0
+
+  length  = 48
+  special = false
+}
+
 # One root for every environment. Everything that differs between them is a variable: account
 # facts come from environments/<env>.tfvars, policy from environments/<env>.settings.tfvars, and
 # `tf.sh` passes both. Nothing in this file names an environment.
@@ -111,6 +118,7 @@ module "api" {
     var.deploy_boxing ? [module.boxing[0].auth_callback_url] : [],
     var.deploy_stratego ? [module.stratego[0].auth_callback_url] : [],
     var.deploy_wavinghands ? [module.wavinghands[0].auth_callback_url] : [],
+    var.deploy_hilo ? [module.hilo[0].auth_callback_url] : [],
     var.callback_urls
   )
   logout_urls          = concat([module.ui.url], var.logout_urls)
@@ -221,6 +229,7 @@ locals {
     boxing      = var.boxing_subdomain
     stratego    = var.stratego_subdomain
     wavinghands = var.wavinghands_subdomain
+    hilo        = var.hilo_subdomain
   }
   engine_domains = {
     for name, subdomain in local.engine_subdomains :
@@ -416,6 +425,39 @@ module "wavinghands" {
   lambda_jar_path = var.wavinghands_jar_path
 
   matchmaker_api_key = random_password.wavinghands_api_key[0].result
+
+  # Where the engine archives a finished match through, and reads it back from once its live
+  # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.
+  matchmaker_url = module.api.api_endpoint
+
+  cognito_issuer    = module.api.jwt_issuer
+  cognito_client_id = module.api.user_pool_client_id
+  hosted_login_url  = module.api.hosted_login_url
+
+  lambda_snap_start  = var.lambda_snap_start
+  log_retention_days = var.log_retention_days
+}
+
+/* Hilo: every player picks a number at once, and the highest number nobody else picked wins. A
+ * game without roles for two or more players, and like stratego it has no routes beyond the ones
+ * every engine serves.
+ *
+ * A `game` row still has to be created by hand, as a game without roles: its `url` is this module's
+ * create_game_url and its `external_id` is "hilo". See engines/hilo/README.md.
+ */
+module "hilo" {
+  count  = var.deploy_hilo ? 1 : 0
+  source = "./modules/engine"
+
+  name    = "hilo"
+  handler = "com.vivi.hilo.Handler::handleRequest"
+
+  environment     = var.environment
+  domain_name     = local.engine_domains["hilo"]
+  hosted_zone_id  = var.hosted_zone_id
+  lambda_jar_path = var.hilo_jar_path
+
+  matchmaker_api_key = random_password.hilo_api_key[0].result
 
   # Where the engine archives a finished match through, and reads it back from once its live
   # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.

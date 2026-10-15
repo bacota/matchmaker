@@ -7,7 +7,8 @@
 #   ./deploy-engine.sh boxing dev --full           # plan the whole configuration, not just the engine
 #   ./deploy-engine.sh rps dev --skip-build        # the jar must already exist
 #
-# deploy-rps.sh, deploy-tictactoe.sh, deploy-boxing.sh, deploy-stratego.sh and deploy-wavinghands.sh are this, with the
+# deploy-rps.sh, deploy-tictactoe.sh, deploy-boxing.sh, deploy-stratego.sh, deploy-wavinghands.sh and deploy-hilo.sh are
+# this, with the
 # engine named.
 #
 # Separate from deploy.sh because an engine has a separate lifecycle: it is rebuilt and redeployed
@@ -37,7 +38,7 @@ readonly TERRAFORM_DIR="terraform"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 <rps|tictactoe|boxing|stratego|wavinghands> <dev|prod> [--yes] [--full] [--skip-build] [--skip-tests]
+usage: $0 <rps|tictactoe|boxing|stratego|wavinghands|hilo> <dev|prod> [--yes] [--full] [--skip-build] [--skip-tests]
 
   --yes         apply without asking for confirmation
   --full        plan the whole configuration instead of just the engine; needs
@@ -88,8 +89,14 @@ case "$engine" in
     prod_question="Deploy the waving hands engine to prod?"
     game_name="Waving Hands"
     ;;
+  hilo)
+    title="hilo"
+    about="a number game for any number of players, with no roles"
+    prod_question="Deploy the hilo engine to prod?"
+    game_name="Hilo"
+    ;;
   *)
-    echo "unknown engine '$engine'; expected rps, tictactoe, boxing, stratego or wavinghands" >&2
+    echo "unknown engine '$engine'; expected rps, tictactoe, boxing, stratego, wavinghands or hilo" >&2
     exit 2
     ;;
 esac
