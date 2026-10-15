@@ -304,7 +304,7 @@ object Challenges {
           else div(cls := "detail", s"needs at least $least players to start"),
           busyButton(label = "Cancel") { busy =>
               Store.run(
-                action = ApiClient.tournamentStep(gameId = game.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                action = ApiClient.stopTournament(gameId = game.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = MatchSections.challengeStale(t)
               )(_ => MatchSections.reloadChallengeSections(game.gameId))

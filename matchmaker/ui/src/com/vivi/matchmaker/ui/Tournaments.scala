@@ -3,6 +3,7 @@ package com.vivi.matchmaker.ui
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
+import org.scalajs.dom
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{
     Node as TNode,
@@ -254,6 +255,9 @@ object Tournaments {
         div(
           h2(t.name),
           p(cls := "detail", s"${d.summary.gameName} · ${t.status.label} · run by ${d.summary.ownerNickname}"),
+          if (t.isStopped && t.status == TournamentStatus.Running)
+              p(cls := "detail", "Stopped: no more rounds will begin. It finishes when this round is over.")
+          else emptyNode,
           if (t.description.nonEmpty) p(t.description) else emptyNode,
           if (d.summary.isOwner && t.status != TournamentStatus.Finished && t.status != TournamentStatus.Cancelled)
               ownerControls(d, editing)
@@ -292,6 +296,11 @@ object Tournaments {
                   ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name),
                   busy
                 )(_ => reload(d))
+            )
+        def stopButton(label: String, question: String)(after: Unit => Unit) =
+            busyButton(label = label, classes = Some("warn"))(busy =>
+                if (dom.window.confirm(question))
+                    Store.run(ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId), busy)(after)
             )
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
         val entered = d.entries.count(!_.isWithdrawn)
@@ -371,7 +380,7 @@ object Tournaments {
                           else emptyNode
                         )
                       ),
-                      if (d.design.stages.exists(_.repeat == Repetition.UntilStopped))
+                      if (!t.isStopped && d.design.stages.exists(_.repeat == Repetition.UntilStopped))
                           busyButton(label = "Stop Repeating")(busy =>
                               Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy)(_ => reload(d))
                           )
@@ -386,8 +395,24 @@ object Tournaments {
                   child.text <-- editing.signal.map(if (_) "Close Edit" else "Edit"),
                   onClick --> (_ => editing.update(!_))
                 ),
-            if (t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled) emptyNode
-            else step("Cancel Tournament", "cancel").amend(cls := "warn")
+            t.status match {
+                // Not started, so nothing has been played: stopping it deletes it, which is cancelling it.
+                case TournamentStatus.Draft | TournamentStatus.Open =>
+                    stopButton(
+                      label = "Cancel Tournament",
+                      question = "Cancel this tournament? It will be deleted, with its entries."
+                    )(_ => {
+                        Store.reloadMyTournaments()
+                        Store.reloadTournaments(t.gameId)
+                        Store.show(Store.Page.OneGame(t.gameId))
+                    })
+                case TournamentStatus.Running if !t.isStopped =>
+                    stopButton(
+                      label = "Stop Tournament",
+                      question = "Stop this tournament? Its current round is played out, and then it finishes."
+                    )(_ => reload(d))
+                case _ => emptyNode
+            }
           )
         )
     }

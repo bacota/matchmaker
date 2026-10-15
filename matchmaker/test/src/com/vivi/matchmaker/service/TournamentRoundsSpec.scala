@@ -15,7 +15,16 @@ import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.notify.RecordingNotifier
-import com.vivi.matchmaker.persistence.{GameRepo, Generators, MatchRepo, TestSession, TournamentMatchRepo}
+import com.vivi.matchmaker.persistence.{
+    GameRepo,
+    Generators,
+    MatchRepo,
+    ResultRepo,
+    TestSession,
+    TournamentMatchRepo,
+    TournamentRepo,
+    TournamentStateRepo
+}
 
 /** Tournaments played through their rounds, against the local database and a stub engine: rounds begun, roles chosen,
   * matches created and reported on, and the tournament advancing to its end.
@@ -446,6 +455,164 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         val (detailNow, winner) = d
         assertEquals(detailNow.summary.tournament.status, TournamentStatus.Finished)
         assertEquals(detailNow.state.get.root.ranking.get(winner.value), 1)
+    }
+
+    test("a match cancelled in a tournament is unranked there, and its owner may still rank it by hand") {
+        val (unranked, decided) = run(for {
+            f <- started(n = 4, roles = false)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.head)
+            _ <- f.w.services.matches.cancel(
+              gameId = f.game.gameId,
+              matchId = m.matchId,
+              callerExternalId = f.owner.externalId
+            )
+            unranked <- TestSession.resource.use(
+              new TournamentStateRepo(_)
+                  .load(f.game.gameId, f.t.tournamentId)
+                  .map(
+                    _.toList.flatMap(l =>
+                        com.vivi.matchmaker.model.tournament.Tournament
+                            .allPools(l.state.root)
+                            .flatMap(_.matches)
+                            .flatMap(_.outcome)
+                    )
+                  )
+            )
+            _ <- f.w.services.rounds.decide(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              matchId = m.matchId,
+              ranks = Map(m.seats.head.entrantId -> 1, m.seats(1).entrantId -> 2),
+              callerExternalId = f.owner.externalId
+            )
+            decided <- TestSession.resource.use(session =>
+                m.seats.traverse(s => new ResultRepo(session).read(f.game.gameId, s.participantId))
+            )
+        } yield (unranked, decided))
+        // The cancelled match is over in the tournament, with nobody ranked: its forfeits score nothing.
+        assertEquals(unranked.map(_.map(_.rank)), List(List(None, None)))
+        // The owner's ranks replace the forfeits.
+        assertEquals(
+          decided.map(_.map(r => (r.rank, r.isForfeit, r.isWinner))),
+          List(Some((1, false, true)), Some((2, false, false)))
+        )
+    }
+
+    test("a tournament stopped mid-round plays that round out and then finishes, beginning no other") {
+        val (stopped, refused, finished) = run(for {
+            // Taking late entries, so that it is the stop that refuses one.
+            f <- started(
+              n = 4,
+              roles = false,
+              settings = TournamentSettings(
+                isInvitational = false,
+                hasLateEntries = true,
+                roundDuration = Some(Duration.ofDays(2))
+              )
+            )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            stranger <- f.w.services.rounds
+                .stop(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.players.head.externalId
+                )
+                .attempt
+            _ <- f.w.services.rounds.stop(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            stopped <- detail(f)
+            again <- f.w.services.rounds
+                .stop(gameId = f.game.gameId, tournamentId = f.t.tournamentId, callerExternalId = f.owner.externalId)
+                .attempt
+            late <- f.w.services.registration.register(nickname = unique("late"), externalId = unique("sub"))
+            entry <- f.w.services.tournaments
+                .enter(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  characterId = None,
+                  callerExternalId = late.externalId
+                )
+                .attempt
+            _ <- reportAll(f)
+            next <- f.w.services.rounds
+                .startRound(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
+            d <- detail(f)
+            created = f.w.engine.created.get()
+        } yield (stopped, (stranger, again, entry, next), (d, created)))
+        val (stranger, again, entry, next) = refused
+        val (d, created) = finished
+        assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
+        // Still under way while its round is played, and stopped.
+        assertEquals(stopped.summary.tournament.status, TournamentStatus.Running)
+        assert(stopped.summary.tournament.isStopped)
+        assert(again.left.exists(_.isInstanceOf[ConflictError]), again)
+        assert(entry.left.exists(_.isInstanceOf[ConflictError]), entry)
+        // Its round over, it finished rather than going on to the final.
+        assertEquals(d.summary.tournament.status, TournamentStatus.Finished)
+        assert(next.left.exists(_.isInstanceOf[ConflictError]), next)
+        assertEquals(created, 2)
+    }
+
+    test("stopping a tournament that has not started deletes it, and only its owner may") {
+        val (stranger, gone) = run {
+            val s = world().services
+            for {
+                game <- TestSession.resource.use(
+                  new GameRepo[String](_).create(Generators.genRolelessGame(least = 2, most = Some(2)))
+                )
+                owner <- s.registration.register(nickname = unique("owner"), externalId = unique("sub"))
+                player <- s.registration.register(nickname = unique("p"), externalId = unique("sub"))
+                model <- TestSession.resource.use(TournamentFixtures.model(_, game, "single-elimination"))
+                t <- s.tournaments.create(
+                  gameId = game.gameId,
+                  request = TournamentRequest(
+                    name = "Cup",
+                    tournamentModelId = model.tournamentModelId,
+                    settings = TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
+                  ),
+                  callerExternalId = owner.externalId
+                )
+                _ <- s.tournaments.open(
+                  gameId = game.gameId,
+                  tournamentId = t.tournamentId,
+                  callerExternalId = owner.externalId
+                )
+                _ <- s.tournaments.enter(
+                  gameId = game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = None,
+                  callerExternalId = player.externalId
+                )
+                stranger <- s.rounds
+                    .stop(gameId = game.gameId, tournamentId = t.tournamentId, callerExternalId = player.externalId)
+                    .attempt
+                _ <- s.rounds.stop(
+                  gameId = game.gameId,
+                  tournamentId = t.tournamentId,
+                  callerExternalId = owner.externalId
+                )
+                gone <- TestSession.resource.use(new TournamentRepo(_).read(game.gameId, t.tournamentId))
+            } yield (stranger, gone)
+        }
+        assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
+        assertEquals(gone, None)
     }
 
     test("a seat whose time to choose has run out forfeits at Check round, and the match is decided without it") {

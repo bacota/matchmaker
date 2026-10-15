@@ -17,7 +17,9 @@ enum TournamentStatus(val code: String, val label: String) {
 
     case Finished extends TournamentStatus("finished", "Finished")
 
-    /** Called off by its owner. */
+    /** Called off by its owner, when a tournament could be. None is any longer: one not yet started is deleted, and one
+      * under way is stopped (`Tournament.isStopped`). Kept for the tournaments cancelled before that.
+      */
     case Cancelled extends TournamentStatus("cancelled", "Cancelled")
 }
 
@@ -97,7 +99,8 @@ case class TournamentModelSync(
   *
   * `owner` may edit it and run its rounds. `tournamentModelId` is the model it was made from, whose stages were copied
   * into it. `defaultPoolSize` is the size of a pool of any stage that sets none. `roundStartedAt` and `roundDeadline`
-  * are the round being played.
+  * are the round being played. `isStopped` is its owner having stopped it while under way: no further round is begun,
+  * and it finishes once the round being played is over.
   */
 case class Tournament(
     gameId: GameId,
@@ -113,7 +116,8 @@ case class Tournament(
     endedAt: Option[Instant] = None,
     roundStartedAt: Option[Instant] = None,
     roundDeadline: Option[Instant] = None,
-    checkedAt: Option[Instant] = None
+    checkedAt: Option[Instant] = None,
+    isStopped: Boolean = false
 )
 
 /** An entry in a tournament: a player's in a plain game, a character's in a character game, the rating it entered at,

@@ -1323,6 +1323,37 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
+    // A cancel ends the match as a friendly one every seat of which forfeited: a result for everyone, a loss with
+    // no winner, and no rating moved. Made rated first, so that its turning friendly is the cancel's doing.
+    property("cancelling makes the match friendly and forfeits every seat") {
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
+            val result = for {
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
+                (_, game, matchId) = made
+                _ <- TestSession.resource.use(
+                  _.execute(
+                    sql"UPDATE match SET is_friendly = false WHERE game_id = $int4 AND match_id = $int8".command
+                  )((game.gameId.value, matchId.value))
+                )
+                cancelled <- matchService.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
+                stored <- TestSession.resource.use(new MatchRepo(_).read(game.gameId, matchId))
+                results <- TestSession.resource.use(session =>
+                    new ParticipantRepo(session)
+                        .listForMatch(game.gameId, matchId)
+                        .flatMap(_.traverse((p, _, _) => new ResultRepo(session).read(game.gameId, p.participantId)))
+                )
+            } yield cancelled.isFriendly && stored.exists(m => m.isFriendly && m.isCancelled) && results.nonEmpty &&
+                results.forall(_.exists(r => r.isForfeit && !r.isWinner && r.eloDelta.isEmpty))
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
     property("a player who did not create the match may not cancel it") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
             (nickname, externalId, mid, otherNickname, otherExternalId) =>

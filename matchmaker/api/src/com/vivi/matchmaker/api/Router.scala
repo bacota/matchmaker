@@ -274,8 +274,8 @@ object Router {
 
             /* Making a challenge: a tournament of the challenge model, opened and entered, and its invitations
              * sent, in one call -- a challenge that is not open with nobody invited yet is one nobody could enter.
-             * Everything after this is the tournament routes': entering, withdrawing, starting, cancelling,
-             * inviting and choosing a role. */
+             * Everything after this is the tournament routes': entering, withdrawing, starting, stopping
+             * (which is cancelling one not yet started), inviting and choosing a role. */
             case ("POST", "games" :: gameId :: "challenges" :: Nil) =>
                 withGameId(gameId)(id =>
                     body[ChallengeRequest](request).flatMap(r =>
@@ -622,9 +622,11 @@ object Router {
                     ok(services.tournaments.start(gameId = gid, tournamentId = t, callerExternalId = caller))
                 )
 
-            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "cancel" :: Nil) =>
+            // Scheduling no more of its matches: one not yet started is deleted, and one under way finishes
+            // with the round being played.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    ok(services.tournaments.cancel(gameId = gid, tournamentId = t, callerExternalId = caller))
+                    noContent(services.rounds.stop(gameId = gid, tournamentId = t, callerExternalId = caller))
                 )
 
             // Inviting a player, and taking it back -- the owner's revoke or the player's decline.
@@ -736,9 +738,9 @@ object Router {
                     noContent(services.rounds.checkRound(gameId = gid, tournamentId = t, callerExternalId = caller))
                 )
 
-            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop-repeating" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    noContent(services.rounds.stop(gameId = gid, tournamentId = t, callerExternalId = caller))
+                    noContent(services.rounds.stopRepeating(gameId = gid, tournamentId = t, callerExternalId = caller))
                 )
 
             // A tournament match is a match, addressed by its id.

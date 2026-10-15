@@ -328,7 +328,7 @@ class RouterSpec extends FunSuite {
       ("PUT", "/games/1/tournaments/2", """{"name":"Open","tournamentModelId":6}"""),
       ("POST", "/games/1/tournaments/2/open", "{}"),
       ("POST", "/games/1/tournaments/2/start", "{}"),
-      ("POST", "/games/1/tournaments/2/cancel", "{}"),
+      ("POST", "/games/1/tournaments/2/stop", "{}"),
       ("POST", "/games/1/tournaments/2/invitations", """{"playerId":3}"""),
       ("DELETE", "/games/1/tournaments/2/invitations/3", "{}"),
       ("POST", "/games/1/tournaments/2/character-invitations", """{"characterId":4}"""),
@@ -343,7 +343,7 @@ class RouterSpec extends FunSuite {
       ("DELETE", "/games/1/tournament-models/world-cup", "{}"),
       ("POST", "/games/1/tournaments/2/rounds", "{}"),
       ("POST", "/games/1/tournaments/2/check", "{}"),
-      ("POST", "/games/1/tournaments/2/stop", "{}"),
+      ("POST", "/games/1/tournaments/2/stop-repeating", "{}"),
       ("POST", "/games/1/tournaments/2/matches/3/role", """{"gameRoleId":7}"""),
       (
         "POST",

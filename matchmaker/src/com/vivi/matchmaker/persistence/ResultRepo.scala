@@ -194,6 +194,15 @@ class ResultRepo(session: Session[IO]) {
     def createManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
         session.execute(insertManual)((gameId, id, rank, isWinner)).void
 
+    private val updateToManual: Command[(Int, Boolean, GameId, ParticipantId)] =
+        sql"""UPDATE result SET rank = $int4, scores = '{}'::jsonb, is_winner = $bool, is_forfeit = false, is_manual = true,
+                 elo_delta = NULL, elo_role_delta = NULL
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    /** As [[createManual]], over the forfeit a cancel gave the seat: the owner ranking by hand a match called off. */
+    def replaceWithManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
+        session.execute(updateToManual)((rank, isWinner, gameId, id)).void
+
     def create(result: Result): IO[Result] =
         session
             .execute(insertResult)(

@@ -79,9 +79,13 @@ class TournamentStateRepo(session: Session[IO]) {
             .query(int8 *: int8 *: int4 *: text *: bool *: bool *: bool)
             .to[MatchRow]
 
+    // A forfeit in a cancelled match is how a cancel ends every seat (`MatchService.cancel`), and is read as no rank:
+    // a match called off scores nothing for anybody, unless its owner ranks it by hand.
     private val selectSeats: Query[(GameId, TournamentId), SeatRow] =
-        sql"""SELECT p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order, r.rank, r.scores::text
+        sql"""SELECT p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order,
+                 CASE WHEN r.is_forfeit AND m.is_cancelled THEN NULL ELSE r.rank END, r.scores::text
           FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.tournament_id = $tournamentId
           ORDER BY p.participant_id"""

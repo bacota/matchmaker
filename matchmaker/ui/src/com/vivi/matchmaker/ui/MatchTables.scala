@@ -367,12 +367,14 @@ object MatchTables {
                 MatchSections.reloadAfterMatchRefresh
               )
           },
-          // Only the owner's. The engine is not told — its board stays playable — so the
+          // Only the owner's. Every player forfeits and the match turns friendly, so the
           // confirmation says what actually happens.
           if (summary.isOwner)
               busyButton(label = "Cancel", classes = Some("link")) { busy =>
                   if (
-                    dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open.")
+                    dom.window.confirm(
+                      "Cancel this match? Every player forfeits, and it won't change anyone's rating."
+                    )
                   )
                       Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy)(_ =>
                           Store.refreshMatches()
@@ -484,8 +486,9 @@ object MatchTables {
       * does not need saying — but winning is marked from `isWinner` rather than from position, because a game may have
       * no winner at all (a draw, a cancelled match) and first place would otherwise invent one.
       *
-      * A cancelled match has no engine-reported result, so its rows usually have no rank/scores (rather than being
-      * absent). Saying so beats rendering an empty-looking table.
+      * A cancelled match has no engine-reported result: every seat forfeited when it was called off, and one cancelled
+      * before that was how a cancel ended a match has rows with no rank or scores. Saying so beats rendering an
+      * empty-looking table.
       */
     private def resultTable(summary: MatchSummary): HtmlElement =
         div(
@@ -503,7 +506,9 @@ object MatchTables {
                 // Said once above the table rather than on each line: a forfeit is how the match
                 // ended, which is one fact about the match, not a separate fact about each seat.
                 // The lines below still say which of the two things it meant for each player.
-                if (rows.exists(_.isForfeit))
+                if (summary.isCancelled)
+                    p(cls := "detail", "Called off by its creator: every player forfeited.")
+                else if (rows.exists(_.isForfeit))
                     p(cls := "detail", "Ended by forfeit: a player ran out of time on their turn.")
                 else emptyNode,
                 ul(
@@ -523,6 +528,7 @@ object MatchTables {
                         // them, and without this a win by forfeit would read as a win on the board.
                         if (!row.isForfeit) emptyNode
                         else if (row.isWinner) span(cls := "detail", " — won by forfeit")
+                        else if (summary.isCancelled) span(cls := "detail", " — forfeited")
                         else span(cls := "detail", " — forfeited on time"),
                         // How long they spent over their turns, all told. Only when the match has
                         // turns recorded against somebody: a match played before turns were recorded

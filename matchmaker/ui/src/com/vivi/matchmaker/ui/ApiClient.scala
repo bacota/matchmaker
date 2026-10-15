@@ -332,7 +332,7 @@ object ApiClient {
           body = Some(write(request))
         )
 
-    /** One of the owner's steps through a tournament's life: `open`, `start` or `cancel`. */
+    /** One of the owner's steps through a tournament's life: `open` or `start`. */
     def tournamentStep(gameId: GameId, tournamentId: TournamentId, step: String): Future[Tournament] =
         send[Tournament](method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/$step", body = None)
 
@@ -403,8 +403,18 @@ object ApiClient {
     def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
         sendUnit(method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/check", body = None)
 
-    def stopTournamentStage(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+    /** The owner stopping a tournament: one not yet started is deleted -- which the screens call cancelling it -- and
+      * one under way schedules no more matches, and finishes with the round being played.
+      */
+    def stopTournament(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
         sendUnit(method = HttpMethod.POST, path = s"${tournamentPath(gameId, tournamentId)}/stop", body = None)
+
+    def stopTournamentStage(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+        sendUnit(
+          method = HttpMethod.POST,
+          path = s"${tournamentPath(gameId, tournamentId)}/stop-repeating",
+          body = None
+        )
 
     def chooseRole(
         gameId: GameId,

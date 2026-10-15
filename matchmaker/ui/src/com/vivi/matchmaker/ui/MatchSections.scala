@@ -287,7 +287,7 @@ object MatchSections {
           // here alongside the start.
           busyButton(label = "Cancel") { busy =>
               Store.run(
-                action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = challengeStale(t)
               )(_ => reloadChallengeSections(t.gameId))
@@ -431,8 +431,7 @@ object MatchSections {
           if (c.summary.isOwner)
               busyButton(label = "Cancel", classes = Some("link")) { busy =>
                   Store.run(
-                    action =
-                        ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "cancel"),
+                    action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                     busy = busy,
                     onFailure = challengeStale(t)
                   )(_ => reloadChallengeSections(t.gameId))

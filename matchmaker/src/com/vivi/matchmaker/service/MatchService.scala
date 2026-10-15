@@ -21,6 +21,7 @@ import com.vivi.matchmaker.model.{
     PlayerClock,
     PlayerId,
     PublicPlayer,
+    Result,
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
@@ -333,6 +334,12 @@ class MatchService(
       * would contradict a fact the engine reported; a cancelled one is already cancelled, and saying so is more useful
       * than silently doing nothing.
       *
+      * A cancel is two things done at once. The match becomes friendly, so that nothing it records moves a rating; and
+      * every seat forfeits, so that it ends with a result as any other match does -- a loss by forfeit for everyone,
+      * and no winner. It is also marked cancelled, which is what keeps it from being archived and has its engine told.
+      * A tournament reads a forfeit in a cancelled match as no result at all (`TournamentStateRepo`), so that a match
+      * called off scores nothing for anybody, and its owner may still rank it by hand (`TournamentRounds.decide`).
+      *
       * The game engine is told afterwards, at the cancel url it gave when it created the game, so that it can drop the
       * match — by the listener the match's ending is queued to (`EndingService`), which tries again until it hears.
       * Whether or not it hears, matchmaker stops listening: [[GameEngineService]] refuses the move and result callbacks
@@ -377,7 +384,7 @@ class MatchService(
                             _ <- IO.raiseWhen(existing.isCancelled)(
                               ConflictError(s"match ${matchId.value} is already cancelled")
                             )
-                            cancelled = existing.copy(isCancelled = true)
+                            cancelled = existing.copy(isFriendly = true, isCancelled = true)
                             _ <- matchRepo.update(cancelled)
                             // And the seats, in the same lock: a cancelled match is over, so nobody's turn
                             // is pending in it and no clock is still running. Completion says this seat by
@@ -388,6 +395,7 @@ class MatchService(
                             // otherwise only answer it by joining `match` for the cancelled flag, because
                             // the seat did not know -- see `NotificationRepo.restampParticipants`.
                             _ <- participantRepo.completeForMatch(gameId, matchId)
+                            _ <- forfeitEverySeat(session = session, gameId = gameId, matchId = matchId)
                         } yield (cancelled, caller)
                     }
                     .flatMap { (cancelled, caller) =>
@@ -407,6 +415,33 @@ class MatchService(
             // And the engine, by way of the match's ending: telling it is the listener's to do, and to try
             // again until it hears.
             .flatTap(cancelled => endings.ended(cancelled.gameId, cancelled.matchId))
+
+    /* Every seat of a match being cancelled loses by forfeit, tied for last and none of them a winner, as a timeout
+     * that catches every seat at once ends one. No rating change: the match was made friendly first. A seat that
+     * somehow has a result already keeps it. */
+    private def forfeitEverySeat(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] = {
+        val resultRepo = new ResultRepo(session)
+        new ParticipantRepo(session).listForMatch(gameId, matchId).flatMap { seats =>
+            seats.traverse_ { (p, _, _) =>
+                resultRepo.read(gameId, p.participantId).flatMap {
+                    case Some(_) => IO.unit
+                    case None =>
+                        resultRepo
+                            .create(
+                              Result(
+                                gameId = gameId,
+                                participantId = p.participantId,
+                                rank = seats.size,
+                                scores = Map.empty,
+                                isWinner = false,
+                                isForfeit = true
+                              )
+                            )
+                            .void
+                }
+            }
+        }
+    }
 
     private def forCaller[A](
         callerExternalId: String

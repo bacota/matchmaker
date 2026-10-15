@@ -97,7 +97,8 @@ class TournamentRounds[T](
             for {
                 due <- session.transaction.use { _ =>
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
-                        case Some(t) if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds =>
+                        case Some(t)
+                            if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds && !t.isStopped =>
                             requireLoaded(session, t).flatMap { loaded =>
                                 if (Progress.isRoundComplete(loaded.state))
                                     begin(session = session, t = t, duration = None).map(_._2)
@@ -121,6 +122,7 @@ class TournamentRounds[T](
         duration: Option[Duration]
     ): IO[(Option[Int], List[MatchId])] =
         for {
+            _ <- IO.raiseWhen(t.isStopped)(ConflictError("this tournament has been stopped, and begins no more rounds"))
             game <- requireGame(session, t.gameId)
             loaded <- requireLoaded(session, t)
             _ <- IO.raiseUnless(Progress.isRoundComplete(loaded.state))(
@@ -506,8 +508,8 @@ class TournamentRounds[T](
         }
 
     /** Reads the tournament with every result in, under its lock, and if the round being played is complete advances it
-      * and finishes it if that ends it. The round's number, if this is what completed it and the tournament goes on: a
-      * round is marked complete once, however many endings find it so.
+      * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed it
+      * and the tournament goes on: a round is marked complete once, however many endings find it so.
       */
     private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
         requireLoaded(session, t).flatMap { loaded =>
@@ -522,7 +524,7 @@ class TournamentRounds[T](
                       round = loaded.state.round
                     )
                     finished <-
-                        if (advanced.isFinished)
+                        if (advanced.isFinished || t.isStopped)
                             finish(session = session, t = t, loaded = loaded, state = advanced).as(true)
                         else
                             stateRepo(session)
@@ -682,8 +684,52 @@ class TournamentRounds[T](
                 )
         }
 
-    /** The owner asking a stage that repeats until stopped to stop, after the run being played. */
+    /** The owner stopping a tournament, so that no match of it is scheduled from now on.
+      *
+      * One that has not started has no match, and is deleted, entries and all. One under way is marked stopped: its
+      * matches already scheduled are played out, no further round is begun, and it finishes as the round being played
+      * completes ([[settle]]) -- at once, if that round is already over. Its matches of later rounds are left scheduled
+      * and never played, as are those of every tournament that finishes before its pools do. A tournament that is over
+      * cannot be stopped, and neither can one stopped already.
+      */
     def stop(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
+        sessionPool.use { session =>
+            session.transaction.use { _ =>
+                for {
+                    caller <- requireCaller(session, callerExternalId)
+                    t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                    _ <- IO.raiseUnless(t.owner == caller.playerId)(
+                      UnauthorizedError("only the tournament's owner may stop it")
+                    )
+                    _ <- t.status match {
+                        case TournamentStatus.Draft | TournamentStatus.Open =>
+                            new TournamentRepo(session).delete(gameId, tournamentId)
+                        case TournamentStatus.Running if t.isStopped =>
+                            IO.raiseError(ConflictError("this tournament has been stopped already"))
+                        case TournamentStatus.Running =>
+                            new TournamentRepo(session).stop(gameId, tournamentId) *>
+                                requireLoaded(session, t).flatMap { loaded =>
+                                    IO.whenA(Progress.isRoundComplete(loaded.state))(
+                                      requireGame(session, gameId).flatMap(game =>
+                                          envFor(session = session, t = t, game = game, design = loaded.design)
+                                      ).flatMap(env =>
+                                          finish(
+                                            session = session,
+                                            t = t,
+                                            loaded = loaded,
+                                            state = Progress.advance(loaded.state, env)
+                                          )
+                                      )
+                                    )
+                                }
+                        case _ => IO.raiseError(ConflictError("this tournament is already over"))
+                    }
+                } yield ()
+            }
+        }
+
+    /** The owner asking a stage that repeats until stopped to stop, after the run being played. */
+    def stopRepeating(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
             session.transaction.use { _ =>
                 for {
@@ -738,7 +784,10 @@ class TournamentRounds[T](
                         _ <- IO.raiseWhen(m.exists(_.isCompleted))(
                           ConflictError("this match was played to an end; its result stands")
                         )
-                        recorded <- tm.seats.traverse(s => new ResultRepo(session).read(gameId, s.participantId))
+                        found <- tm.seats.traverse(s => new ResultRepo(session).read(gameId, s.participantId))
+                        // A cancel's forfeits are no result to the tournament, and the owner's ranks replace them.
+                        cancelForfeit = (r: Result) => m.exists(_.isCancelled) && r.isForfeit
+                        recorded = found.map(_.filterNot(cancelForfeit))
                         _ <- IO.raiseWhen(m.exists(_.isCancelled) && recorded.forall(_.isDefined))(
                           ConflictError("this match's result is in, and stands")
                         )
@@ -746,15 +795,26 @@ class TournamentRounds[T](
                         alone = ranks.values.count(_ == best) == 1
                         // Begun, and so to be told to its engine as called off; otherwise there is no engine game.
                         begun = tm.status == TournamentMatchStatus.Started
-                        _ <- tm.seats.zip(recorded).traverse_ { (s, r) =>
-                            IO.whenA(r.isEmpty)(
-                              new ResultRepo(session).createManual(
-                                gameId = gameId,
-                                id = s.participantId,
-                                rank = ranks(s.entrantId),
-                                isWinner = alone && ranks(s.entrantId) == best
-                              )
-                            )
+                        _ <- tm.seats.zip(found).traverse_ { (s, r) =>
+                            val rank = ranks(s.entrantId)
+                            val isWinner = alone && rank == best
+                            r match {
+                                case None =>
+                                    new ResultRepo(session).createManual(
+                                      gameId = gameId,
+                                      id = s.participantId,
+                                      rank = rank,
+                                      isWinner = isWinner
+                                    )
+                                case Some(f) if cancelForfeit(f) =>
+                                    new ResultRepo(session).replaceWithManual(
+                                      gameId = gameId,
+                                      id = s.participantId,
+                                      rank = rank,
+                                      isWinner = isWinner
+                                    )
+                                case Some(_) => IO.unit
+                            }
                         }
                         _ <- callOff(session = session, gameId = gameId, matchId = matchId)
                         done <- settle(session = session, t = t, game = game)

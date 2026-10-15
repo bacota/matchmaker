@@ -369,7 +369,7 @@ locals {
     "PUT /games/{gameId}/matches/{matchId}/notifications",
 
     # Tournaments: the caller's own, a game's, and one tournament's page; creating and editing
-    # one; its owner opening, starting and cancelling it; invitations; and entering and withdrawing.
+    # one; its owner opening, starting and stopping it; invitations; and entering and withdrawing.
     "GET /me/tournaments",
     "GET /me/tournament-standings",
     "GET /games/{gameId}/tournaments",
@@ -378,7 +378,7 @@ locals {
     "PUT /games/{gameId}/tournaments/{tournamentId}",
     "POST /games/{gameId}/tournaments/{tournamentId}/open",
     "POST /games/{gameId}/tournaments/{tournamentId}/start",
-    "POST /games/{gameId}/tournaments/{tournamentId}/cancel",
+    "POST /games/{gameId}/tournaments/{tournamentId}/stop",
     "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
     # A character game's invitations name characters.
@@ -393,11 +393,11 @@ locals {
     "GET /games/{gameId}/tournament-models",
     "PUT /games/{gameId}/tournament-models/{modelId}",
     "DELETE /games/{gameId}/tournament-models/{modelId}",
-    # Playing its rounds: the owner beginning, checking and stopping them; a seat choosing its
+    # Playing its rounds: the owner beginning and checking them, and stopping a stage that repeats; a seat choosing its
     # role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
     "POST /games/{gameId}/tournaments/{tournamentId}/rounds",
     "POST /games/{gameId}/tournaments/{tournamentId}/check",
-    "POST /games/{gameId}/tournaments/{tournamentId}/stop",
+    "POST /games/{gameId}/tournaments/{tournamentId}/stop-repeating",
     "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/role",
     "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/result",
     "GET /me/tournament-choices",

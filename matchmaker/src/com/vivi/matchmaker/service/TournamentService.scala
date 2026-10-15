@@ -440,16 +440,6 @@ class TournamentService[T](
                 )
         }
 
-    /** Calls a tournament off. Its matches already being played are left to finish as matches. */
-    def cancel(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Tournament] =
-        transition(gameId = gameId, tournamentId = tournamentId, callerExternalId = callerExternalId) { t =>
-            t.status match {
-                case TournamentStatus.Finished | TournamentStatus.Cancelled =>
-                    IO.raiseError(ConflictError("this tournament is already over"))
-                case _ => IO.pure(t.copy(status = TournamentStatus.Cancelled, endedAt = Some(now())))
-            }
-        }
-
     // ---- invitations -----------------------------------------------------------------------
 
     /** The owner inviting a player to an invitational tournament of a plain game. Inviting somebody already invited
@@ -654,9 +644,12 @@ class TournamentService[T](
         val gameId = t.gameId
         val late = t.status == TournamentStatus.Running
         for {
-            _ <- IO.raiseUnless(t.status == TournamentStatus.Open || (late && t.settings.hasLateEntries))(
+            _ <- IO.raiseUnless(
+              t.status == TournamentStatus.Open || (late && t.settings.hasLateEntries && !t.isStopped)
+            )(
               ConflictError(
-                if (late) "this tournament has started, and takes no late entries"
+                if (late && t.isStopped) "this tournament has been stopped, and takes no more entries"
+                else if (late) "this tournament has started, and takes no late entries"
                 else s"this tournament is not open for entries; it is ${t.status.label.toLowerCase}"
               )
             )

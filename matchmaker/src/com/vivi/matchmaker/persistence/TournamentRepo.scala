@@ -67,9 +67,10 @@ class TournamentRepo(session: Session[IO]) {
             bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
             bool *: instant.opt *: bool *: int4.opt *: bool *: int4.opt
 
-    // What is read: the written columns, then the round being played's start and deadline.
-    private type Row = (Written, Option[Instant], Option[Instant])
-    private val row: Codec[Row] = written *: instant.opt *: instant.opt
+    // What is read: the written columns, then the round being played's start and deadline, and whether it is stopped,
+    // which only [[stop]] writes.
+    private type Row = (Written, Option[Instant], Option[Instant], Boolean)
+    private val row: Codec[Row] = written *: instant.opt *: instant.opt *: bool
 
     private def columnsOf(t: String): Fragment[Void] =
         sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
@@ -80,7 +81,8 @@ class TournamentRepo(session: Session[IO]) {
               (SELECT r.start_date FROM round r
                 WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
               (SELECT r.deadline FROM round r
-                WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round)"""
+                WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
+              #$t.is_stopped"""
 
     private val columns = columnsOf("tournament")
 
@@ -116,7 +118,7 @@ class TournamentRepo(session: Session[IO]) {
         )
 
     private def tournamentOf(game: GameId, id: TournamentId, r: Row): Tournament = {
-        val (w, roundStartedAt, roundDeadline) = r
+        val (w, roundStartedAt, roundDeadline, stopped) = r
         val (
           name,
           description,
@@ -179,7 +181,8 @@ class TournamentRepo(session: Session[IO]) {
           endedAt = endedAt,
           roundStartedAt = roundStartedAt,
           roundDeadline = roundDeadline,
-          checkedAt = checkedAt
+          checkedAt = checkedAt,
+          isStopped = stopped
         )
     }
 
@@ -228,6 +231,16 @@ class TournamentRepo(session: Session[IO]) {
     /** Rewrites the tournament's own columns. Not the round being played, which is the round's to say. */
     def update(t: Tournament): IO[Unit] =
         session.execute(updateRow)(writtenOf(t) ++ (t.gameId, t.tournamentId)).void
+
+    private val updateStopped: Command[(GameId, TournamentId)] =
+        sql"""UPDATE tournament SET is_stopped = true
+          WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
+
+    /** Marks a running tournament stopped: no further round of it is begun. Apart from [[update]], which leaves it
+      * alone, so that nothing written back from a tournament read before the stop can undo it.
+      */
+    def stop(game: GameId, id: TournamentId): IO[Unit] =
+        session.execute(updateStopped)((game, id)).void
 
     private val selectStarted: Query[(GameId, TournamentId), Boolean] =
         sql"SELECT started_at IS NOT NULL FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId"
@@ -482,7 +495,7 @@ class TournamentRepo(session: Session[IO]) {
           "tournament"
         ).map(deleting)
 
-    /** Removes a tournament that nobody has entered, with its invitations, stages and root pool. Refused by the
+    /** Removes a tournament that has no match, with its entries, invitations, stages and root pool. Refused by the
       * database, as a foreign key violation, if it has a match.
       */
     def delete(game: GameId, id: TournamentId): IO[Unit] =

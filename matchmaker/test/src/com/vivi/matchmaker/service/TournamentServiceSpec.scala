@@ -148,7 +148,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(larger.settings.maxEntrants, Some(3))
     }
 
-    test("only the owner may edit, open, start or cancel a tournament") {
+    test("only the owner may edit, open, start or stop a tournament") {
         val outcome = run(for {
             f <- fixture(1)
             t <- tournaments.create(
@@ -171,10 +171,10 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             start <- tournaments
                 .start(gameId = f.game.gameId, tournamentId = t.tournamentId, callerExternalId = stranger)
                 .attempt
-            cancel <- tournaments
-                .cancel(gameId = f.game.gameId, tournamentId = t.tournamentId, callerExternalId = stranger)
+            stop <- services.rounds
+                .stop(gameId = f.game.gameId, tournamentId = t.tournamentId, callerExternalId = stranger)
                 .attempt
-        } yield List(edit, open, start, cancel))
+        } yield List(edit, open, start, stop))
         assert(outcome.forall(_.left.exists(_.isInstanceOf[UnauthorizedError])), outcome.toString)
     }
 
@@ -792,7 +792,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               request = request(f = f, standard = "world-cup").copy(name = "Renamed"),
               callerExternalId = f.owner.externalId
             )
-            _ <- tournaments.cancel(
+            // Stopped before its owner begins a round, so it finishes at once.
+            _ <- services.rounds.stop(
               gameId = f.game.gameId,
               tournamentId = t.tournamentId,
               callerExternalId = f.owner.externalId

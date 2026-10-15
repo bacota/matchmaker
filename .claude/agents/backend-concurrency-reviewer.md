@@ -110,3 +110,10 @@ List findings most serious first. For each one give:
   (depends on something you could not confirm).
 
 Then, briefly: what you checked and found sound, and anything you could not check. If nothing is wrong, say so plainly.
+
+## Saving the report
+
+You return the report; you don't write it to a file. Whoever saves it puts it in
+`agents/reviews/<date>-backend-concurrency-<short hash>.md`, where the date is the day of the review (`2026-10-15`) and the short
+hash is the first seven characters of the commit you noted at the start. Two reviews on one day then get different
+names, unless they reviewed the same commit. Begin the report with that full hash, so whoever saves it has it.

@@ -15,9 +15,9 @@ case class Result(
     rank: Int,
     scores: Map[String, Any],
     isWinner: Boolean,
-    // Whether the match was ended by a turn running out rather than by being played to an end.
-    // Recorded on every row of such a match, so that a row can say "won by forfeit" or
-    // "forfeited" — `isWinner` says which — without reading the rest of the table.
+    // Whether the match was ended by a turn running out, or by being cancelled, rather than by
+    // being played to an end. Recorded on every row of such a match, so that a row can say "won
+    // by forfeit" or "forfeited" — `isWinner` says which — without reading the rest of the table.
     isForfeit: Boolean = false,
     // What the match did to this player's Elo rating, worked out from what they began it rated.
     // Only a match that is not friendly has one.
