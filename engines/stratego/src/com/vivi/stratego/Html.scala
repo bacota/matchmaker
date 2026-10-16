@@ -1079,13 +1079,22 @@ $replayScript
     }
   }
 
-  /* A setup or a move: `body` is either {setup: [...]} or {from, to}. */
+  /* A setup or a concession out, which `pending` does not cover: a second press of Deploy or
+   * Concede while the first is out is refused by the engine ("already deployed"), and that refusal,
+   * newer than the first press's success, would be shown as if the first had failed. */
+  let sending = false;
+
+  /* A setup, a concession or a move: `body` is {setup: [...]}, {isConcession: true} or {from, to}. */
   async function submit(body) {
-    show("");
-    const ticket = ask();
     // A move is shown made from now until it is answered, whatever the answer; see `pending`. It
     // remembers the move count it was made at, which is how a newer state is told from an older.
     const move = body.from !== undefined ? { from: body.from, to: body.to, count: state.moveCount, timer: null } : null;
+    if (!move) {
+      if (sending) return;
+      sending = true;
+    }
+    show("");
+    const ticket = ask();
     if (move) {
       pending = move;
       // Nothing heard at all — neither an answer nor a state that has moved on — is let go of after
@@ -1116,6 +1125,7 @@ $replayScript
       // letting go of it.
       else if (move) await refresh();
     } finally {
+      if (!move) sending = false;
       if (move) clearTimeout(move.timer);
       if (move && pending === move) pending = null;
       render();

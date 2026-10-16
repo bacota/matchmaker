@@ -210,7 +210,17 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
+  /* One move out at a time. A second press while the first is out -- a double click, Enter held
+   * down -- is refused by the engine ("not your turn"), and that refusal is newer than the first
+   * move's success, so it would be shown: the player told their move failed when it went through. */
+  let sending = false;
   async function pick(number) {
+    if (sending) return;
+    sending = true;
+    try { await sendPick(number); } finally { sending = false; }
+  }
+
+  async function sendPick(number) {
     const ticket = ask();
     const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ number }) }, ticket);
     if (!response) return;

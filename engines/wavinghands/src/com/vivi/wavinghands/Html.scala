@@ -58,6 +58,7 @@ object Html {
   select, button { font: inherit; font-size: 16px; min-height: 44px; width: 100%; max-width: 22rem; padding: .5rem;
                    border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
   button.primary { background: var(--accent); color: var(--paper); border-color: var(--accent); font-weight: 600; margin-top: .75rem; cursor: pointer; }
+  button.primary[aria-disabled="true"] { opacity: .45; cursor: default; }
   .hands { display: grid; gap: .5rem 1rem; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
   .note { font-size: .875rem; opacity: .85; margin: .25rem 0; }
   .warn { color: var(--error); font-weight: 600; }
@@ -355,7 +356,23 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   function value(id) { const el = document.getElementById(id); return el ? el.value : null; }
 
+  /* One set of orders out at a time. Enter pressed twice, or a double press of "Give orders",
+   * sends the second after the first was accepted; its refusal is newer than the first's success
+   * and would be shown, telling the player their orders failed when they went through. The button
+   * says it is busy with aria-disabled, which keeps the focus, as boxing's does. */
+  let sending = false;
   async function give() {
+    if (sending) return;
+    sending = true;
+    const button = document.querySelector("#orders-form button[type=submit]");
+    if (button) button.setAttribute("aria-disabled", "true");
+    try { await sendOrders(); } finally {
+      sending = false;
+      if (button) button.removeAttribute("aria-disabled");
+    }
+  }
+
+  async function sendOrders() {
     show("");
     const { l, r, casting } = chosenCasting();
     const body = { left: l, right: r, targets: {}, hands: {}, summons: {}, monsters: {} };
