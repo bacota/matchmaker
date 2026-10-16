@@ -36,7 +36,8 @@ object MatchTables {
         if (summary.isCompleted && summary.isArchiveExpired) archiveExpiredNote
         else if (summary.isCompleted)
             busyButton(label = "Review game", classes = Some("link")) { busy =>
-                Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+                // Signed in: an answer after a sign-out would hand the next session's token to this match's url.
+                Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
                         case Some(url) => openSignedIn(url)
                         // Found expired by this very request: the list was read before it was.
@@ -353,7 +354,8 @@ object MatchTables {
           // The play url lives on the match rather than the summary, and is the game engine's,
           // not matchmaker's — so it is fetched when asked for and opened directly.
           busyButton(label = "Play", classes = Some("link")) { busy =>
-              Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+              // Signed in, as "Review game" is.
+              Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                   m.playUrl match {
                       case Some(url) => openSignedIn(url)
                       case None      => Store.reportProblem("This match has no play url yet.")
