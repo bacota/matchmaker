@@ -39,3 +39,6 @@ plainly when a change was only read rather than exercised.
 horizontal scroll, 16px fields and 44px targets on the phone. Its header says how to run it. The
 `ui-reviewer` agent (`.claude/agents/ui-reviewer.md`) reviews what the check cannot judge — focus,
 keyboard use, announcements, whether labels make sense — when asked for it.
+
+The a11y check is run only by the `ui-reviewer`. When implementing a UI change, don't run `check.mjs`
+or any other a11y check; leave it to the reviewer, and say in the report that it has not been run.
