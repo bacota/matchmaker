@@ -1,6 +1,6 @@
 ---
 name: review-all
-description: Runs the four review agents — ui-reviewer, db-performance-reviewer, backend-concurrency-reviewer, ui-concurrency-reviewer — side by side, saves their reports in agents/reviews/, and summarises them.
+description: Runs the four review agents — ui-reviewer, db-performance-reviewer, backend-concurrency-reviewer, ui-concurrency-reviewer — side by side, saves their reports in agents/reviews/<day>/<agent>/, and summarises them.
 argument-hint: "[uncommitted | sweep | since <hash> | last <n> commits | files…]"
 disable-model-invocation: true
 ---
@@ -33,18 +33,18 @@ after this session started — start a general-purpose agent instead, tell it to
 follow it exactly as its instructions, including its tool limits and that its only write is its marker file, and give
 it the model the file's frontmatter names (`model: sonnet`), or none if it names none.
 
-| Agent                          | Area for the file name |
-|--------------------------------|------------------------|
-| `ui-reviewer`                  | `ui-accessibility`     |
-| `db-performance-reviewer`      | `db-performance`       |
-| `backend-concurrency-reviewer` | `backend-concurrency`  |
-| `ui-concurrency-reviewer`      | `ui-concurrency`       |
+| Agent                          | Folder under `agents/reviews/<today>/` |
+|--------------------------------|--------------------------------|
+| `ui-reviewer`                  | `ui-reviewer`                  |
+| `db-performance-reviewer`      | `db-performance-reviewer`      |
+| `backend-concurrency-reviewer` | `backend-concurrency-reviewer` |
+| `ui-concurrency-reviewer`      | `ui-concurrency-reviewer`      |
 
 Wait for all four to finish. Don't guess at a report that has not come back.
 
 ## Saving the reports
 
-Save each report, unedited, as `agents/reviews/<today>-<area>-<short hash>.md`, using the short hash of `HEAD` noted
+Save each report, unedited, as `agents/reviews/<today>/<agent>/review-<short hash>.md`, using the short hash of `HEAD` noted
 at the start. For an `uncommitted` review, add `-uncommitted` before `.md`, since the same commit plus uncommitted
 changes is a different review. If the file already exists, it holds an earlier run of the same review: say so before
 overwriting it.
