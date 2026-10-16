@@ -44,14 +44,17 @@ object Views {
       * player who pressed it with a key would find themselves back at the top of the page while they wait. The press a
       * busy button refuses is refused by the handler instead. `disabledWhen` is a real `disabled` -- a button that
       * cannot be used yet is one to skip over.
+      *
+      * `busy` is the button's own unless one is passed in. A button in a row or page that the store's next answer
+      * redraws needs one held outside it -- `heldBusy` -- or the redrawn button is pressable again while the first
+      * press is still out.
       */
     private[ui] def busyButton(
         label: String,
         classes: Option[String] = None,
-        disabledWhen: Signal[Boolean] = Val(false)
-    )(action: Var[Boolean] => Unit): HtmlElement = {
-        val busy = Var(false)
-
+        disabledWhen: Signal[Boolean] = Val(false),
+        busy: Var[Boolean] = Var(false)
+    )(action: Var[Boolean] => Unit): HtmlElement =
         button(
           classes.map(cls := _).getOrElse(emptyMod),
           disabled <-- disabledWhen,
@@ -62,7 +65,17 @@ object Views {
           // A second press while the first is out is refused here, since the button stays pressable.
           onClick --> (_ => if (!busy.now()) action(busy))
         )
-    }
+
+    /* Busy flags kept apart from the buttons that show them, by what each acts on. Never emptied: one
+     * flag per thing pressed in a session, and keyed by the session too, so that the next player's
+     * buttons do not start out busy with the last one's requests. */
+    private val heldBusyFlags = scala.collection.mutable.Map.empty[(Int, String), Var[Boolean]]
+
+    /** The busy flag for `key` -- what the button acts on, as "start round 12" -- the same one each time it is asked
+      * for, so a button drawn again while its request is out is drawn busy. For `busyButton`'s `busy`.
+      */
+    private[ui] def heldBusy(key: String): Var[Boolean] =
+        heldBusyFlags.getOrElseUpdate((Store.currentSignIn, key), Var(false))
 
     /** A form control with a visible caption tied to it.
       *

@@ -17,7 +17,7 @@ object Challenges {
     private[ui] def gameChallenges(game: Game): HtmlElement =
         if (game.gameType == GameType.Plain)
             div(
-              child <-- currentPlayer.map {
+              child <-- currentPlayer.distinct.map {
                   case None         => p(cls := "empty", "Loading…")
                   case Some(player) => challengePanel(game = game, player = player, characters = Seq.empty)
               }
@@ -30,44 +30,49 @@ object Challenges {
             var status: Option[dom.html.Element] = None
 
             div(
-              child <-- currentPlayer.combineWith(Store.charactersByGame.signal).map {
-                  case (None, _) => p(cls := "empty", "Loading…")
-                  case (Some(player), byGame) =>
-                      byGame.get(game.gameId) match {
-                          case None => p(cls := "empty", "Loading…")
-                          // A character is needed before this player can either offer or accept a
-                          // challenge, so there is nothing to show until there is one.
-                          // An admin of the game gets the challenge panel as well: they may offer a
-                          // match for other players' characters without one of their own.
-                          case Some(Nil) =>
-                              val admin = Store.administers(game.gameId, player)
-                              div(
-                                characterPrompt(
-                                  game = game,
-                                  admin = admin,
-                                  checked = checked,
-                                  focusStatus = () => status.foreach(_.focus())
-                                ),
-                                child <-- admin.map(
-                                  if (_) challengePanel(game = game, player = player, characters = Seq.empty)
-                                  else emptyNode
-                                )
-                              )
-                          case Some(characters) =>
-                              div(
-                                // Characters are renamed where they were made, so the way to do it
-                                // is the game's own page, as making one is.
-                                game.characterUrl.fold(emptyNode)(url =>
-                                    button(
-                                      cls := "link",
-                                      s"Manage your characters in ${game.displayName}",
-                                      onClick --> (_ => openSignedIn(url))
+              // Narrowed to this game's characters, and to changes: the panel below holds the challenge dialog and its
+              // busy flag, and redrawing it for another game's characters, or for the same list fetched again, threw
+              // away what had been typed and let Create Challenge be pressed a second time.
+              child <-- currentPlayer.distinct
+                  .combineWith(Store.charactersByGame.signal.map(_.get(game.gameId)).distinct)
+                  .map {
+                      case (None, _) => p(cls := "empty", "Loading…")
+                      case (Some(player), ofGame) =>
+                          ofGame match {
+                              case None => p(cls := "empty", "Loading…")
+                              // A character is needed before this player can either offer or accept a
+                              // challenge, so there is nothing to show until there is one.
+                              // An admin of the game gets the challenge panel as well: they may offer a
+                              // match for other players' characters without one of their own.
+                              case Some(Nil) =>
+                                  val admin = Store.administers(game.gameId, player)
+                                  div(
+                                    characterPrompt(
+                                      game = game,
+                                      admin = admin,
+                                      checked = checked,
+                                      focusStatus = () => status.foreach(_.focus())
+                                    ),
+                                    child <-- admin.map(
+                                      if (_) challengePanel(game = game, player = player, characters = Seq.empty)
+                                      else emptyNode
                                     )
-                                ),
-                                challengePanel(game = game, player = player, characters = characters)
-                              )
-                      }
-              },
+                                  )
+                              case Some(characters) =>
+                                  div(
+                                    // Characters are renamed where they were made, so the way to do it
+                                    // is the game's own page, as making one is.
+                                    game.characterUrl.fold(emptyNode)(url =>
+                                        button(
+                                          cls := "link",
+                                          s"Manage your characters in ${game.displayName}",
+                                          onClick --> (_ => openSignedIn(url))
+                                        )
+                                    ),
+                                    challengePanel(game = game, player = player, characters = characters)
+                                  )
+                          }
+                  },
               // Focusable but not tabbable: focus is put here when the button that had it goes away.
               p(
                 role := "status",

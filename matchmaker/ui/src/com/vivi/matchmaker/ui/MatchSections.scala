@@ -11,7 +11,7 @@ import com.vivi.matchmaker.model._
   */
 object MatchSections {
 
-    import Views.{busyButton, currentPlayer, field, listing, refresh, refreshableSection}
+    import Views.{busyButton, currentPlayer, field, heldBusy, listing, refresh, refreshableSection}
 
     /** Shared by the three sections drawn from the caller's open challenges -- invitations, "Ready to Start" and
       * "Waiting to Start" are one response split by what the caller is to each challenge, so any of their buttons
@@ -156,6 +156,10 @@ object MatchSections {
       */
     private def invitationRow(invited: ChallengeSummary, game: Option[Game]): HtmlElement = {
         val t = invited.summary.tournament
+        // Held outside the row, which every answer to the invitations redraws: accepting one invitation reloads them
+        // all, and another's Accept still out would otherwise be pressable again.
+        val acceptBusy = heldBusy(s"accept invitation ${t.tournamentId}")
+        val declineBusy = heldBusy(s"decline invitation ${t.tournamentId}")
         def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit =
             Store.run(
               action =
@@ -186,8 +190,8 @@ object MatchSections {
                               s"${invited.summary.ownerNickname} invited ${mine.character.name} to ${invited.summary.gameName}"
                             ),
                             div(cls := "detail", challengeTerms(t, invited.entries.size)),
-                            busyButton(label = "Accept")(accepted(Some(mine.character.characterId))),
-                            busyButton(label = "Decline", classes = Some("link"))(busy =>
+                            busyButton(label = "Accept", busy = acceptBusy)(accepted(Some(mine.character.characterId))),
+                            busyButton(label = "Decline", classes = Some("link"), busy = declineBusy)(busy =>
                                 declined(
                                   busy,
                                   ApiClient.revokeTournamentCharacterInvitation(
@@ -207,7 +211,7 @@ object MatchSections {
                             div(cls := "detail", challengeTerms(t, invited.entries.size)),
                             game match {
                                 case Some(g) if g.gameType == GameType.Plain =>
-                                    busyButton(label = "Accept")(accepted(None))
+                                    busyButton(label = "Accept", busy = acceptBusy)(accepted(None))
                                 case _ =>
                                     button(
                                       tpe := "button",
@@ -216,7 +220,7 @@ object MatchSections {
                                       onClick --> (_ => Store.show(Store.Page.OneGame(t.gameId)))
                                     )
                             },
-                            busyButton(label = "Decline", classes = Some("link"))(busy =>
+                            busyButton(label = "Decline", classes = Some("link"), busy = declineBusy)(busy =>
                                 declined(
                                   busy,
                                   ApiClient.revokeTournamentInvitation(
