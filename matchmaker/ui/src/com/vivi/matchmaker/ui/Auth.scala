@@ -141,7 +141,9 @@ object Auth {
                 refreshing.getOrElse {
                     val attempt = refresh(token)
                     refreshing = Some(attempt)
-                    attempt.onComplete(_ => refreshing = None)
+                    // Only its own: a sign-out in the meantime has dropped it, and a new sign-in may have started
+                    // another.
+                    attempt.onComplete(_ => if (refreshing.contains(attempt)) refreshing = None)
                     attempt
                 }
         }
@@ -156,19 +158,28 @@ object Auth {
       * `None`, with the stored session cleared, means the session is genuinely over (see `isSessionEnding`). A failed
       * future means this attempt did not get through and the session is still intact. Cognito does not return a new
       * refresh token here; one is stored if it does.
+      *
+      * Either answer is acted on only while `token` is still the session's refresh token. The player may have signed
+      * out while it was in flight, and someone else may have signed in since: storing the tokens then would put the
+      * signed-out player's session back, for the next page load to sign straight into, and clearing would sign out
+      * whoever is here now.
       */
-    private def refresh(token: String): Future[Option[String]] =
+    private def refresh(token: String): Future[Option[String]] = {
+        def isStillTheSession = refreshToken.contains(token)
         CognitoIdp
             .refresh(token)
             .map { tokens =>
-                storeTokens(tokens)
-                Some(tokens.idToken)
+                if (isStillTheSession) {
+                    storeTokens(tokens)
+                    Some(tokens.idToken)
+                } else None
             }
             .recoverWith {
                 case error if isSessionEnding(error) =>
-                    clearSession()
+                    if (isStillTheSession) clearSession()
                     Future.successful(None)
             }
+    }
 
     /** Whether a failed refresh means the session itself is over, rather than that this attempt did not get through.
       *
@@ -302,6 +313,8 @@ object Auth {
     }
 
     def clearSession(): Unit = {
+        // A refresh still out belongs to the session ending here; the next one must not share it.
+        refreshing = None
         dom.window.sessionStorage.removeItem(TokenKey)
         dom.window.sessionStorage.removeItem(AccessKey)
         dom.window.sessionStorage.removeItem(RefreshKey)

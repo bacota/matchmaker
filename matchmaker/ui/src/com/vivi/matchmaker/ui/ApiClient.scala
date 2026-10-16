@@ -488,19 +488,26 @@ object ApiClient {
       * `fetch` only fails its promise when the request never happened; a 500 is a perfectly successful fetch. Without
       * this every caller would have to check `response.ok` itself.
       */
-    private def request(method: HttpMethod, path: String, body: Option[String]): Future[(Int, String)] =
+    private def request(method: HttpMethod, path: String, body: Option[String]): Future[(Int, String)] = {
         // Two ways of saying who is calling, and only one of them is evidence. `LocalServer` reads
         // the header; the gateway reads the token and verifies it before the function is reached.
         // Asking for the token before every call is what lets an expired one be refreshed here,
         // rather than becoming a 401 the player has to sign in again to clear.
-        if (Config.current.isHeaderAuth) send(method = method, path = path, body = body, idToken = None)
-        else Auth.freshIdToken().flatMap(token => send(method = method, path = path, body = body, idToken = token))
+        // The session is taken before the token is: a 401 ends only the session that sent the request.
+        val signIn = Store.currentSignIn
+        if (Config.current.isHeaderAuth)
+            send(method = method, path = path, body = body, idToken = None, signIn = signIn)
+        else
+            Auth.freshIdToken()
+                .flatMap(token => send(method = method, path = path, body = body, idToken = token, signIn = signIn))
+    }
 
     private def send(
         method: HttpMethod,
         path: String,
         body: Option[String],
-        idToken: Option[String]
+        idToken: Option[String],
+        signIn: Int
     ): Future[(Int, String)] = {
         val init = new RequestInit {}
         init.method = method
@@ -526,7 +533,9 @@ object ApiClient {
                     // the sign-in button instead of repeating a request that cannot succeed.
                     // In header mode there is no session to expire, and clearing one would only wipe the
                     // screen; a 401 there means the server is not in header mode, which the message says.
-                    if (status == 401 && !Config.current.isHeaderAuth) Store.sessionExpired()
+                    // A 401 to a request from before a sign-out is about that session, not whoever is here now.
+                    if (status == 401 && !Config.current.isHeaderAuth && Store.isStillSignedInAs(signIn))
+                        Store.sessionExpired()
                     Future.failed(ApiError(status, messageOf(text)))
             }
     }
