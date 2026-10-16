@@ -396,9 +396,12 @@ object Account {
     private def notificationForms: HtmlElement =
         div(
           onMountCallback(_ => Store.loadNotifications()),
-          child <-- Store.notificationSettings.signal.map {
-              case Some(settings) => notificationSections(settings)
-              case None           => p(cls := "detail", "Loading your notification settings…")
+          // Built once the settings are here, and not again on each write to them. A save writes the store, and
+          // rebuilding on that closed the save's own dialog, dropped the focus to the top of the page and threw away
+          // the "Saved." it had to say. The forms go on showing what was saved because it is what they hold.
+          child <-- Store.notificationSettings.signal.map(_.isDefined).distinct.map {
+              case true  => Store.notificationSettings.now().fold(emptyNode)(notificationSections)
+              case false => p(cls := "detail", "Loading your notification settings…")
           }
         )
 
@@ -519,7 +522,7 @@ object Account {
             )
 
         div(
-          suppressionNotice(settings.suppressed),
+          suppressionNotice(Store.notificationSettings.signal.map(_.flatMap(_.suppressed)).distinct),
           Notifications.form(
             heading = "Notification Preferences",
             explanation = "What we email you about, unless you say otherwise for a particular game or match. " +
@@ -554,9 +557,8 @@ object Account {
                           // `reloadNotifications` carries the sign-in guard itself, so this branch
                           // needs none of its own.
                           //
-                          // The reseed is belt and braces: writing the store normally rebuilds this
-                          // whole element (`notificationForms` renders it from that signal), which
-                          // re-derives the map from scratch. Cheap enough to not depend on that.
+                          // The reseed is what keeps the map right: writing the store does not rebuild
+                          // this element (see `notificationForms`).
                           Store.reloadNotifications().map(_ => perGame.set(heldPerGame))
                       else {
                           // Nothing below this level was touched, so there is nothing to ask about and
@@ -597,9 +599,25 @@ object Account {
 
     private def emailForm: HtmlElement = {
         val busy = Var(false)
+        // Each stage replaces the button that was pressed -- "Send verification code" becomes "Confirm new address"
+        // and back, "Use a different address" removes itself -- so the focus is taken to the field the next stage
+        // wants: the code once it is sent, the address once it is editable again. A turn later, once the stage is
+        // drawn and the address field no longer disabled.
+        var addressField: Option[dom.html.Element] = None
+        var codeField: Option[dom.html.Element] = None
+        def focusFor(stage: EmailStage): Unit =
+            dom.window.setTimeout(
+              () =>
+                  (stage match {
+                      case EmailStage.Idle    => addressField
+                      case EmailStage.Sent(_) => codeField
+                  }).foreach(_.focus()),
+              0
+            )
 
         form(
           cls := "account-section",
+          emailStage.signal.changes.distinct --> (stage => focusFor(stage)),
           onSubmit.preventDefault --> { _ =>
               if (!busy.now()) emailStage.now() match {
                   case EmailStage.Idle    => sendEmailCode(busy)
@@ -623,6 +641,8 @@ object Account {
             input(
               tpe := "email",
               autoComplete := "email",
+              onMountUnmountCallback(c => addressField = Some(c.thisNode.ref), _ => addressField = None),
+              aria.invalid <-- email.signal.map(typed => (typed.trim.nonEmpty && !isPlausibleEmail(typed)).toString),
               // Locked once the code is out: the code was mailed to what this said at the time, and
               // an address edited underneath it would confirm one address having verified another.
               disabled <-- emailStage.signal.map(_ != EmailStage.Idle),
@@ -654,6 +674,7 @@ object Account {
                       input(
                         tpe := "text",
                         autoComplete := "one-time-code",
+                        onMountUnmountCallback(c => codeField = Some(c.thisNode.ref), _ => codeField = None),
                         inputMode := "numeric",
                         controlled(value <-- emailCode.signal, onInput.mapToValue --> emailCode)
                       )
@@ -741,12 +762,12 @@ object Account {
       * `canRetry` comes from the server rather than being worked out here, so the button and the route it calls cannot
       * disagree about who may press it.
       */
-    private def suppressionNotice(suppressed: Option[EmailSuppression.Notice]): HtmlElement =
+    private def suppressionNotice(suppressed: Signal[Option[EmailSuppression.Notice]]): HtmlElement =
         div(
           // The region is the container and is always in the document, for the reason `report` gives: a live region
           // announced with its text already inside has not changed, and is read out by nobody.
           aria.live := "polite",
-          child <-- Signal.fromValue(suppressed).map {
+          child <-- suppressed.map {
               case None => emptyNode
               case Some(notice) if notice.reason == SuppressionReason.Complaint =>
                   div(

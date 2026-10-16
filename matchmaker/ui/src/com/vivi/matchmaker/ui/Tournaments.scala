@@ -84,6 +84,17 @@ object Tournaments {
                     )
                   )
           },
+          // Which rounds wait on this player, said when that changes. Out here, mounted before it has anything to say:
+          // a live region drawn together with the rows it is about is never read out.
+          div(
+            cls := "sr-only",
+            role := "status",
+            aria.live := "polite",
+            child.text <-- Store.myTournaments.signal
+                .map(_.filter(isWaitingOnMe).map(_.tournament.name))
+                .distinct
+                .map(names => if (names.isEmpty) "" else names.mkString("A round is ready to start in ", ", ", "."))
+          ),
           child <-- Store.myTournaments.signal.map { mine =>
               val waiting = mine.filter(isWaitingOnMe)
               if (waiting.isEmpty) emptyNode
@@ -94,7 +105,6 @@ object Tournaments {
                     subsection = false
                   )(
                     ul(
-                      aria.live := "polite",
                       waiting.map { s =>
                           val t = s.tournament
                           li(
@@ -114,7 +124,7 @@ object Tournaments {
                                     Store.reloadMyTournaments()
                                     Store.reloadTournamentChoices()
                                 }
-                            ).amend(aria.label := s"Start the next round of ${t.name}")
+                            ).amend(aria.label := s"Start Next Round of ${t.name}")
                           )
                       }
                     )
@@ -256,7 +266,7 @@ object Tournaments {
           h2(t.name),
           p(cls := "detail", s"${d.summary.gameName} · ${t.status.label} · run by ${d.summary.ownerNickname}"),
           if (t.isStopped && t.status == TournamentStatus.Running)
-              p(cls := "detail", "Stopped: no more rounds will begin. It finishes when this round is over.")
+              p(cls := "detail", stoppedNote)
           else emptyNode,
           if (t.description.nonEmpty) p(t.description) else emptyNode,
           if (d.summary.isOwner && t.status != TournamentStatus.Finished && t.status != TournamentStatus.Cancelled)
@@ -282,10 +292,12 @@ object Tournaments {
         )
     }
 
+    private val stoppedNote = "Stopped: no more rounds will begin. It finishes when this round is over."
+
     /** Each entrant by what they are shown as: the character, in a character game, with its player. */
     private def nameOf(d: TournamentDetail): Long => String = {
         val byId = d.entries.map(e => e.entrantId.value -> e).toMap
-        id => byId.get(id).fold(s"entry $id")(e => e.characterName.fold(e.nickname)(c => s"$c (${e.nickname})"))
+        id => byId.get(id).fold("an unnamed entrant")(e => e.characterName.fold(e.nickname)(c => s"$c (${e.nickname})"))
     }
 
     private def ownerControls(d: TournamentDetail, editing: Var[Boolean]): HtmlElement = {
@@ -382,7 +394,10 @@ object Tournaments {
                       ),
                       if (!t.isStopped && d.design.stages.exists(_.repeat == Repetition.UntilStopped))
                           busyButton(label = "Stop Repeating")(busy =>
-                              Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy)(_ => reload(d))
+                              Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy) { _ =>
+                                  Views.announce("This stage will not repeat again.")
+                                  reload(d)
+                              }
                           )
                       else emptyNode
                     )
@@ -407,10 +422,15 @@ object Tournaments {
                         Store.show(Store.Page.OneGame(t.gameId))
                     })
                 case TournamentStatus.Running if !t.isStopped =>
+                    // The button goes with the reload, and the note that takes its place is drawn with the page, so
+                    // it is said here. FocusKeeper takes the focus to this card's heading.
                     stopButton(
                       label = "Stop Tournament",
                       question = "Stop this tournament? Its current round is played out, and then it finishes."
-                    )(_ => reload(d))
+                    )(_ => {
+                        Views.announce(stoppedNote)
+                        reload(d)
+                    })
                 case _ => emptyNode
             }
           )
@@ -449,7 +469,10 @@ object Tournaments {
                                   entrantId = e.entrantId
                                 ),
                                 busy
-                              )(_ => reload(d))
+                              ) { _ =>
+                                  Views.announce(s"${nameOf(d)(e.entrantId.value)} withdrawn.")
+                                  reload(d)
+                              }
                           ).amend(aria.label := s"Withdraw ${nameOf(d)(e.entrantId.value)}")
                       else emptyNode
                     )
@@ -523,7 +546,10 @@ object Tournaments {
                               playerId = inv.playerId
                             ),
                             busy
-                          )(_ => reload(d))
+                          ) { _ =>
+                              Views.announce(s"Invitation of ${inv.nickname} removed.")
+                              reload(d)
+                          }
                       ).amend(aria.label := s"Remove the invitation of ${inv.nickname}")
                     )
                 ) ++ d.invitedCharacters.map(inv =>
@@ -540,7 +566,10 @@ object Tournaments {
                                   characterId = inv.character.characterId
                                 ),
                             busy
-                          )(_ => reload(d))
+                          ) { _ =>
+                              Views.announce(s"Invitation of ${inv.character.name} removed.")
+                              reload(d)
+                          }
                       ).amend(aria.label := s"Remove the invitation of ${inv.character.name}")
                     )
                 )
@@ -584,7 +613,10 @@ object Tournaments {
                               playerId = p.playerId
                             ),
                             busy
-                          )(_ => reload(d))
+                          ) { _ =>
+                              Views.announce(s"${p.nickname} invited.")
+                              reload(d)
+                          }
                       ).amend(aria.label := s"Invite ${p.nickname}")
                     )
             })
@@ -1239,6 +1271,7 @@ object Tournaments {
                             case None => ApiClient.createTournament(game.gameId, request)
                         }
                         Store.run(saving, busy) { saved =>
+                            if (existing.isDefined) Views.announce("Changes saved.")
                             onSaved()
                             Store.reloadMyTournaments()
                             Store.reloadTournaments(game.gameId)
@@ -1310,12 +1343,13 @@ object Tournaments {
                         input(
                           tpe := "checkbox",
                           // A format this game cannot play may still be unticked, never ticked.
-                          disabled <-- busy.signal
-                              .combineWith(offered)
-                              .map((b, on) => b || (unplayable.isDefined && !on(m.tournamentModelId))),
+                          disabled <-- offered.map(on => unplayable.isDefined && !on(m.tournamentModelId)),
+                          // Busy is `aria-disabled`, not `disabled`, which would drop the focus mid-request; a press
+                          // meanwhile is refused here, and the box stays as the store has it.
+                          aria.disabled <-- busy.signal,
                           controlled(
                             checked <-- offered.map(_.contains(m.tournamentModelId)),
-                            onClick.mapToChecked --> (on => change(on))
+                            onClick.mapToChecked --> (on => if (!busy.now()) change(on))
                           )
                         ),
                         m.name

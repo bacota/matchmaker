@@ -60,6 +60,28 @@ object SignIn {
       */
     private val problem: Var[Option[String]] = Var(None)
 
+    private enum Field { case Email, Password, Code, NewPassword }
+
+    /** The fields `problem` says are wrong, marked `aria-invalid` so a screen reader says so on reaching them. */
+    private val wrongFields: Var[Set[Field]] = Var(Set.empty)
+
+    private def say(message: Option[String], wrong: Set[Field] = Set.empty): Unit = {
+        problem.set(message)
+        wrongFields.set(wrong)
+    }
+
+    /** As `aria-invalid` takes it. */
+    private def isWrong(field: Field): Signal[String] = wrongFields.signal.map(_.contains(field).toString)
+
+    /** Which fields a refusal is about. The address and password are refused together, as `explain` says them. */
+    private def wrongFor(error: Throwable): Set[Field] = error match {
+        case CognitoIdp.IdpError("NotAuthorizedException" | "UserNotFoundException", _) =>
+            if (stage.now() == Stage.Credentials) Set(Field.Email, Field.Password) else Set.empty
+        case CognitoIdp.IdpError("CodeMismatchException" | "ExpiredCodeException", _) => Set(Field.Code)
+        case CognitoIdp.IdpError("InvalidPasswordException", _)                       => Set(Field.NewPassword)
+        case _                                                                        => Set.empty
+    }
+
     private val email: Var[String] = Var("")
     private val password: Var[String] = Var("")
     private val code: Var[String] = Var("")
@@ -119,17 +141,17 @@ object SignIn {
       * `username` is threaded through because Cognito does not echo it and every subsequent response has to carry it.
       */
     private def run(username: String)(step: => Future[CognitoIdp.AuthOutcome]): Unit = {
-        if (username.isEmpty) problem.set(Some("Enter your email address."))
+        if (username.isEmpty) say(Some("Enter your email address."), Set(Field.Email))
         else if (busy.now()) ()
         else {
             busy.set(true)
-            problem.set(None)
+            say(None)
 
             step.onComplete { outcome =>
                 busy.set(false)
                 outcome match {
                     case Success(result) => advance(username, result)
-                    case Failure(error)  => problem.set(Some(explain(error)))
+                    case Failure(error)  => say(Some(explain(error)), wrongFor(error))
                 }
             }
         }
@@ -210,7 +232,7 @@ object SignIn {
         password.set("")
         code.set("")
         newPassword.set("")
-        problem.set(None)
+        say(None)
     }
 
     /** What to put in front of the user for a failure.
@@ -312,13 +334,20 @@ object SignIn {
           h2("Sign In"),
           label(
             "Email",
-            input(tpe := "email", autoComplete := "username", value <-- email, onInput.mapToValue --> email)
+            input(
+              tpe := "email",
+              autoComplete := "username",
+              aria.invalid <-- isWrong(Field.Email),
+              value <-- email,
+              onInput.mapToValue --> email
+            )
           ),
           label(
             "Password",
             input(
               tpe := "password",
               autoComplete := "current-password",
+              aria.invalid <-- isWrong(Field.Password),
               value <-- password,
               onInput.mapToValue --> password
             )
@@ -368,6 +397,7 @@ object SignIn {
               // Lets phones offer the code straight from the notification.
               autoComplete := "one-time-code",
               inputMode := "numeric",
+              aria.invalid <-- isWrong(Field.Code),
               value <-- code,
               onInput.mapToValue --> code
             )
@@ -390,6 +420,7 @@ object SignIn {
             input(
               tpe := "password",
               autoComplete := "new-password",
+              aria.invalid <-- isWrong(Field.NewPassword),
               value <-- newPassword,
               onInput.mapToValue --> newPassword
             )

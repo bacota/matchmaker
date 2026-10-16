@@ -51,10 +51,15 @@ object Games {
             cls <-- message.map(said => if (said.isEmpty) "" else "empty"),
             child.text <-- message
           ),
+          // Drawn again only when the game itself changes. Every emission of the games list, or of what is being
+          // looked up, used to rebuild the whole screen -- and the focus, a half-typed field and an open form
+          // with it.
           child <-- state
+              .map(_._1)
+              .distinct
               .map {
-                  case (None, _) => emptyNode
-                  case (Some(game), _) =>
+                  case None => emptyNode
+                  case Some(game) =>
                       div(
                         h2(game.displayName),
                         p(cls := "detail", game.description),

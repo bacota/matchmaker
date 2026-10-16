@@ -376,9 +376,10 @@ object MatchTables {
                       "Cancel this match? Every player forfeits, and it won't change anyone's rating."
                     )
                   )
-                      Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy)(_ =>
+                      Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
+                          Views.announce("Match cancelled.")
                           Store.refreshMatches()
-                      )
+                      }
               }
           else emptyNode
         )
@@ -399,11 +400,13 @@ object MatchTables {
       * The answers live in a `Var` outside the toggle, so closing and reopening the form shows what was being typed
       * rather than re-fetching over the top of it. Only the "Saved." line is lost, which is a message about something
       * that has already happened.
+      *
+      * Outside the row, too ([[notificationDrafts]]): the row is rebuilt by every reload of its list -- the player's
+      * own refresh, or the cross-refresh a Start or Accept elsewhere fires -- and state made with the row silently
+      * closed an open form and threw away the choices in it.
       */
     private def matchNotifications(summary: MatchSummary): HtmlElement = {
-        val shown = Var(false)
-        val fetched = Var(false)
-        val preferences = Var(NotificationPreferences.unset)
+        val NotificationDraft(shown, fetched, preferences) = notificationDraft(summary.matchId)
         val busy = Var(false)
 
         div(
@@ -465,6 +468,29 @@ object MatchTables {
                       }
                   }
           }
+        )
+    }
+
+    private case class NotificationDraft(
+        shown: Var[Boolean],
+        fetched: Var[Boolean],
+        preferences: Var[NotificationPreferences]
+    )
+
+    /** Each match's notifications form as the player left it, and the sign-in it belongs to: one player's answers are
+      * never shown to the next (see `Store.currentSignIn`), so the drafts are dropped when the sign-in changes.
+      */
+    private val notificationDrafts = scala.collection.mutable.Map.empty[MatchId, NotificationDraft]
+    private var draftsSignIn = Store.currentSignIn
+
+    private def notificationDraft(matchId: MatchId): NotificationDraft = {
+        if (!Store.isStillSignedInAs(draftsSignIn)) {
+            notificationDrafts.clear()
+            draftsSignIn = Store.currentSignIn
+        }
+        notificationDrafts.getOrElseUpdate(
+          matchId,
+          NotificationDraft(shown = Var(false), fetched = Var(false), preferences = Var(NotificationPreferences.unset))
         )
     }
 

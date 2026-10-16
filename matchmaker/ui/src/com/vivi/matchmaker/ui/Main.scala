@@ -41,5 +41,9 @@ object Main {
             }
 
         renderOnDomContentLoaded(dom.document.getElementById("app"), Views.app)
+        // Once there is a body to watch.
+        if (dom.document.readyState == dom.DocumentReadyState.loading)
+            dom.document.addEventListener("DOMContentLoaded", (_: dom.Event) => FocusKeeper.install())
+        else FocusKeeper.install()
     }
 }

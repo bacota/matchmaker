@@ -14,9 +14,24 @@ object Views {
     def app: HtmlElement =
         div(
           cls := "app",
+          // Mounted before anything is said into it, and for the life of the page, so that what is said is read out.
+          div(cls := "sr-only", role := "status", aria.live := "polite", child.text <-- announcement.signal),
+          // Nothing one player was told is left for the next to hear.
+          Store.signedIn.signal.changes --> (_ => announcement.set("")),
           header,
           child <-- Store.signedIn.signal.map(if (_) signedInBody else signedOutBody)
         )
+
+    private val announcement = Var("")
+
+    /** Says out loud how an action went whose own control is gone with what it acted on: a row's Cancel that removes
+      * the row, a Stop that removes the button. The row going is what a sighted player sees; this is what everyone else
+      * is told. Cleared first and set a turn later, so the same words said twice are read out twice.
+      */
+    private[ui] def announce(text: String): Unit = {
+        announcement.set("")
+        dom.window.setTimeout(() => announcement.set(text), 50)
+    }
 
     /** A button that starts a request, and says so while it is running.
       *
@@ -201,18 +216,26 @@ object Views {
           if (Config.current.isHeaderAuth)
               div(cls := "banner", s"local mode — signed in as ${Config.current.localExternalId}, no authentication")
           else emptyNode,
-          child <-- Store.player.signal.map {
-              case Store.PlayerState.Registered(player) =>
-                  div(
-                    cls := "who",
-                    span(player.nickname),
-                    // Where a page like this puts it: top right, next to who you are signed in as.
-                    Account.view,
-                    if (Config.current.isHeaderAuth) emptyNode
-                    else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
-                  )
-              case _ => emptyNode
-          },
+          // Drawn again only for a different player. A rename writes the player too, and rebuilding the account
+          // panel on that remounted it open, taking the focus from "Save nickname" to the top of the panel.
+          child <-- Store.player.signal
+              .map {
+                  case Store.PlayerState.Registered(player) => Some(player.playerId)
+                  case _                                    => None
+              }
+              .distinct
+              .map {
+                  case Some(_) =>
+                      div(
+                        cls := "who",
+                        span(child.text <-- currentPlayer.map(_.fold("")(_.nickname))),
+                        // Where a page like this puts it: top right, next to who you are signed in as.
+                        Account.view,
+                        if (Config.current.isHeaderAuth) emptyNode
+                        else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
+                      )
+                  case _ => emptyNode
+              },
           errorBanner
         )
 

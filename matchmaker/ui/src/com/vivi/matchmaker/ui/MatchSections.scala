@@ -281,7 +281,10 @@ object MatchSections {
                 action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
                 busy = busy,
                 onFailure = challengeStale(t)
-              )(_ => reloadAfterStart(t.gameId))
+              ) { _ =>
+                  Views.announce("Challenge started.")
+                  reloadAfterStart(t.gameId)
+              }
           },
           // Enough players having entered is no promise the owner still wants the match, so the way out of it stays
           // here alongside the start.
@@ -290,7 +293,10 @@ object MatchSections {
                 action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = challengeStale(t)
-              )(_ => reloadChallengeSections(t.gameId))
+              ) { _ =>
+                  Views.announce("Challenge cancelled.")
+                  reloadChallengeSections(t.gameId)
+              }
           }
         )
     }
@@ -434,7 +440,10 @@ object MatchSections {
                     action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                     busy = busy,
                     onFailure = challengeStale(t)
-                  )(_ => reloadChallengeSections(t.gameId))
+                  ) { _ =>
+                      Views.announce("Challenge cancelled.")
+                      reloadChallengeSections(t.gameId)
+                  }
               }
           else
               mine.fold(emptyNode) { entry =>
@@ -447,7 +456,10 @@ object MatchSections {
                         ),
                         busy = busy,
                         onFailure = challengeStale(t)
-                      )(_ => reloadChallengeSections(t.gameId))
+                      ) { _ =>
+                          Views.announce("Withdrawn from the challenge.")
+                          reloadChallengeSections(t.gameId)
+                      }
                   }
               }
         )

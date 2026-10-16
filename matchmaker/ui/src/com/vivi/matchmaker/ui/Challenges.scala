@@ -164,6 +164,23 @@ object Challenges {
         val refreshingChallenges = Var(false)
 
         div(
+          // Built from the slot as it stands when the form opens: a challenge is composed for one player, and one
+          // being looked up while the form is open is a different challenge, offered by opening it again.
+          //
+          // Out here, not with the lists below: those are rebuilt whenever the challenges are reloaded, and a dialog
+          // among them was rebuilt with them while open, losing what had been typed and the focus.
+          child <-- Store.showChallengeForm.signal.distinct.map {
+              if (_)
+                  challengeDialog(
+                    ChallengeForm.newChallengeForm(
+                      game = game,
+                      player = player,
+                      characters = characters,
+                      invitee = Store.invitee.now()
+                    )
+                  )
+              else emptyNode
+          },
           child <-- Store.challengesByGame.signal.map(_.get(game.gameId)).map {
               case None             => p(cls := "empty", "Loading challenges…")
               case Some(challenges) =>
@@ -182,21 +199,6 @@ object Challenges {
                       onUnmountCallback(_ => challengeTrigger = None),
                       onClick --> (_ => Store.showChallengeForm.set(true))
                     ),
-                    // Built from the slot as it stands when the form opens: a challenge is composed
-                    // for one player, and one being looked up while the form is open is a different
-                    // challenge, offered by opening it again.
-                    child <-- Store.showChallengeForm.signal.map {
-                        if (_)
-                            challengeDialog(
-                              ChallengeForm.newChallengeForm(
-                                game = game,
-                                player = player,
-                                characters = characters,
-                                invitee = Store.invitee.now()
-                              )
-                            )
-                        else emptyNode
-                    },
                     refreshableSection(
                       heading = "Your Open Challenges",
                       refreshing = refreshingChallenges,
@@ -299,7 +301,10 @@ object Challenges {
                         ApiClient.tournamentStep(gameId = game.gameId, tournamentId = t.tournamentId, step = "start"),
                     busy = busy,
                     onFailure = MatchSections.challengeStale(t)
-                  )(_ => MatchSections.reloadAfterStart(game.gameId))
+                  ) { _ =>
+                      Views.announce("Challenge started.")
+                      MatchSections.reloadAfterStart(game.gameId)
+                  }
               }
           else div(cls := "detail", s"needs at least $least players to start"),
           busyButton(label = "Cancel") { busy =>
@@ -307,7 +312,10 @@ object Challenges {
                 action = ApiClient.stopTournament(gameId = game.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = MatchSections.challengeStale(t)
-              )(_ => MatchSections.reloadChallengeSections(game.gameId))
+              ) { _ =>
+                  Views.announce("Challenge cancelled.")
+                  MatchSections.reloadChallengeSections(game.gameId)
+              }
           },
           invitedList(game, c),
           invitePanel(game, c)
@@ -342,7 +350,10 @@ object Challenges {
                                 ),
                                 busy = busy,
                                 onFailure = MatchSections.challengeStale(t)
-                              )(_ => Store.refreshChallenges(game.gameId))
+                              ) { _ =>
+                                  Views.announce("Invitation revoked.")
+                                  Store.refreshChallenges(game.gameId)
+                              }
                           }
                     )
                 } ++ c.invitedCharacters.map { invitation =>
@@ -367,7 +378,10 @@ object Challenges {
                                 ),
                                 busy = busy,
                                 onFailure = MatchSections.challengeStale(t)
-                              )(_ => Store.refreshChallenges(game.gameId))
+                              ) { _ =>
+                                  Views.announce("Invitation revoked.")
+                                  Store.refreshChallenges(game.gameId)
+                              }
                           }
                     )
                 }
@@ -552,7 +566,10 @@ object Challenges {
                           ),
                           busy = busy,
                           onFailure = MatchSections.challengeStale(t)
-                        )(_ => MatchSections.reloadChallengeSections(game.gameId))
+                        ) { _ =>
+                            Views.announce("Withdrawn from the challenge.")
+                            MatchSections.reloadChallengeSections(game.gameId)
+                        }
                     }
                   )
               case None if full => div(cls := "detail", "it is full")
@@ -593,6 +610,7 @@ object Challenges {
                               busy = busy,
                               onFailure = MatchSections.challengeStale(t)
                             ) { _ =>
+                                Views.announce("You have entered the challenge.")
                                 // Entering may have filled one that starts itself: the start's reloads cover both.
                                 MatchSections.reloadAfterStart(game.gameId)
                             }
