@@ -209,6 +209,20 @@ class ResultRepo(session: Session[IO]) {
     def createManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
         session.execute(insertManual)((gameId, id, rank, isWinner)).void
 
+    // The rank is the number of seats, counted over all of them before a seat with a result is left out.
+    private val insertForfeitsForMatch: Command[(GameId, MatchId)] =
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit)
+          SELECT p.game_id, p.participant_id, count(*) OVER (), '{}'::jsonb, false, true
+          FROM participant p
+          WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}
+          ON CONFLICT (game_id, participant_id) DO NOTHING""".command
+
+    /** Every seat of the match loses by forfeit, tied for last and none of them a winner, with no rating change: one
+      * statement for the whole match. A seat that has a result already keeps it.
+      */
+    def createForfeitsForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.execute(insertForfeitsForMatch)((gameId, matchId)).void
+
     private val deleteManualForMatch: Command[(GameId, MatchId)] =
         sql"""DELETE FROM result r USING participant p
           WHERE r.game_id = p.game_id AND r.participant_id = p.participant_id AND r.is_manual

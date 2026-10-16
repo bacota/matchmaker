@@ -1349,7 +1349,9 @@ class MatchServiceSpec extends PropertySuite {
                         .flatMap(_.traverse((p, _, _) => new ResultRepo(session).read(game.gameId, p.participantId)))
                 )
             } yield cancelled.isFriendly && stored.exists(m => m.isFriendly && m.isCancelled) && results.nonEmpty &&
-                results.forall(_.exists(r => r.isForfeit && !r.isWinner && r.eloDelta.isEmpty))
+                results.forall(
+                  _.exists(r => r.isForfeit && !r.isWinner && r.eloDelta.isEmpty && r.rank == results.size)
+                )
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
