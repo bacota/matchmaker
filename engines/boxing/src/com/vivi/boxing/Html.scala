@@ -242,12 +242,19 @@ ${Finale.script(victory, defeat)}
     return state && state.you ? state.corners.find(c => c.side === state.you) : null;
   }
 
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
+    const status = document.getElementById("status");
+    if (status.textContent !== text) status.textContent = text;
+  }
+
   function render() {
     const corner = mine();
     const live = !!(state && !state.isCompleted);
     const canPlan = !!(corner && corner.fighter && live && !state.yourPlan);
 
-    document.getElementById("status").textContent = describe();
+    sayStatus(describe());
     showClock(state && state.clock, corner ? corner.participantId : null);
     showFinale(result());
     document.getElementById("round").textContent = state
@@ -257,6 +264,13 @@ ${Finale.script(victory, defeat)}
       : "";
 
     const plan = document.getElementById("plan");
+    // The plan is hidden once it is in, and the keyboard with it would fall to the top of the page;
+    // it goes to the status line instead, as Finale's Close sends it.
+    if (!canPlan && !plan.hidden && plan.contains(document.activeElement)) {
+      const status = document.getElementById("status");
+      if (!status.hasAttribute("tabindex")) status.setAttribute("tabindex", "-1");
+      status.focus();
+    }
     plan.hidden = !canPlan;
     if (canPlan) {
       const workrate = corner.fighter.workrate;

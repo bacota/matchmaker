@@ -133,6 +133,13 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   const showClock = turnClock(refresh);
   const showFinale = finale();
 
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
+    const status = document.getElementById("status");
+    if (status.textContent !== text) status.textContent = text;
+  }
+
   function render() {
     // Thrown already, or the match is over, or this viewer has no seat to throw with: the server
     // checks all of it again, and this only keeps the page from asking for a refusal.
@@ -145,7 +152,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     });
     throws.hidden = !!(state && !state.you);
 
-    document.getElementById("status").textContent = describe();
+    sayStatus(describe());
     // Each seat has its own clock, which starts when its player opens the game.
     const me = state && state.you ? state.players.find(p => p.side === state.you) : null;
     showClock(state && state.clock, me ? me.participantId : null);
@@ -161,7 +168,8 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
           // A throw is shown only when the server sent one, which it does only once the match has
           // resolved. Until then all anyone learns is that a player has moved.
           const what = p.shape ? " · threw " + p.shape : (p.isThrown ? " · thrown" : " · waiting");
-          return "<div>" + escapeHtml(p.side) + " · " + escapeHtml(p.cognitoId) + you + what + "</div>";
+          // By nickname, never the sign-in id; a match created before nicknames were sent shows the side alone.
+          return "<div>" + escapeHtml(p.side) + (p.nickname ? " · " + escapeHtml(p.nickname) : "") + you + what + "</div>";
         }).join("")
       : "";
   }

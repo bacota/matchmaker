@@ -126,6 +126,25 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   const showClock = turnClock(refresh);
   const showFinale = finale();
 
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
+    const status = document.getElementById("status");
+    if (status.textContent !== text) status.textContent = text;
+  }
+
+  function describe() {
+    if (!state) return login ? "sign in to play" : "not your match";
+    if (state.isCompleted && ranOut().length) {
+      const late = ranOut();
+      return !state.you ? late.join(" and ") + " ran out of time"
+        : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
+    }
+    if (state.isCompleted) return state.isDrawn ? "drawn" : state.winner + " wins";
+    if (state.you) return state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
+    return state.turn + " to move";
+  }
+
   function render() {
     const board = state ? state.board : ".........";
     const line = (state && state.winningLine) || [];
@@ -142,16 +161,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       cells[i].classList.toggle("win", line.includes(i));
     }
 
-    const status = document.getElementById("status");
-    if (!state) status.textContent = login ? "sign in to play" : "not your match";
-    else if (state.isCompleted && ranOut().length) {
-      const late = ranOut();
-      status.textContent = !state.you ? late.join(" and ") + " ran out of time"
-        : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
-    }
-    else if (state.isCompleted) status.textContent = state.isDrawn ? "drawn" : state.winner + " wins";
-    else if (state.you) status.textContent = state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
-    else status.textContent = state.turn + " to move";
+    sayStatus(describe());
 
     const me = state && state.you ? state.players.find(p => p.mark === state.you) : null;
     showClock(state && state.clock, me ? me.participantId : null);
@@ -161,8 +171,10 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     // token expires mid-match, which is what turns a 401 back into a button.
     signin.hidden = !login || noSeat || (state && state.you);
 
+    // By nickname, never the sign-in id, which means nothing to anybody; a match created before
+    // nicknames were sent shows the mark alone.
     document.getElementById("seats").innerHTML = state
-      ? state.players.map(p => "<div>" + p.mark + " · " + escapeHtml(p.cognitoId) + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
+      ? state.players.map(p => "<div>" + p.mark + (p.nickname ? " · " + escapeHtml(p.nickname) : "") + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
       : "";
   }
 

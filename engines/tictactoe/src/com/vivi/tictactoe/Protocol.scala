@@ -38,7 +38,14 @@ object Protocol {
         clock: Option[ClockView] = None
     )
 
-    case class SeatView(mark: String, cognitoId: String, participantId: Long, moves: Int)
+    /** `nickname` is what the page shows the seat as; a match created before matchmaker sent nicknames has none. */
+    case class SeatView(
+        mark: String,
+        cognitoId: String,
+        participantId: Long,
+        moves: Int,
+        nickname: Option[String] = None
+    )
 
     given ReadWriter[MoveRequest] = macroRW
     given ReadWriter[SeatView] = macroRW

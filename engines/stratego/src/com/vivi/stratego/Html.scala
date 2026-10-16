@@ -389,21 +389,31 @@ $replayScript
   const showClock = turnClock(refresh);
   const showFinale = finale();
 
-  function render() {
-    settlePending();
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
     const status = document.getElementById("status");
-    if (!state) status.textContent = login ? "sign in to play" : "not your match";
-    else if (state.isCompleted && ranOut().length) {
+    if (status.textContent !== text) status.textContent = text;
+  }
+
+  function statusText() {
+    if (!state) return login ? "sign in to play" : "not your match";
+    if (state.isCompleted && ranOut().length) {
       const late = ranOut();
-      status.textContent = !state.you ? late.join(" and ") + " ran out of time"
+      return !state.you ? late.join(" and ") + " ran out of time"
         : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
     }
-    else if (state.isCompleted) status.textContent = endingText();
-    else if (state.phase === "setup")
-      status.textContent = deploying() ? "deploy your army: swap any two of your pieces, then deploy"
+    if (state.isCompleted) return endingText();
+    if (state.phase === "setup")
+      return deploying() ? "deploy your army: swap any two of your pieces, then deploy"
         : state.you ? "waiting for " + other(state.you) + " to deploy" : "the armies are deploying";
-    else if (state.you) status.textContent = state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
-    else status.textContent = state.turn + " to move";
+    if (state.you) return state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
+    return state.turn + " to move";
+  }
+
+  function render() {
+    settlePending();
+    sayStatus(statusText());
 
     const me = state && state.you ? state.players.find(p => p.side === state.you) : null;
     showClock(state && state.clock, me ? me.participantId : null);
@@ -422,10 +432,10 @@ $replayScript
     drawLost();
     drawRemaining();
 
-    // By nickname; a match created before matchmaker sent nicknames has only the sign-in id.
+    // By nickname, never the sign-in id; a match created before matchmaker sent nicknames shows the side alone.
     document.getElementById("players").hidden = !state;
     document.getElementById("seats").innerHTML = state
-      ? state.players.map(p => "<div>" + p.side + " · " + escapeHtml(p.nickname || p.cognitoId) + (p.side === (state.you || "") ? " (you)" : "") + "</div>").join("")
+      ? state.players.map(p => "<div>" + p.side + (p.nickname ? " · " + escapeHtml(p.nickname) : "") + (p.side === (state.you || "") ? " (you)" : "") + "</div>").join("")
       : "";
   }
 

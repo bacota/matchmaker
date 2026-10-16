@@ -138,11 +138,18 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     });
   }
 
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
+    const status = document.getElementById("status");
+    if (status.textContent !== text) status.textContent = text;
+  }
+
   function render() {
     const canPick = !!(state && state.you && state.yourPick == null && !state.isCompleted);
     renderNumbers(canPick);
     numbers.hidden = !state || !state.you || state.isCompleted;
-    document.getElementById("status").textContent = describe();
+    sayStatus(describe());
     document.getElementById("rule").textContent = state
       ? "Pick a number from 1 to " + state.highest + ". The highest number nobody else picks wins."
       : "";

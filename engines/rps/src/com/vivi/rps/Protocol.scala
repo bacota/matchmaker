@@ -53,14 +53,16 @@ object Protocol {
     )
 
     /** One seat as a viewer may see it. `shape` is `None` until the match is over, whoever is asking — including of the
-      * viewer's own seat, which is what `yourThrow` is for.
+      * viewer's own seat, which is what `yourThrow` is for. `nickname` is what the page shows the seat as; a match
+      * created before matchmaker sent nicknames has none.
       */
     case class SeatView(
         side: String,
         cognitoId: String,
         participantId: Long,
         isThrown: Boolean,
-        shape: Option[String]
+        shape: Option[String],
+        nickname: Option[String] = None
     )
 
     given ReadWriter[MoveRequest] = macroRW

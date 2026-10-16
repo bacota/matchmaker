@@ -150,8 +150,25 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     return state.winners.includes(youId()) ? "win" : "lose";
   }
 
+  // Only when it changes: the status line is a live region, and every poll rewriting the same
+  // text can make a screen reader repeat it.
+  function sayStatus(text) {
+    const status = document.getElementById("status");
+    if (status.textContent !== text) status.textContent = text;
+  }
+
+  /* Where the keyboard goes when the control it was on is taken away, as Finale's Close does, rather
+   * than falling to the top of the page. Only when it was inside `box`: a poll must not pull the
+   * focus off whatever else the player is reading. */
+  function keepFocusFrom(box) {
+    if (!box.contains(document.activeElement)) return;
+    const status = document.getElementById("status");
+    if (!status.hasAttribute("tabindex")) status.setAttribute("tabindex", "-1");
+    status.focus();
+  }
+
   function render() {
-    document.getElementById("status").textContent = describe();
+    sayStatus(describe());
     showClock(state && state.clock, youId());
     showFinale(result());
     signin.hidden = !login || noSeat || (state && state.you != null) || publicView;
@@ -201,13 +218,25 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     document.getElementById("history").innerHTML = html + '</tbody></table>';
   }
 
+  /* Rebuilt only when the reports change, and then with the earlier turns the reader had opened kept
+   * open: rebuilt on every poll, an expanded turn closed within two seconds and took the focus with it. */
   function renderReports() {
-    if (!state.reports.length) { document.getElementById("reports").innerHTML = '<p class="note">Nothing yet.</p>'; return; }
-    document.getElementById("reports").innerHTML = state.reports.map((r, i) => {
+    const box = document.getElementById("reports");
+    const shown = JSON.stringify(state.reports);
+    if (box.dataset.shown === shown) return;
+    box.dataset.shown = shown;
+    if (!state.reports.length) { box.innerHTML = '<p class="note">Nothing yet.</p>'; return; }
+    const open = new Set(Array.from(box.querySelectorAll("details[open]")).map(d => d.dataset.turn));
+    const focused = box.contains(document.activeElement) && document.activeElement.closest("details");
+    const focusedTurn = focused ? focused.dataset.turn : null;
+    keepFocusFrom(box);
+    box.innerHTML = state.reports.map((r, i) => {
       const list = '<ol class="events">' + (r.events.length ? r.events.map(e => '<li>' + esc(e) + '</li>').join("") : '<li>Nothing happened.</li>') + '</ol>';
       return i === 0 ? '<h3 style="font-size:1rem;margin:.5rem 0 0">Turn ' + r.turn + '</h3>' + list
-                     : '<details><summary>Turn ' + r.turn + '</summary>' + list + '</details>';
+                     : '<details data-turn="' + r.turn + '"' + (open.has(String(r.turn)) ? " open" : "") + '><summary>Turn ' + r.turn + '</summary>' + list + '</details>';
     }).join("");
+    const again = focusedTurn && box.querySelector('details[data-turn="' + focusedTurn + '"] summary');
+    if (again) again.focus();
   }
 
   function renderSpells() {
@@ -237,6 +266,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     const box = document.getElementById("orders");
     if (yt.isOrdered) {
       formFor = null;
+      keepFocusFrom(box);
       box.innerHTML = '<p>Your orders for turn ' + state.turn + ' are in. Waiting for ' +
         esc(state.waitingFor.map(nameOf).join(", ") || "the turn to resolve") + '.</p>';
       return;
@@ -249,12 +279,15 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       select("left", "Left hand", yt.left.map(g => [g, gestureNames[g] || g]), startingGesture(yt.left)) + '</div><div>' +
       select("right", "Right hand", yt.right.map(g => [g, gestureNames[g] || g]), startingGesture(yt.right)) +
       '</div></div><p id="surrender" class="warn" role="status" aria-live="polite"></p></fieldset>' +
-      '<div id="spells-cast" aria-live="polite"></div><div id="stab-box"></div><div id="monster-orders"></div>' +
+      '<div id="spells-cast" aria-live="polite"><div id="casting-pick"></div><div id="casting-spells"></div></div><div id="stab-box"></div><div id="monster-orders"></div>' +
       '<button class="primary" type="submit">Give orders</button></form>';
     const form = document.getElementById("orders-form");
-    form.addEventListener("change", e => { if (e.target.id === "left" || e.target.id === "right" || e.target.id === "casting") renderCasting(); });
+    form.addEventListener("change", e => {
+      if (e.target.id === "left" || e.target.id === "right") renderCasting(false);
+      else if (e.target.id === "casting") renderCasting(true);
+    });
     form.addEventListener("submit", e => { e.preventDefault(); give(); });
-    renderCasting();
+    renderCasting(false);
     renderMonsterOrders();
   }
 
@@ -278,21 +311,22 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   /* The casting made when the wizard picks none: the server lists the castings with it first. */
   function biggest(options) { return options.length ? options[0] : null; }
 
-  function renderCasting() {
+  /* `isPicked` when the change was to the "Cast:" select itself, which is then left in place: rebuilding
+   * it from its own change event took the keyboard off it after the first arrow key. */
+  function renderCasting(isPicked) {
     const yt = state.yourTurn;
     const l = document.getElementById("left").value, r = document.getElementById("right").value;
     document.getElementById("surrender").textContent =
       (l === "P" && r === "P") ? "Two palms at once: you will surrender." : "";
     const options = yt.castings[l + "," + r] || [];
-    const box = document.getElementById("spells-cast");
-    const previous = document.getElementById("casting");
-    const keep = previous ? previous.value : null;
-    let html = "";
-    if (options.length > 1) {
-      html += select("casting", "These gestures complete more than one spell. Cast:", options.map(c =>
-        [c.key, c.spells.map(s => s.name + " (" + s.slot + ")").join(" + ")]), options.some(c => c.key === keep) ? keep : biggest(options).key);
+    if (!isPicked) {
+      const previous = document.getElementById("casting");
+      const keep = previous ? previous.value : null;
+      document.getElementById("casting-pick").innerHTML = options.length > 1
+        ? select("casting", "These gestures complete more than one spell. Cast:", options.map(c =>
+            [c.key, c.spells.map(s => s.name + " (" + s.slot + ")").join(" + ")]), options.some(c => c.key === keep) ? keep : biggest(options).key)
+        : "";
     }
-    box.innerHTML = html;
     const casting = chosenCasting().casting;
     let more = "";
     if (!casting || !casting.spells.length) more = '<p class="note">These gestures complete no spell.</p>';
@@ -303,7 +337,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       if (s.isSummons) more += select("summons-" + s.slot, "The new monster attacks", targetOptions(true), yt.defaultEnemy || "nobody");
       more += '</fieldset>';
     });
-    box.insertAdjacentHTML("beforeend", more);
+    document.getElementById("casting-spells").innerHTML = more;
     document.getElementById("stab-box").innerHTML = (l === "stab" || r === "stab")
       ? '<fieldset><legend>Stab</legend>' + select("stab", "Stab at", targetOptions(true), yt.defaultEnemy || "nobody") + '</fieldset>'
       : "";
