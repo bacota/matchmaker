@@ -31,11 +31,16 @@ import com.vivi.matchmaker.persistence.{
   */
 class TournamentRoundsSpec extends FunSuite with QuietTests {
 
-    /** An engine that creates every game it is asked to, unless told to refuse the next few. */
+    /** An engine that creates every game it is asked to, unless told to refuse the next few. `whileCreating` runs as it
+      * makes each game, before it answers: what else happens while matchmaker waits on it. It answers with a cancel
+      * url, and records the cancels it is sent there.
+      */
     private class StubEngine extends GameEngineClient {
         val refusals = AtomicInteger(0)
         val created = AtomicInteger(0)
         @volatile var lastRequest: Option[CreateGameRequest] = None
+        @volatile var whileCreating: CreateGameRequest => IO[Unit] = _ => IO.unit
+        @volatile var cancelled: List[String] = Nil
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO.defer {
                 if (refusals.getAndUpdate(n => math.max(0, n - 1)) > 0)
@@ -43,15 +48,18 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 else {
                     created.incrementAndGet()
                     lastRequest = Some(request)
-                    IO.pure(
+                    whileCreating(request).as(
                       CreateGameResponse(
                         statusUrl = s"https://engine/status/${request.matchId}",
                         playUrl = "https://engine/play",
-                        publicUrl = None
+                        publicUrl = None,
+                        cancelUrl = Some(s"https://engine/cancel/${request.matchId}")
                       )
                     )
                 }
             }
+        override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
+            IO(synchronized { cancelled = cancelled :+ cancelUrl })
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(isCompleted = false, participants = Nil))
     }
@@ -89,7 +97,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
     private case class Fixture(w: World, game: Game, owner: Player, players: List[Player], t: Tournament)
 
     /** A plain two-role game — or with `roles` false a two-player game without roles, whose seats have nothing to
-      * choose — `n` players entered in a tournament of `design` owned by a further player, started.
+      * choose — `n` players entered in a tournament of `design` owned by a further player, started. With `isMailed` the
+      * players have addresses too, so that what they are mailed is recorded.
       */
     private def started(
         n: Int,
@@ -98,7 +107,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         settings: TournamentSettings =
             TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2))),
         game: Option[Game] = None,
-        poolSize: Option[Int] = None
+        poolSize: Option[Int] = None,
+        isMailed: Boolean = false
     ): IO[Fixture] = {
         val w = world()
         val s = w.services
@@ -119,7 +129,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               email = Some(s"${unique("owner")}@example.com")
             )
             players <- (1 to n).toList.traverse(_ =>
-                s.registration.register(nickname = unique("p"), externalId = unique("sub"))
+                s.registration.register(
+                  nickname = unique("p"),
+                  externalId = unique("sub"),
+                  email = Option.when(isMailed)(s"${unique("p")}@example.com")
+                )
             )
             model <- TestSession.resource.use(TournamentFixtures.model(_, game, design))
             t <- s.tournaments.create(
@@ -746,6 +760,33 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(settled, Settlement.Settled)
         assertEquals(startedStatus, TournamentMatchStatus.Started)
         assertEquals(created, 1)
+    }
+
+    // The engine is asked for its game with no transaction open, and the owner may call the match off meanwhile. The
+    // cancel finds no cancel url yet, so it is the launch, recording the one the engine answers with, that has the
+    // engine told -- and nobody is mailed a start for a match they were told was cancelled.
+    test("a match cancelled while its engine is creating it has the engine told, and mails no start") {
+        val (cancelled, engineTold, subjects, matchId) = run(for {
+            f <- started(n = 2, roles = false, isMailed = true)
+            _ = f.w.engine.whileCreating = request =>
+                f.w.services.matches
+                    .cancel(
+                      gameId = f.game.gameId,
+                      matchId = MatchId(request.matchId.toLong),
+                      callerExternalId = f.owner.externalId
+                    )
+                    .void
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            matchId = f.w.engine.lastRequest.map(r => MatchId(r.matchId.toLong)).get
+            played <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, matchId))
+        } yield (played.exists(_.isCancelled), f.w.engine.cancelled, f.w.mail.messages.map(_.subject), matchId))
+        assert(cancelled)
+        assertEquals(engineTold, List(s"https://engine/cancel/${matchId.value}"))
+        assert(!subjects.exists(_.contains("has started")), subjects)
     }
 
     test("a withdrawn entrant's seat forfeits, and their opponent wins without a match") {

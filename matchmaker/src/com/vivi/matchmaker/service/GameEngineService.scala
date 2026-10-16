@@ -74,6 +74,11 @@ class GameEngineService[T](
       * Whose turn it is first is the engine's to decide, and every seat was written not pending, so its status is asked
       * for at once: without it nobody's list of matches waiting on them would show this one. Best effort, as is the
       * mail after it: the match exists, and neither is a reason to fail its start.
+      *
+      * The urls are recorded under the match's lock, and what is done next is decided from the match as it stands then.
+      * Its owner may have called it off while the engine was answering, when its ending found no cancel url to tell the
+      * engine at: its ending is queued again, now that there is one, and nobody is mailed a start for a match they were
+      * told was cancelled. One completed meanwhile is not started either.
       */
     private[service] def launchTournamentMatch(
         session: Session[IO],
@@ -120,17 +125,19 @@ class GameEngineService[T](
               playUrl = Some(response.playUrl),
               publicUrl = response.publicUrl
             )
-            started <- retrying(io =
-                finish(session = session, withUrls = withUrls, cancelUrl = response.cancelUrl).as(withUrls)
-            )
-            _ <- applyEngineStatus(
-              session = session,
-              gameId = saved.gameId,
-              matchId = saved.matchId,
-              statusUrl = response.statusUrl
-            ).attempt
-            // Nobody pressed anything: everyone in the match hears that it has begun.
-            _ <- notifications.matchStarted(session, started)
+            started <- retrying(io = finish(session = session, withUrls = withUrls, cancelUrl = response.cancelUrl))
+            _ <-
+                if (started.isCancelled) endings.ended(started.gameId, started.matchId)
+                else if (started.isCompleted) IO.unit
+                else
+                    applyEngineStatus(
+                      session = session,
+                      gameId = saved.gameId,
+                      matchId = saved.matchId,
+                      statusUrl = response.statusUrl
+                    ).attempt *>
+                        // Nobody pressed anything: everyone in the match hears that it has begun.
+                        notifications.matchStarted(session, started)
         } yield started
 
     /** A tournament seat as the engine is told it: who plays it, as what, with which character. */
@@ -346,11 +353,24 @@ class GameEngineService[T](
             new TurnRepo(session).timeUsed(m.gameId, m.matchId)
         else IO.pure(Map.empty)
 
-    /* The last step of a start: record the urls the engine gave back. The urls only: `withUrls` is
-     * the match as it was written before the engine call, and the row may have changed since -- see
-     * `MatchRepo.setUrls`. */
-    private def finish(session: skunk.Session[IO], withUrls: Match, cancelUrl: Option[String]): IO[Unit] =
-        new MatchRepo(session).setUrls(withUrls, cancelUrl)
+    /* The last step of a start: record the urls the engine gave back, and answer the match as it
+     * stands now, with them. The urls only: `withUrls` is the match as it was written before the
+     * engine call, and the row may have changed since -- see `MatchRepo.setUrls`. Read under the
+     * row's lock, so that a cancel either committed before it, and is seen, or waits for it, and
+     * finds the cancel url written. */
+    private def finish(session: skunk.Session[IO], withUrls: Match, cancelUrl: Option[String]): IO[Match] = {
+        val repo = new MatchRepo(session)
+        session.transaction.use { _ =>
+            for {
+                current <- requireMatchForUpdate(repo = repo, gameId = withUrls.gameId, matchId = withUrls.matchId)
+                _ <- repo.setUrls(withUrls, cancelUrl)
+            } yield current.copy(
+              statusUrl = withUrls.statusUrl,
+              playUrl = withUrls.playUrl,
+              publicUrl = withUrls.publicUrl
+            )
+        }
+    }
 
     /* Retries a database action a few times before giving up. Used only for the work after the
      * engine call, where failing is not an option that leaves a sane state behind — everywhere
