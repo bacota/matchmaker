@@ -460,6 +460,32 @@ class ArchiveServiceSpec extends FunSuite {
         assert(signed.url.contains("/local-archive/permanent/"), signed.url)
     }
 
+    test("a confirm whose match changed bucket while its upload was checked is refused, and the upload asked again") {
+        val f = run(fixture(friendly = true))
+        makeAdmin(f)
+        run(upload(f))
+        // The admin's change lands while the confirm is checking S3: after it has read the match, before its lock.
+        val racing = new ArchiveService(
+          sessionPool = TestServices.pool,
+          store = new ArchiveStore {
+              def signUpload(b: ArchiveBucket, k: String, s: Long, sha: String, v: Option[String]) =
+                  store.signUpload(bucket = b, key = k, size = s, sha256 = sha, formatVersion = v)
+              def signDownload(bucket: ArchiveBucket, key: String) = store.signDownload(bucket, key)
+              def head(bucket: ArchiveBucket, key: String) = notFriendly(f) *> store.head(bucket, key)
+              def copy(from: ArchiveBucket, to: ArchiveBucket, key: String) =
+                  store.copy(from = from, to = to, key = key)
+              def remove(bucket: ArchiveBucket, key: String) = store.remove(bucket, key)
+          }
+        )
+        val refused = refusal(racing.confirm(f.matchId, f.game.externalId))
+        assert(refused.isInstanceOf[ConflictError], refused)
+        assertEquals(run(row(f)).flatMap(_.archivedAt), None)
+        // Asked again, it goes to the permanent bucket, and is confirmed there.
+        run(archived(f))
+        assertEquals(where(f)._2, true)
+        assert(run(row(f)).flatMap(_.archivedAt).isDefined)
+    }
+
     test("a check that read the match before its archive was moved records nothing on finding the original gone") {
         val f = run(fixture(friendly = true).flatMap(archived))
         makeAdmin(f)

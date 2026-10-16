@@ -129,7 +129,10 @@ class ArchiveService(
       *
       * The check is a call to S3, so it is made between two reads rather than inside a transaction, and what it found
       * is held against the match as it stands under the lock afterwards: a second request may have asked for a
-      * different upload meanwhile, and only the one most recently asked for is accepted.
+      * different upload meanwhile, and only the one most recently asked for is accepted. Nor is one found in a bucket
+      * the match has since left: an admin's saying it is friendly or not after all moves an upload not yet confirmed to
+      * the other bucket, and recording it archived there would point at an empty object. Refused, the engine keeps its
+      * live copy and is prompted again, when its upload is signed for the bucket the match is in now.
       *
       * Three borrowings of the pool rather than one: no connection is held while S3 answers, so a slow check cannot tie
       * up the connections the API's other requests need.
@@ -164,6 +167,11 @@ class ArchiveService(
                                                     _ <- IO.raiseUnless(row.key.contains(key))(
                                                       ConflictError(
                                                         s"the upload asked for for match ${matchId.value} changed while it was being checked"
+                                                      )
+                                                    )
+                                                    _ <- IO.raiseUnless(bucketOf(row) == bucketOf(before))(
+                                                      ConflictError(
+                                                        s"match ${matchId.value} changed archive while its upload was being checked"
                                                       )
                                                     )
                                                     arrived <- IO.fromOption(found)(
