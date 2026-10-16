@@ -48,6 +48,24 @@ object FocusKeeper {
               },
           useCapture = true
         )
+        // A player who clicks away from a control, onto text or blank page, has let go of it on purpose: the focus is
+        // on `<body>` then too, and a later redraw that removes the control must not hand it back and scroll there. A
+        // blur that leaves the element in the page is that; one from its removal finds it gone by the time this looks.
+        dom.document.addEventListener(
+          "focusout",
+          (e: dom.FocusEvent) =>
+              e.target match {
+                  case el: dom.Element =>
+                      js.Promise
+                          .resolve[Unit](())
+                          .`then`[Unit](_ => if (el.isConnected && last.exists(_.element == el)) last = None)
+                  case _ => ()
+              },
+          useCapture = true
+        )
+        // The same for focus already lost and waiting for a heading to appear: a click anywhere says the player has
+        // moved on.
+        dom.document.addEventListener("pointerdown", (_: dom.PointerEvent) => pending = None, useCapture = true)
         val observer = new dom.MutationObserver((records, _) => rescue(records))
         observer.observe(
           dom.document.body,
