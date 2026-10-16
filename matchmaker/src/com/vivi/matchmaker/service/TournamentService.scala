@@ -361,6 +361,12 @@ class TournamentService[T](
                     // locks a model and then every tournament made from it, so taking the tournament first would
                     // deadlock against one removing the model this tournament is made from. `requireModel` takes
                     // it again below, which a lock already held makes free.
+                    //
+                    // And the sync lock, shared, before either: a sync removes its models one after another, and
+                    // one removing both the model this tournament is made from and the model it is moving to would
+                    // lock the first and its tournaments, then wait on this edit's lock on the second while this
+                    // waits on the tournament. Shared, so that edits do not queue for one another.
+                    _ <- TournamentModelService.lockSyncShared(session)
                     _ <- new TournamentModelRepo(session).lockForShare(request.tournamentModelId)
                     t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                     game <- requireGame(session, gameId)
