@@ -444,9 +444,10 @@ object Tournaments {
             else
                 button(
                   tpe := "button",
-                  // Whether the form is open, in the state that is announced as well as in the label.
+                  // Whether the form is open is the announced state, not a second label: "Close Edit, expanded"
+                  // says the same thing twice and reads as a contradiction. The form itself shows it to a sighted user.
                   aria.expanded <-- editing.signal,
-                  child.text <-- editing.signal.map(if (_) "Close Edit" else "Edit"),
+                  "Edit",
                   onClick --> (_ => editing.update(!_))
                 ),
             t.status match {

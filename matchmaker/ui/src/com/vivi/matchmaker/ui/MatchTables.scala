@@ -419,13 +419,14 @@ object MatchTables {
           button(
             tpe := "button",
             cls := "link",
-            // The button is the form's control, so it says whether the form is open — both in the
-            // label, which is what a sighted user reads, and in the state, which is what is announced.
+            // The button is the form's control, so it says whether the form is open -- in the announced state,
+            // not a second label, which would be read out as "Hide notifications, expanded". The form below it
+            // shows a sighted user, as on the tournament page's Edit.
             aria.expanded <-- shown.signal,
             // Not disabled while the form is fetched, which would drop the keyboard's focus.
             aria.disabled <-- busy.signal,
             child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-            child.text <-- shown.signal.map(if (_) "Hide notifications" else "Notifications"),
+            "Notifications",
             onClick --> { _ =>
                 if (busy.now()) ()
                 else if (shown.now()) shown.set(false)
