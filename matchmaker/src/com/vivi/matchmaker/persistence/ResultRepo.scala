@@ -3,6 +3,7 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -234,14 +235,32 @@ class ResultRepo(session: Session[IO]) {
     def deleteManualForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
         session.execute(deleteManualForMatch)((gameId, matchId)).void
 
-    private val updateToManual: Command[(Int, Boolean, GameId, ParticipantId)] =
-        sql"""UPDATE result SET rank = $int4, scores = '{}'::jsonb, is_winner = $bool, is_forfeit = false, is_manual = true,
-                 elo_delta = NULL, elo_role_delta = NULL
-          WHERE game_id = $gameId AND participant_id = $participantId""".command
+    // Over a cancel's forfeit and nothing else: a seat with any other result keeps it.
+    private val upsertManual: Command[(GameId, Arr[Long], Arr[Int], Arr[Boolean])] =
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit, is_manual)
+          SELECT $gameId, u.participant_id, u.rank, '{}'::jsonb, u.is_winner, false, true
+          FROM unnest(${_int8}, ${_int4}, ${SkunkCodecs.boolArray}) AS u (participant_id, rank, is_winner)
+          ON CONFLICT (game_id, participant_id) DO UPDATE
+             SET rank = excluded.rank, scores = '{}'::jsonb, is_winner = excluded.is_winner, is_forfeit = false,
+                 is_manual = true, elo_delta = NULL, elo_role_delta = NULL
+             WHERE result.is_forfeit""".command
 
-    /** As [[createManual]], over the forfeit a cancel gave the seat: the owner ranking by hand a match called off. */
-    def replaceWithManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
-        session.execute(updateToManual)((rank, isWinner, gameId, id)).void
+    /** As [[createManual]], for several seats of a match at once, and over the forfeit a cancel gave a seat: the owner
+      * ranking by hand a match called off. One statement however many seats there are.
+      */
+    def setManual(gameId: GameId, ranks: List[ResultRepo.ManualRank]): IO[Unit] =
+        if (ranks.isEmpty) IO.unit
+        else
+            session
+                .execute(upsertManual)(
+                  (
+                    gameId,
+                    Arr.fromFoldable(ranks.map(_.participantId.value)),
+                    Arr.fromFoldable(ranks.map(_.rank)),
+                    Arr.fromFoldable(ranks.map(_.isWinner))
+                  )
+                )
+                .void
 
     def create(result: Result): IO[Result] =
         session
@@ -325,6 +344,9 @@ object ResultRepo {
         isForfeit: Boolean = false,
         eloRoleDelta: Option[Int] = None
     )
+
+    /** A rank given a seat by hand, and whether it makes the seat the winner. */
+    case class ManualRank(participantId: ParticipantId, rank: Int, isWinner: Boolean)
 
     /** What one seat spent over its turns, all told. */
     case class TimeTakenRow(gameId: GameId, participantId: ParticipantId, timeTaken: Duration)

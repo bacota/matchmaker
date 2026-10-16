@@ -807,9 +807,11 @@ class TournamentRounds[T](
                         _ <- IO.raiseWhen(m.exists(_.isCompleted))(
                           ConflictError("this match was played to an end; its result stands")
                         )
-                        found <- tm.seats.traverse(s => new ResultRepo(session).read(gameId, s.participantId))
+                        resultRepo = new ResultRepo(session)
+                        byParticipant <- resultRepo.forMatch(gameId, matchId).map(_.map(r => r.participantId -> r).toMap)
+                        found = tm.seats.map(s => byParticipant.get(s.participantId))
                         // A cancel's forfeits are no result to the tournament, and the owner's ranks replace them.
-                        cancelForfeit = (r: Result) => m.exists(_.isCancelled) && r.isForfeit
+                        cancelForfeit = (r: ResultRepo.RatedResultRow) => m.exists(_.isCancelled) && r.isForfeit
                         recorded = found.map(_.filterNot(cancelForfeit))
                         _ <- IO.raiseWhen(m.exists(_.isCancelled) && recorded.forall(_.isDefined))(
                           ConflictError("this match's result is in, and stands")
@@ -818,27 +820,18 @@ class TournamentRounds[T](
                         alone = ranks.values.count(_ == best) == 1
                         // Begun, and so to be told to its engine as called off; otherwise there is no engine game.
                         begun = tm.status == TournamentMatchStatus.Started
-                        _ <- tm.seats.zip(found).traverse_ { (s, r) =>
-                            val rank = ranks(s.entrantId)
-                            val isWinner = alone && rank == best
-                            r match {
-                                case None =>
-                                    new ResultRepo(session).createManual(
-                                      gameId = gameId,
-                                      id = s.participantId,
-                                      rank = rank,
-                                      isWinner = isWinner
-                                    )
-                                case Some(f) if cancelForfeit(f) =>
-                                    new ResultRepo(session).replaceWithManual(
-                                      gameId = gameId,
-                                      id = s.participantId,
-                                      rank = rank,
-                                      isWinner = isWinner
-                                    )
-                                case Some(_) => IO.unit
-                            }
-                        }
+                        // Every seat with no result, or only a cancel's forfeit; a seat with a result keeps it.
+                        _ <- resultRepo.setManual(
+                          gameId = gameId,
+                          ranks = tm.seats.zip(recorded).collect { case (s, None) =>
+                              val rank = ranks(s.entrantId)
+                              ResultRepo.ManualRank(
+                                participantId = s.participantId,
+                                rank = rank,
+                                isWinner = alone && rank == best
+                              )
+                          }
+                        )
                         _ <- callOff(session = session, gameId = gameId, matchId = matchId)
                         done <- settle(session = session, t = t, game = game)
                     } yield (t, Option.when(begun)(matchId), done)
