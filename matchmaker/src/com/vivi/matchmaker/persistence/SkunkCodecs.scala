@@ -2,7 +2,7 @@ package com.vivi.matchmaker.persistence
 
 import skunk._
 import skunk.codec.all._
-import skunk.data.Type
+import skunk.data.{Arr, Type}
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import com.vivi.matchmaker.model.{
     GameType,
@@ -21,6 +21,18 @@ object SkunkCodecs {
 
     val instant: Codec[Instant] =
         timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))
+
+    /** A `boolean[]`, for unnesting beside other arrays: skunk has none of its own. */
+    val boolArray: Codec[Arr[Boolean]] =
+        Codec.array[Boolean](
+          b => if (b) "t" else "f",
+          {
+              case "t" => Right(true)
+              case "f" => Right(false)
+              case s   => Left(s"not a boolean: $s")
+          },
+          Type._bool
+        )
 
     /** The `game_type` discriminator column (`CHAR(1)`, `'C'`/`'P'`), on `game` and on every table split by it
       * (`entrant`, `participant`, and their `character_*` siblings).

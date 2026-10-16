@@ -21,7 +21,6 @@ import com.vivi.matchmaker.model.{
     PlayerClock,
     PlayerId,
     PublicPlayer,
-    Result,
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
@@ -403,7 +402,10 @@ class MatchService(
                             // otherwise only answer it by joining `match` for the cancelled flag, because
                             // the seat did not know -- see `NotificationRepo.restampParticipants`.
                             _ <- participantRepo.completeForMatch(gameId, matchId)
-                            _ <- forfeitEverySeat(session = session, gameId = gameId, matchId = matchId)
+                            /* Every seat loses by forfeit, tied for last and none of them a winner, as a timeout
+                             * that catches every seat at once ends one. No rating change: the match was made
+                             * friendly first. */
+                            _ <- new ResultRepo(session).createForfeitsForMatch(gameId, matchId)
                         } yield (cancelled, caller)
                     }
                     .flatMap { (cancelled, caller) =>
@@ -423,33 +425,6 @@ class MatchService(
             // And the engine, by way of the match's ending: telling it is the listener's to do, and to try
             // again until it hears.
             .flatTap(cancelled => endings.ended(cancelled.gameId, cancelled.matchId))
-
-    /* Every seat of a match being cancelled loses by forfeit, tied for last and none of them a winner, as a timeout
-     * that catches every seat at once ends one. No rating change: the match was made friendly first. A seat that
-     * somehow has a result already keeps it. */
-    private def forfeitEverySeat(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] = {
-        val resultRepo = new ResultRepo(session)
-        new ParticipantRepo(session).listForMatch(gameId, matchId).flatMap { seats =>
-            seats.traverse_ { (p, _, _) =>
-                resultRepo.read(gameId, p.participantId).flatMap {
-                    case Some(_) => IO.unit
-                    case None =>
-                        resultRepo
-                            .create(
-                              Result(
-                                gameId = gameId,
-                                participantId = p.participantId,
-                                rank = seats.size,
-                                scores = Map.empty,
-                                isWinner = false,
-                                isForfeit = true
-                              )
-                            )
-                            .void
-                }
-            }
-        }
-    }
 
     private def forCaller[A](
         callerExternalId: String

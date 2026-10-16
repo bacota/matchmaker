@@ -823,34 +823,53 @@ class MatchRepo(session: Session[IO]) {
     /* A game's matches for its admins: the ones still being played first, then the rest, most
      * recently started first within each. Who is playing comes as one array per match, so a match
      * is one row however many seats it has; a match with no seats yet (one whose engine is still
-     * being asked to create it) has an empty one. Given a player, only the matches they have a seat
-     * in -- asked of the database rather than picked from a page of the game's, which would miss the
-     * player's older ones. */
-    private val selectForGame: Query[
-      (GameId, Option[PlayerId], Option[PlayerId], Int),
-      (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])
-    ] =
+     * being asked to create it) has an empty one.
+     *
+     * The page of matches is picked first and only its seats are read, rather than every seat of
+     * every match the game has had being aggregated before the limit. Given a player, only the
+     * matches they have a seat in -- asked of the database rather than picked from a page of the
+     * game's, which would miss the player's older ones -- and found from their seats in the game,
+     * on participant(game_id, player_id, ...), not by testing each of the game's matches. Two
+     * queries rather than one with an optional player, which no single plan serves well. */
+    private type GameMatchRow = (MatchId, String, Option[Instant], Option[Instant], Boolean, Boolean, Arr[String])
+
+    private val gameMatchOrder: Fragment[Void] =
+        sql"(completed_at IS NULL AND NOT is_cancelled) DESC, start DESC, match_id"
+
+    private def selectListed[A](
+        picked: Fragment[A]
+    ): Query[A, GameMatchRow] =
         sql"""SELECT m.match_id, m.description, m.start, m.completed_at, m.is_cancelled, m.is_friendly,
-                 coalesce(array_agg(pl.nickname ORDER BY p.participant_id) FILTER (WHERE m.start IS NOT NULL AND pl.nickname IS NOT NULL),
-                          '{}')
-          FROM match m
-          LEFT JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
-          LEFT JOIN player pl ON pl.player_id = p.player_id
-          WHERE m.game_id = $gameId
-            AND (${playerIdOf.opt}::bigint IS NULL OR EXISTS (
-              SELECT 1 FROM participant s
-              WHERE s.game_id = m.game_id AND s.match_id = m.match_id AND s.player_id = ${playerIdOf.opt}
-            ))
-          GROUP BY m.game_id, m.match_id
-          ORDER BY (m.completed_at IS NULL AND NOT m.is_cancelled) DESC, m.start DESC, m.match_id
-          LIMIT $int4""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
+                 CASE WHEN m.start IS NULL THEN '{}'::text[]
+                      ELSE ARRAY(SELECT pl.nickname FROM participant p
+                                 JOIN player pl ON pl.player_id = p.player_id
+                                 WHERE p.game_id = m.game_id AND p.match_id = m.match_id
+                                 ORDER BY p.participant_id) END
+          FROM ($picked) m
+          ORDER BY $gameMatchOrder""".query(matchId *: text *: instant.opt *: instant.opt *: bool *: bool *: _text)
+
+    private val gameMatchColumns: Fragment[Void] =
+        sql"game_id, match_id, description, start, completed_at, is_cancelled, is_friendly"
+
+    private val selectForGame: Query[(GameId, Int), GameMatchRow] =
+        selectListed(sql"""SELECT $gameMatchColumns FROM match
+          WHERE game_id = $gameId
+          ORDER BY $gameMatchOrder LIMIT $int4""")
+
+    private val selectForGamePlayer: Query[(GameId, PlayerId, Int), GameMatchRow] =
+        selectListed(sql"""SELECT $gameMatchColumns FROM match
+          WHERE (game_id, match_id) IN (SELECT game_id, match_id FROM participant
+                                         WHERE game_id = $gameId AND player_id = $playerIdOf)
+          ORDER BY $gameMatchOrder LIMIT $int4""")
 
     /** At most `limit` of the game's matches, running ones first, each with its players' nicknames: every one, or only
       * those `player` has a seat in.
       */
     def listForGame(gameId: GameId, limit: Int, player: Option[PlayerId] = None): IO[List[GameMatch]] =
-        session
-            .execute(selectForGame)((gameId, player, player, limit))
+        player
+            .fold(session.execute(selectForGame)((gameId, limit)))(p =>
+                session.execute(selectForGamePlayer)((gameId, p, limit))
+            )
             .map(
               _.map((id, description, start, completedAt, cancelled, friendly, players) =>
                   GameMatch(

@@ -1349,7 +1349,9 @@ class MatchServiceSpec extends PropertySuite {
                         .flatMap(_.traverse((p, _, _) => new ResultRepo(session).read(game.gameId, p.participantId)))
                 )
             } yield cancelled.isFriendly && stored.exists(m => m.isFriendly && m.isCancelled) && results.nonEmpty &&
-                results.forall(_.exists(r => r.isForfeit && !r.isWinner && r.eloDelta.isEmpty))
+                results.forall(
+                  _.exists(r => r.isForfeit && !r.isWinner && r.eloDelta.isEmpty && r.rank == results.size)
+                )
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
@@ -1597,6 +1599,36 @@ class MatchServiceSpec extends PropertySuite {
         val (theirs, nobodys, matchId) = result.timeout(30.seconds).unsafeRunSync()
         assertEquals(theirs.map(_.matchId), List(matchId))
         assertEquals(nobodys, Nil)
+    }
+
+    test("a game's admin lists a match the engine has not created yet, with no start and nobody seated") {
+        val result = for {
+            f <- friendlyFixture()
+            (owner, game, matchId, gameAdmin) = f
+            due <- TestSession.resource.use(session =>
+                TestMatches.writeMatch(
+                  session = session,
+                  m = Match(
+                    gameId = game.gameId,
+                    matchId = Generators.newMatchId(),
+                    tournamentId = TournamentId.unassigned,
+                    description = "not created yet",
+                    completedAt = None,
+                    start = None,
+                    timeLimit = None,
+                    settings = "{}",
+                    status = MatchStatus.Due
+                  ),
+                  owner = owner.playerId
+                )
+            )
+            listed <- matchService.listForGame(gameId = game.gameId, callerExternalId = gameAdmin.externalId)
+        } yield (listed, due.matchId, matchId)
+        val (listed, dueId, matchId) = result.timeout(30.seconds).unsafeRunSync()
+        assertEquals(
+          listed.map(m => (m.matchId, m.start.isDefined, m.players.isEmpty)),
+          List((dueId, false, true), (matchId, true, false))
+        )
     }
 
     test(
