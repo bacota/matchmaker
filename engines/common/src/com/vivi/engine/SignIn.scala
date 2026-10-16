@@ -408,6 +408,10 @@ ${authScript(Some(login))}
   /* True while a request is in flight. Disables the buttons, so a slow answer does not become two
    * attempts — the second of which would arrive with a spent session. */
   let busy = false;
+  /* Counts the times the form has been started over. A step answers only the attempt it was taken
+   * in: one still out when "Start again" is pressed would otherwise put back the stage, or the
+   * message, that the player has just walked away from. */
+  let attempt = 0;
   /* Shown above the form. Not the page's `#error`: this belongs to the form and clears when the
    * player tries again. */
   let problem = null;
@@ -526,9 +530,10 @@ ${authScript(Some(login))}
     busy = true;
     problem = null;
     renderSignIn();
+    const mine = attempt;
     run().then(
-      outcome => { busy = false; advance(username, outcome); },
-      error => { busy = false; problem = explain(error); renderSignIn(); }
+      outcome => { if (mine !== attempt) return; busy = false; advance(username, outcome); },
+      error => { if (mine !== attempt) return; busy = false; problem = explain(error); renderSignIn(); }
     );
   }
 
@@ -600,6 +605,9 @@ ${authScript(Some(login))}
    * the session, and on "start again" so a half-finished challenge is not resumed with a spent
    * session. */
   function resetSignIn() {
+    // Whatever step is out belongs to the attempt this ends; see `attempt`.
+    attempt++;
+    busy = false;
     stage = { kind: "credentials" };
     signInPassword = "";
     problem = null;

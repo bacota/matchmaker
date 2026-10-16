@@ -55,6 +55,10 @@ object SignIn {
       */
     private val busy: Var[Boolean] = Var(false)
 
+    /* How many times the form has been started over, by "Start again" or by signing in. A step answers only the
+     * attempt it was taken in. */
+    private var attempts = 0
+
     /** Shown above the form. Not `Store.error`: this belongs to the form and should clear when the user tries again,
       * rather than joining the application-wide errors in the header.
       */
@@ -146,12 +150,17 @@ object SignIn {
         else {
             busy.set(true)
             say(None)
+            val attempt = attempts
 
             step.onComplete { outcome =>
-                busy.set(false)
-                outcome match {
-                    case Success(result) => advance(username, result)
-                    case Failure(error)  => say(Some(explain(error)), wrongFor(error))
+                // An answer to an attempt since started over is nobody's: it would put back the stage, or the
+                // message, that "Start again" has just taken away.
+                if (attempt == attempts) {
+                    busy.set(false)
+                    outcome match {
+                        case Success(result) => advance(username, result)
+                        case Failure(error)  => say(Some(explain(error)), wrongFor(error))
+                    }
                 }
             }
         }
@@ -228,6 +237,9 @@ object SignIn {
       * session, and on "start again" so a half-finished challenge is not resumed with a spent session.
       */
     private def reset(): Unit = {
+        // Whatever step is out belongs to the attempt this ends; see `attempts`.
+        attempts += 1
+        busy.set(false)
         stage.set(Stage.Credentials)
         password.set("")
         code.set("")
