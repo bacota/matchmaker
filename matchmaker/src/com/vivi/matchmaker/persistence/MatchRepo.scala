@@ -831,7 +831,7 @@ class MatchRepo(session: Session[IO]) {
      * game's, which would miss the player's older ones -- and found from their seats in the game,
      * on participant(game_id, player_id, ...), not by testing each of the game's matches. Two
      * queries rather than one with an optional player, which no single plan serves well. */
-    private type GameMatchRow = (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])
+    private type GameMatchRow = (MatchId, String, Option[Instant], Option[Instant], Boolean, Boolean, Arr[String])
 
     private val gameMatchOrder: Fragment[Void] =
         sql"(completed_at IS NULL AND NOT is_cancelled) DESC, start DESC, match_id"
@@ -846,7 +846,7 @@ class MatchRepo(session: Session[IO]) {
                                  WHERE p.game_id = m.game_id AND p.match_id = m.match_id
                                  ORDER BY p.participant_id) END
           FROM ($picked) m
-          ORDER BY $gameMatchOrder""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
+          ORDER BY $gameMatchOrder""".query(matchId *: text *: instant.opt *: instant.opt *: bool *: bool *: _text)
 
     private val gameMatchColumns: Fragment[Void] =
         sql"game_id, match_id, description, start, completed_at, is_cancelled, is_friendly"

@@ -8,7 +8,8 @@ import java.time.Instant
 case class GameMatch(
     matchId: MatchId,
     description: String,
-    start: Instant,
+    /** When play began: `None` for a match the engine has not created yet. */
+    start: Option[Instant],
     completedAt: Option[Instant],
     isCancelled: Boolean,
     isFriendly: Boolean,

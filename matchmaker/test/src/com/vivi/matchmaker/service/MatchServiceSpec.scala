@@ -1599,6 +1599,36 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(nobodys, Nil)
     }
 
+    test("a game's admin lists a match the engine has not created yet, with no start and nobody seated") {
+        val result = for {
+            f <- friendlyFixture()
+            (owner, game, matchId, gameAdmin) = f
+            due <- TestSession.resource.use(session =>
+                TestMatches.writeMatch(
+                  session = session,
+                  m = Match(
+                    gameId = game.gameId,
+                    matchId = Generators.newMatchId(),
+                    tournamentId = TournamentId.unassigned,
+                    description = "not created yet",
+                    completedAt = None,
+                    start = None,
+                    timeLimit = None,
+                    settings = "{}",
+                    status = MatchStatus.Due
+                  ),
+                  owner = owner.playerId
+                )
+            )
+            listed <- matchService.listForGame(gameId = game.gameId, callerExternalId = gameAdmin.externalId)
+        } yield (listed, due.matchId, matchId)
+        val (listed, dueId, matchId) = result.timeout(30.seconds).unsafeRunSync()
+        assertEquals(
+          listed.map(m => (m.matchId, m.start.isDefined, m.players.isEmpty)),
+          List((dueId, false, true), (matchId, true, false))
+        )
+    }
+
     test(
       "the match's own tournament owner may not, nor an admin of a different game, and a missing match is not found"
     ) {

@@ -98,7 +98,8 @@ object Ratings {
           div(
             cls := "detail",
             m.completedAt.map(when => s"completed ${Format.date(when)}").getOrElse {
-                if (m.isCancelled) "cancelled" else s"started ${Format.date(m.start)}"
+                if (m.isCancelled) "cancelled"
+                else m.start.fold("not started yet")(when => s"started ${Format.date(when)}")
             }
           ),
           // A completed match can change too, and is re-rated when it does: said beside the box, and read
