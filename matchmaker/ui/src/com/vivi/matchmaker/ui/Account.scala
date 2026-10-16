@@ -609,6 +609,9 @@ object Account {
         // drawn and the address field no longer disabled.
         var addressField: Option[dom.html.Element] = None
         var codeField: Option[dom.html.Element] = None
+        // Whether the player has left the address field since the form was drawn. Until then an address that is not
+        // one yet is an address still being typed, and saying "invalid" at every keystroke is noise.
+        val hasLeftAddress = Var(false)
         def focusFor(stage: EmailStage): Unit =
             dom.window.setTimeout(
               () =>
@@ -646,7 +649,10 @@ object Account {
               tpe := "email",
               autoComplete := "email",
               onMountUnmountCallback(c => addressField = Some(c.thisNode.ref), _ => addressField = None),
-              aria.invalid <-- email.signal.map(typed => (typed.trim.nonEmpty && !isPlausibleEmail(typed)).toString),
+              onBlur --> (_ => hasLeftAddress.set(true)),
+              aria.invalid <-- email.signal.combineWithFn(hasLeftAddress.signal)((typed, hasLeft) =>
+                  (hasLeft && typed.trim.nonEmpty && !isPlausibleEmail(typed)).toString
+              ),
               // Locked once the code is out: the code was mailed to what this said at the time, and
               // an address edited underneath it would confirm one address having verified another.
               disabled <-- emailStage.signal.map(_ != EmailStage.Idle),
