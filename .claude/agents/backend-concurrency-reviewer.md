@@ -114,6 +114,6 @@ Then, briefly: what you checked and found sound, and anything you could not chec
 ## Saving the report
 
 You return the report; you don't write it to a file. Whoever saves it puts it in
-`agents/reviews/<date>/backend-concurrency-reviewer/review-<short hash>.md`, where the date is the day of the review (`2026-10-15`) and the short
+`agents/reviews/<date>/backend-concurrency-reviewer-<short hash>.md`, where the date is the day of the review (`2026-10-15`) and the short
 hash is the first seven characters of the commit you noted at the start. Two reviews on one day then get different
 names, unless they reviewed the same commit. Begin the report with that full hash, so whoever saves it has it.
