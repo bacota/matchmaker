@@ -2,6 +2,7 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -54,13 +55,23 @@ class InvitationRepo(session: Session[IO]) {
     def isInvited(game: GameId, tournament: TournamentId, player: PlayerId): IO[Boolean] =
         session.unique(selectOne)((game, tournament, player)).map(_ > 0)
 
-    private val selectAll: Query[(GameId, TournamentId), (Long, String)] =
-        sql"""SELECT p.player_id, p.nickname FROM player_invitation i
+    // Of each tournament named, unnested as (game, tournament) pairs so that each is a lookup on its key.
+    private val selectAll: Query[(Arr[Int], Arr[Long]), (GameId, TournamentId, Long, String)] =
+        sql"""SELECT i.game_id, i.tournament_id, p.player_id, p.nickname
+          FROM unnest(${_int4}, ${_int8}) AS k (game_id, tournament_id)
+          JOIN player_invitation i ON i.game_id = k.game_id AND i.tournament_id = k.tournament_id
           JOIN player p ON p.player_id = i.player_id
-          WHERE i.game_id = $gameId AND i.tournament_id = $tournamentId
-          ORDER BY p.nickname, p.player_id""".query(int8 *: text)
+          ORDER BY p.nickname, p.player_id""".query(gameId *: tournamentId *: int8 *: text)
 
     /** Everyone invited, with their nicknames, by nickname. */
     def list(game: GameId, tournament: TournamentId): IO[List[(PlayerId, String)]] =
-        session.execute(selectAll)((game, tournament)).map(_.map((id, name) => (PlayerId(id), name)))
+        listFor(List(TournamentKey(game, tournament))).map(_.getOrElse(TournamentKey(game, tournament), Nil))
+
+    /** As [[list]], for each of several tournaments in one query: those with nobody invited are left out. */
+    def listFor(tournaments: List[TournamentKey]): IO[Map[TournamentKey, List[(PlayerId, String)]]] =
+        if (tournaments.isEmpty) IO.pure(Map.empty)
+        else
+            session
+                .execute(selectAll)(TournamentKey.arrays(tournaments))
+                .map(_.groupMap((g, t, _, _) => TournamentKey(g, t))((_, _, id, name) => (PlayerId(id), name)))
 }

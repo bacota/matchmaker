@@ -265,31 +265,36 @@ class TournamentRounds[T](
     private def allowedRoles(game: Game, seats: Int): List[GameRoleId] =
         TournamentGame.of(game).seatingRoles.take(seats).map(r => GameRoleId(r.id))
 
-    /** Every seat whose turn it is to choose a role, across the caller's tournaments, with when their time runs out. */
+    /** Every seat whose turn it is to choose a role, across the caller's tournaments, with when their time runs out.
+      * Its matches, their tournaments and their games are each read once for the whole list.
+      */
     def choicesFor(callerExternalId: String): IO[List[TournamentChoice]] =
         sessionPool.use { session =>
             for {
                 caller <- requireCaller(session, callerExternalId)
                 waiting <- new TournamentMatchRepo(session).choosingFor(caller.playerId)
-                choices <- waiting.traverse { (gameId, tournamentId, matchId) =>
-                    for {
-                        t <- new TournamentRepo(session).read(gameId, tournamentId)
-                        tm <- new TournamentMatchRepo(session).read(gameId, matchId)
-                        game <- new GameRepo[T](session).read(gameId)
-                    } yield for {
-                        t <- t
-                        tm <- tm
-                        game <- game
-                    } yield TournamentChoice(
-                      gameId = gameId,
-                      tournamentId = tournamentId,
-                      tournamentName = t.name,
-                      gameName = game.displayName,
-                      matchId = matchId,
-                      chooseBy = TournamentRounds.chooseBy(t = t, game = game, tm = tm)
-                    )
-                }
-            } yield choices.flatten
+                tournaments <- new TournamentRepo(session).readFor(
+                  waiting.map(tm => TournamentKey(tm.gameId, tm.tournamentId)).distinct
+                )
+                // The few games they are in, read plainly, as everywhere here: see requireGame.
+                games <- waiting
+                    .map(_.gameId)
+                    .distinct
+                    .traverse(g => new GameRepo[T](session).read(g).map(_.map(g -> _)))
+                    .map(_.flatten.toMap)
+            } yield waiting.flatMap { tm =>
+                for {
+                    t <- tournaments.get(TournamentKey(tm.gameId, tm.tournamentId))
+                    game <- games.get(tm.gameId)
+                } yield TournamentChoice(
+                  gameId = tm.gameId,
+                  tournamentId = tm.tournamentId,
+                  tournamentName = t.name,
+                  gameName = game.displayName,
+                  matchId = tm.matchId,
+                  chooseBy = TournamentRounds.chooseBy(t = t, game = game, tm = tm)
+                )
+            }
         }
 
     // ---- creating a match ------------------------------------------------------------------
@@ -516,8 +521,8 @@ class TournamentRounds[T](
         }
 
     /** Reads the tournament with every result in, under its lock, and if the round being played is complete advances it
-      * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed it
-      * and the tournament goes on: a round is marked complete once, however many endings find it so.
+      * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed
+      * it and the tournament goes on: a round is marked complete once, however many endings find it so.
       */
     private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
         // Asked of the round's rows first: most endings leave the round going, and reading the whole tournament under
@@ -726,16 +731,18 @@ class TournamentRounds[T](
                             new TournamentRepo(session).stop(gameId, tournamentId) *>
                                 requireLoaded(session, t).flatMap { loaded =>
                                     IO.whenA(Progress.isRoundComplete(loaded.state))(
-                                      requireGame(session, gameId).flatMap(game =>
-                                          envFor(session = session, t = t, game = game, design = loaded.design)
-                                      ).flatMap(env =>
-                                          finish(
-                                            session = session,
-                                            t = t,
-                                            loaded = loaded,
-                                            state = Progress.advance(loaded.state, env)
+                                      requireGame(session, gameId)
+                                          .flatMap(game =>
+                                              envFor(session = session, t = t, game = game, design = loaded.design)
                                           )
-                                      )
+                                          .flatMap(env =>
+                                              finish(
+                                                session = session,
+                                                t = t,
+                                                loaded = loaded,
+                                                state = Progress.advance(loaded.state, env)
+                                              )
+                                          )
                                     )
                                 }
                         case _ => IO.raiseError(ConflictError("this tournament is already over"))
@@ -849,21 +856,11 @@ class TournamentRounds[T](
     /** Everyone's rating now, by entrant: a character entry's owner's, and the starting rating for anyone with none. */
     private def envFor(session: Session[IO], t: Tournament, game: Game, design: TournamentDesign): IO[Env] =
         for {
-            entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId)
-            players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
-            ratings <- entries.traverse { e =>
-                players.get(e.entrantId).flatten match {
-                    case Some(p) =>
-                        new EloRatingRepo(session)
-                            .read(t.gameId, p)
-                            .map(r => e.entrantId.value -> r.fold(EloRating.initial)(_.rating))
-                    case None => IO.pure(e.entrantId.value -> e.ratingAtEntry)
-                }
-            }
+            ratings <- new EntrantRepo(session).ratingsNow(t.gameId, t.tournamentId)
         } yield Env(
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
-          ratings = ratings.toMap,
+          ratings = ratings.map((id, r) => id.value -> r),
           defaultPoolSize = Some(t.defaultPoolSize),
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )

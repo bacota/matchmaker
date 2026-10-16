@@ -157,27 +157,28 @@ class TournamentService[T](
             } yield summaries
         }
 
-    /* Each challenge with who has entered it and who is invited: a query or two each, for the handful of open
-     * challenges a list holds. */
+    /* Each challenge with who has entered it and who is invited: three queries for the whole list, not three a
+     * challenge. */
     private def withEntries(
         session: skunk.Session[IO],
         summaries: List[TournamentSummary]
-    ): IO[List[ChallengeSummary]] =
-        summaries.traverse { s =>
-            val t = s.tournament
-            (
-              new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn)),
-              new InvitationRepo(session).list(t.gameId, t.tournamentId),
-              new CharacterInvitationRepo(session).list(t.gameId, t.tournamentId)
-            ).mapN((entries, invited, characters) =>
+    ): IO[List[ChallengeSummary]] = {
+        val keys = summaries.map(s => TournamentKey(s.tournament.gameId, s.tournament.tournamentId))
+        (
+          new EntrantRepo(session).listFor(keys),
+          new InvitationRepo(session).listFor(keys),
+          new CharacterInvitationRepo(session).listFor(keys)
+        ).mapN { (entries, invited, characters) =>
+            summaries.zip(keys).map { (s, key) =>
                 ChallengeSummary(
                   summary = s,
-                  entries = entries,
-                  invited = invited.map((id, name) => PlayerName(id, name)),
-                  invitedCharacters = characters
+                  entries = entries.getOrElse(key, Nil).filterNot(_.isWithdrawn),
+                  invited = invited.getOrElse(key, Nil).map((id, name) => PlayerName(id, name)),
+                  invitedCharacters = characters.getOrElse(key, Nil)
                 )
-            )
+            }
         }
+    }
 
     /** A new challenge: a tournament of the challenge model, opened at once, with the caller's entry in it — unless a
       * game's admin is offering a match they will not play in — and its invitations, all in one transaction, because
@@ -1086,21 +1087,13 @@ class TournamentService[T](
     private def ratingOf(session: skunk.Session[IO], gameId: GameId, player: PlayerId): IO[Int] =
         new EloRatingRepo(session).read(gameId, player).map(_.fold(EloRating.initial)(_.rating))
 
-    /** Each entrant's rating now — a character entry's owner's — by entrant id, for seeding. */
+    /** Each of `entries`'s rating now — a character entry's owner's — by entrant id, for seeding. */
     private def currentRatings(session: skunk.Session[IO], gameId: GameId, entries: List[Entrant]): IO[Map[Long, Int]] =
-        new EntrantRepo(session)
-            .players(gameId, entries.headOption.map(_.tournamentId).getOrElse(TournamentId.unassigned))
-            .flatMap { players =>
-                entries
-                    .traverse { e =>
-                        players
-                            .get(e.entrantId)
-                            .flatten
-                            .fold(IO.pure(e.ratingAtEntry))(ratingOf(session, gameId, _))
-                            .map(e.entrantId.value -> _)
-                    }
-                    .map(_.toMap)
+        entries.headOption.fold(IO.pure(Map.empty[Long, Int])) { e =>
+            new EntrantRepo(session).ratingsNow(gameId, e.tournamentId).map { ratings =>
+                entries.flatMap(e => ratings.get(e.entrantId).map(e.entrantId.value -> _)).toMap
             }
+        }
 
     private def requireCaller(session: skunk.Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {

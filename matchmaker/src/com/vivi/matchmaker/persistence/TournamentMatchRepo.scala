@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -249,18 +250,34 @@ class TournamentMatchRepo(session: Session[IO]) {
     // participant row names who plays it now. Led by the player's seats rather than the matches: `s`'s conditions are
     // the predicate of the partial index participant_player_choosing, so only their unchosen seats are read, not every
     // seat they have had.
-    private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, Long)] =
-        sql"""SELECT m.game_id, m.tournament_id, m.match_id
+    private val selectChoosingFor: Query[PlayerId, MatchRow] =
+        sql"""SELECT m.game_id, m.tournament_id, m.match_id, m.pool_id, m.round, m.status, m.can_tie
           FROM participant s
           JOIN match m ON m.game_id = s.game_id AND m.match_id = s.match_id
           WHERE s.player_id = ${SkunkIdCodecs.playerId} AND s.game_role_id IS NULL AND NOT s.is_forfeit AND m.status = 'C'
             AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
                                    WHERE o.game_id = s.game_id AND o.match_id = s.match_id
                                      AND o.game_role_id IS NULL AND NOT o.is_forfeit)
-          ORDER BY m.create_date""".query(gameId *: tournamentId *: int8)
+          ORDER BY m.create_date""".query(matchRow)
 
-    /** The tournament matches waiting on this player to choose a role. */
-    def choosingFor(player: PlayerId): IO[List[(GameId, TournamentId, MatchId)]] =
-        // The match id decoded as a number and wrapped: a trailing opaque-typed codec defeats the tuple's types.
-        session.execute(selectChoosingFor)(player).map(_.map((g, t, id) => (g, t, MatchId(id))))
+    // The seats of the matches named, unnested as (game, match) pairs so that each is a lookup on
+    // participant (game_id, match_id).
+    private val selectSeatsOfMatches: Query[(Arr[Int], Arr[Long]), SeatRow] =
+        sql"""SELECT #$seatColumns FROM unnest(${_int4}, ${_int8}) AS k (game_id, match_id)
+          JOIN participant p ON p.game_id = k.game_id AND p.match_id = k.match_id
+          ORDER BY p.participant_id""".query(seatRow)
+
+    /** The tournament matches waiting on this player to choose a role, oldest first, with their seats: two queries,
+      * however many there are.
+      */
+    def choosingFor(player: PlayerId): IO[List[TournamentMatch]] =
+        session.execute(selectChoosingFor)(player).flatMap { matches =>
+            if (matches.isEmpty) IO.pure(Nil)
+            else
+                session
+                    .execute(selectSeatsOfMatches)(
+                      (Arr.fromFoldable(matches.map(_._1.value)), Arr.fromFoldable(matches.map(_._3.value)))
+                    )
+                    .map(assemble(matches, _))
+        }
 }

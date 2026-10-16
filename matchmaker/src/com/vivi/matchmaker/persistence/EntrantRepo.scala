@@ -3,6 +3,7 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -74,49 +75,89 @@ class EntrantRepo(session: Session[IO]) {
             )
         )
 
-    // Who plays each entry now, with their nickname, and for a character entry the character and its name.
+    // Who plays each entry now, with their nickname, and for a character entry the character and its name: of each
+    // tournament named, unnested as (game, tournament) pairs so that each is a lookup on its key.
     private val selectAll: Query[
-      (GameId, TournamentId),
-      (EntrantId, Option[Long], Option[Long], Int, Instant, Option[Instant], Option[String], Option[String])
+      (Arr[Int], Arr[Long]),
+      (
+          GameId,
+          TournamentId,
+          EntrantId,
+          Option[Long],
+          Option[Long],
+          Int,
+          Instant,
+          Option[Instant],
+          Option[String],
+          Option[String]
+      )
     ] =
-        sql"""SELECT e.entrant_id, ep.player_id, ce.character_id, e.rating_at_entry, e.entered_at, e.withdrawn_at,
-                 p.nickname, c.name
-          FROM entrant e
+        sql"""SELECT e.game_id, e.tournament_id, e.entrant_id, ep.player_id, ce.character_id, e.rating_at_entry,
+                 e.entered_at, e.withdrawn_at, p.nickname, c.name
+          FROM unnest(${_int4}, ${_int8}) AS k (game_id, tournament_id)
+          JOIN entrant e ON e.game_id = k.game_id AND e.tournament_id = k.tournament_id
           LEFT JOIN entrant_player ep
                  ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
           LEFT JOIN player p ON p.player_id = ep.player_id
           LEFT JOIN character_entrant ce
                  ON ce.game_id = e.game_id AND ce.tournament_id = e.tournament_id AND ce.entrant_id = e.entrant_id
           LEFT JOIN "character" c ON c.game_id = ce.game_id AND c.character_id = ce.character_id
-          WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId
           ORDER BY e.entered_at, e.entrant_id""".query(
-          entrantId *: int8.opt *: int8.opt *: int4 *: instant *: instant.opt *: text.opt *: text.opt
+          gameId *: tournamentId *: entrantId *: int8.opt *: int8.opt *: int4 *: instant *: instant.opt *: text.opt *:
+              text.opt
         )
 
     /** Every entry in a tournament, withdrawn ones included, in the order they were made. */
     def list(game: GameId, tournament: TournamentId): IO[List[Entrant]] =
-        session
-            .execute(selectAll)((game, tournament))
-            .map(_.map { case (id, player, character, rating, at, withdrawn, nickname, characterName) =>
-                Entrant(
-                  gameId = game,
-                  tournamentId = tournament,
-                  entrantId = id,
-                  playerId = player.map(PlayerId(_)),
-                  characterId = character.map(CharacterId(_)),
-                  ratingAtEntry = rating,
-                  enteredAt = at,
-                  withdrawnAt = withdrawn,
-                  nickname = nickname.getOrElse(""),
-                  characterName = characterName
-                )
-            })
+        listFor(List(TournamentKey(game, tournament))).map(_.getOrElse(TournamentKey(game, tournament), Nil))
+
+    /** As [[list]], for each of several tournaments in one query: those with no entries are left out. */
+    def listFor(tournaments: List[TournamentKey]): IO[Map[TournamentKey, List[Entrant]]] =
+        if (tournaments.isEmpty) IO.pure(Map.empty)
+        else
+            session
+                .execute(selectAll)(TournamentKey.arrays(tournaments))
+                .map(_.map { case (game, tournament, id, player, character, rating, at, withdrawn, nickname, name) =>
+                    Entrant(
+                      gameId = game,
+                      tournamentId = tournament,
+                      entrantId = id,
+                      playerId = player.map(PlayerId(_)),
+                      characterId = character.map(CharacterId(_)),
+                      ratingAtEntry = rating,
+                      enteredAt = at,
+                      withdrawnAt = withdrawn,
+                      nickname = nickname.getOrElse(""),
+                      characterName = name
+                    )
+                }.groupBy(e => TournamentKey(e.gameId, e.tournamentId)))
 
     /** Who plays each entry now: the player who entered it, or for a character entry the character's current owner — or
       * nobody, for a character that has none.
       */
     def players(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Option[PlayerId]]] =
         list(game, tournament).map(_.map(e => e.entrantId -> e.playerId).toMap)
+
+    // Each entry with whether anybody plays it now, that player's rating in the game if they have one, and the rating
+    // it entered with. entrant_player holds a row only for an entry somebody plays.
+    private val selectRatings: Query[(GameId, TournamentId), (EntrantId, Boolean, Option[Int], Int)] =
+        sql"""SELECT e.entrant_id, ep.player_id IS NOT NULL, r.rating, e.rating_at_entry
+          FROM entrant e
+          LEFT JOIN entrant_player ep
+                 ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
+          LEFT JOIN elo_rating r ON r.game_id = ep.game_id AND r.player_id = ep.player_id
+          WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId""".query(entrantId *: bool *: int4.opt *: int4)
+
+    /** Each entry's rating now, withdrawn ones included, for seeding: its player's overall rating in the game -- a
+      * character entry's owner's -- or the starting rating for a player with none, and the rating it entered with for a
+      * character nobody owns.
+      */
+    def ratingsNow(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Int]] =
+        session
+            .execute(selectRatings)((game, tournament))
+            .map(_.map { (id, isPlayed, rating, atEntry) =>
+                id -> (if (isPlayed) rating.getOrElse(EloRating.initial) else atEntry)
+            }.toMap)
 
     // Every statement below names the entry by its whole key, tournament included: every key on `entrant` and its two
     // subtypes is (game_id, tournament_id, entrant_id), and the game alone would read the entries of every tournament
