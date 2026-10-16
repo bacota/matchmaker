@@ -431,11 +431,16 @@ object Store {
      * Stamped with the sign-in it belongs to rather than merely cleared, because clearing alone
      * leaves the other half: `Store.run` drops nothing, so an accept that answers after a sign-out
      * still reports itself, and it would report itself into the session that had just started. The
-     * stamp makes such a write unreadable instead of racing it. */
+     * stamp makes such a write unreadable instead of racing it.
+     *
+     * The stamp is the one taken when the answer was asked for, not when it came back: `signIns` moves
+     * only at a sign-out, so a number read at answer time is already the next session's. */
     private val invitationStatus: Var[Option[(Int, String)]] = Var(None)
 
-    /** Says what has just been done with an invitation, for the status line in that section to announce. */
-    def sayAboutInvitations(said: String): Unit = invitationStatus.set(Some((currentSignIn, said)))
+    /** Says what has just been done with an invitation, for the status line in that section to announce. `signIn` is
+      * `currentSignIn` as it was before the request was made.
+      */
+    def sayAboutInvitations(signIn: Int, said: String): Unit = invitationStatus.set(Some((signIn, said)))
 
     /** What to announce, which is nothing at all unless this session is the one that said it.
       *

@@ -160,22 +160,26 @@ object MatchSections {
         // all, and another's Accept still out would otherwise be pressable again.
         val acceptBusy = heldBusy(s"accept invitation ${t.tournamentId}")
         val declineBusy = heldBusy(s"decline invitation ${t.tournamentId}")
-        def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit =
+        def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit = {
+            val signIn = Store.currentSignIn
             Store.run(
               action =
                   ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = character),
               busy = busy,
               onFailure = invitationGone(t)
             ) { _ =>
-                Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} accepted.")
+                Store.sayAboutInvitations(signIn, s"Invitation to ${invited.summary.gameName} accepted.")
                 // Accepting may have filled one that starts itself: the start's reloads cover both.
                 reloadAfterStart(t.gameId)
             }
-        def declined(busy: Var[Boolean], decline: Future[Unit]): Unit =
+        }
+        def declined(busy: Var[Boolean], decline: Future[Unit]): Unit = {
+            val signIn = Store.currentSignIn
             Store.run(action = decline, busy = busy, onFailure = invitationGone(t)) { _ =>
-                Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} declined.")
+                Store.sayAboutInvitations(signIn, s"Invitation to ${invited.summary.gameName} declined.")
                 reloadChallengeSections(t.gameId)
             }
+        }
         li(
           cls := "row",
           child <-- currentPlayer.map {
