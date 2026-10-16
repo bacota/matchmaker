@@ -245,7 +245,11 @@ class ParticipantRepo(session: Session[IO]) {
 
     /* `t` is the match being reclassified. Seats of its players in the same game's matches that
      * began after it and are still being played, locked in seat order -- every caller takes them in
-     * the same order. Built per call, since the players are a list of their own length. */
+     * the same order. Built per call, since the players are a list of their own length.
+     *
+     * A seat is written with its match or after it, never before, so a seat of a later match was
+     * itself made after `t` began: that bound lets participant_game_player_created read only
+     * those seats. */
     private def selectLaterSeats(
         players: Int,
         noWait: Boolean
@@ -256,6 +260,7 @@ class ParticipantRepo(session: Session[IO]) {
           JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
           WHERE p.game_id = $gameId AND p.match_id <> $matchId
             AND p.player_id IN (${playerId.list(players)})
+            AND p.create_date > t.create_date
             AND m.completed_at IS NULL AND NOT m.is_cancelled
             AND m.create_date > t.create_date
           ORDER BY p.participant_id
