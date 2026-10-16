@@ -533,11 +533,13 @@ object Store {
         // before this one may still be out, and it must stop being the newest the moment this player
         // is asked for, or its answer lands under this player's name. See `gated`.
         val stamp = ask(lists)
-        gated(lists) { () =>
+        // And their finished public matches in every game, a window of them: a list of its own. Asked for now, like
+        // the running list's stamp, and not when that request is let go -- which can be a second later, after the
+        // player has gone Home, and would then take Home's completed list over with this player's.
+        val completed = showCompleted(list = CompletedList.Public(playerId, None))
+        val running = gated(lists) { () =>
             val running =
                 reloadAs(action = ApiClient.publicMatches(playerId), stamp = stamp, fetches = lists)(publicActive.set)
-            // And their finished public matches in every game, a window of them: a list of its own.
-            showCompleted(list = CompletedList.Public(playerId, None))
 
             // However it settled: `reloadAs` reports a failure and succeeds, so this runs on either
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
@@ -545,6 +547,7 @@ object Store {
             // itself, and this one clearing it would say that fetch had finished.
             running.map(_ => if (isNewest(stamp, lists)) publicMatchesLoading.set(false))
         }
+        running.zip(completed).map(_ => ())
     }
 
     /** The character whose page is open, as anybody may see it: `None` until it has arrived. */
@@ -560,7 +563,9 @@ object Store {
         val lists = Seq(Fetch.PublicMatches)
         publicMatchesLoading.set(true)
         val stamp = ask(lists)
-        gated(lists) { () =>
+        // At the ask, as in `reloadPublicMatches`.
+        val completed = showCompleted(list = CompletedList.OfCharacter(character))
+        val loaded = gated(lists) { () =>
             val profile =
                 reloadAs(action = ApiClient.characterProfile(character), stamp = stamp, fetches = lists)(p =>
                     characterProfile.set(Some(p))
@@ -568,9 +573,9 @@ object Store {
             val running = reloadAs(action = ApiClient.characterMatches(character), stamp = stamp, fetches = lists)(
               publicActive.set
             )
-            showCompleted(list = CompletedList.OfCharacter(character))
             profile.zip(running).map(_ => if (isNewest(stamp, lists)) publicMatchesLoading.set(false))
         }
+        loaded.zip(completed).map(_ => ())
     }
 
     /** What the caller wants to be told about, once something has asked.
