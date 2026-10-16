@@ -877,6 +877,23 @@ object Store {
         }
     }
 
+    /** `run` with `onFailure`, for an answer that belongs to the session that asked: dropped whole after a sign-out, as
+      * `runSignedIn` drops it, `onFailure` included.
+      */
+    def runSignedIn[A](action: Future[A], busy: Var[Boolean], onFailure: Throwable => Unit)(
+        onSuccess: A => Unit
+    ): Unit = {
+        val signIn = currentSignIn
+        busy.set(true)
+        action.onComplete { outcome =>
+            busy.set(false)
+            if (isStillSignedInAs(signIn)) {
+                settle(outcome, Banner.Action)(onSuccess)
+                outcome.failed.foreach(onFailure)
+            }
+        }
+    }
+
     /** Fetches something this store will hold, and drops the answer if the session that asked for it has ended.
       *
       * The difference between this and `run` is what the answer is for. `run` is for a button: somebody clicked it,

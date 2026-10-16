@@ -285,7 +285,7 @@ object MatchSections {
           div(cls := "title", c.summary.gameName),
           div(cls := "detail", challengeTerms(t, c.entries.size)),
           busyButton(label = "Start") { busy =>
-              Store.run(
+              Store.runSignedIn(
                 action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
                 busy = busy,
                 onFailure = challengeStale(t)
@@ -297,7 +297,7 @@ object MatchSections {
           // Enough players having entered is no promise the owner still wants the match, so the way out of it stays
           // here alongside the start.
           busyButton(label = "Cancel") { busy =>
-              Store.run(
+              Store.runSignedIn(
                 action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = challengeStale(t)
@@ -444,7 +444,7 @@ object MatchSections {
           // which `challengeStale` treats as the news it is.
           if (c.summary.isOwner)
               busyButton(label = "Cancel", classes = Some("link")) { busy =>
-                  Store.run(
+                  Store.runSignedIn(
                     action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
                     busy = busy,
                     onFailure = challengeStale(t)
@@ -456,7 +456,7 @@ object MatchSections {
           else
               mine.fold(emptyNode) { entry =>
                   busyButton(label = "Withdraw", classes = Some("link")) { busy =>
-                      Store.run(
+                      Store.runSignedIn(
                         action = ApiClient.withdrawFromTournament(
                           gameId = t.gameId,
                           tournamentId = t.tournamentId,

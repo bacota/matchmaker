@@ -431,7 +431,7 @@ object Tournaments {
                       if (!t.isStopped && d.design.stages.exists(_.repeat == Repetition.UntilStopped))
                           busyButton(label = "Stop Repeating", busy = heldBusy(s"stop repeating ${t.tournamentId}"))(
                             busy =>
-                                Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy) { _ =>
+                                Store.runSignedIn(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy) { _ =>
                                     Views.announce("This stage will not repeat again.")
                                     reload(d)
                                 }
@@ -499,7 +499,7 @@ object Tournaments {
                             .contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
                       )
                           busyButton(label = "Withdraw", busy = heldBusy(s"withdraw ${e.entrantId}"))(busy =>
-                              Store.run(
+                              Store.runSignedIn(
                                 ApiClient.withdrawFromTournament(
                                   gameId = t.gameId,
                                   tournamentId = t.tournamentId,
@@ -580,7 +580,7 @@ object Tournaments {
                       span(inv.nickname),
                       busyButton(label = "Remove", busy = heldBusy(s"uninvite ${inv.playerId} from ${t.tournamentId}"))(
                         busy =>
-                            Store.run(
+                            Store.runSignedIn(
                               ApiClient.revokeTournamentInvitation(
                                 gameId = t.gameId,
                                 tournamentId = t.tournamentId,
@@ -602,7 +602,7 @@ object Tournaments {
                         label = "Remove",
                         busy = heldBusy(s"uninvite ${inv.character.characterId} from ${t.tournamentId}")
                       )(busy =>
-                          Store.run(
+                          Store.runSignedIn(
                             ApiClient
                                 .revokeTournamentCharacterInvitation(
                                   gameId = t.gameId,
@@ -651,7 +651,7 @@ object Tournaments {
                       span(p.nickname),
                       busyButton(label = "Invite", busy = heldBusy(s"invite ${p.playerId} to ${t.tournamentId}"))(
                         busy =>
-                            Store.run(
+                            Store.runSignedIn(
                               ApiClient.inviteToTournament(
                                 gameId = t.gameId,
                                 tournamentId = t.tournamentId,

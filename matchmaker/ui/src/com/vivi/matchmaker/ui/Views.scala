@@ -27,10 +27,15 @@ object Views {
     /** Says out loud how an action went whose own control is gone with what it acted on: a row's Cancel that removes
       * the row, a Stop that removes the button. The row going is what a sighted player sees; this is what everyone else
       * is told. Cleared first and set a turn later, so the same words said twice are read out twice.
+      *
+      * Not set at all if the session that said it ends in that turn: a sign-out clears what was said, and the next
+      * player is not told how the last one's action went. An answer that can arrive after a sign-out reaches this
+      * through `Store.runSignedIn`, which drops it before it is said.
       */
     private[ui] def announce(text: String): Unit = {
+        val signIn = Store.currentSignIn
         announcement.set("")
-        dom.window.setTimeout(() => announcement.set(text), 50)
+        dom.window.setTimeout(() => if (Store.isStillSignedInAs(signIn)) announcement.set(text), 50)
     }
 
     /** A button that starts a request, and says so while it is running.

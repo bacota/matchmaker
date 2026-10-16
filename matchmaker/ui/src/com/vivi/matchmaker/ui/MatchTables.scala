@@ -378,7 +378,7 @@ object MatchTables {
                       "Cancel this match? Every player forfeits, and it won't change anyone's rating."
                     )
                   )
-                      Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
+                      Store.runSignedIn(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
                           Views.announce("Match cancelled.")
                           Store.refreshMatches()
                       }
