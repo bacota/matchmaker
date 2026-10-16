@@ -355,6 +355,11 @@ class TournamentService[T](
             session.transaction.use { _ =>
                 for {
                     caller <- requireCaller(session, callerExternalId)
+                    // The model before the tournament, the order `create` and a model sync take them in: a sync
+                    // locks a model and then every tournament made from it, so taking the tournament first would
+                    // deadlock against one removing the model this tournament is made from. `requireModel` takes
+                    // it again below, which a lock already held makes free.
+                    _ <- new TournamentModelRepo(session).lockForShare(request.tournamentModelId)
                     t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                     game <- requireGame(session, gameId)
                     owner <- request.owner
