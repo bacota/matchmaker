@@ -290,19 +290,27 @@ class MatchService(
             summaries.map(s => byMatch.get((s.gameId, s.matchId)).fold(s)(clocks => s.copy(clocks = clocks)))
         }
 
-    /** How the caller's finished matches turned out: every seat, the winner first.
+    /** How the caller's finished matches in one window of their completed list turned out: every seat, the winner
+      * first. The window is read as [[completed]] reads it, so a query with the `asOf` that list answered with names
+      * the same matches it showed.
       *
       * Scoped to the caller's own participation like the three lists above, so it needs no authorization rule of its
-      * own — there is no parameter that could ask for anyone else's. Two queries for the whole completed list, not two
-      * per match: the rows of the table, and what each seat spent getting there.
+      * own — there is no parameter that could ask for anyone else's. Two queries for the whole window, not two per
+      * match: the rows of the table, and what each seat spent getting there.
       */
-    def results(callerExternalId: String): IO[List[ParticipantResult]] =
+    def results(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[List[ParticipantResult]] =
         sessionPool.use { session =>
             val resultRepo = new ResultRepo(session)
             for {
                 caller <- resolveCaller(session, callerExternalId)
-                rows <- resultRepo.listForPlayer(caller.playerId)
-                spent <- resultRepo.timeTakenForPlayer(caller.playerId)
+                asOf <- query.asOf.fold(new MatchRepo(session).now)(IO.pure)
+                span = MatchRepo.CompletedSpan(
+                  from = query.from(asOf),
+                  until = query.until(asOf),
+                  gameId = query.gameId
+                )
+                rows <- resultRepo.listForPlayer(caller.playerId, span)
+                spent <- resultRepo.timeTakenForPlayer(caller.playerId, span)
             } yield {
                 val byParticipant = spent.map(row => (row.gameId, row.participantId) -> row.timeTaken).toMap
                 rows.map { row =>

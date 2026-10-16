@@ -1709,6 +1709,32 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
+    // The window is the completed list's: the day before now by default, so a match just finished is
+    // in it, and not in the day before that, nor in a list narrowed to another game.
+    property("results cover only the window of the completed list they are asked for") {
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
+            val result = for {
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = true,
+                  pending = false
+                )
+                (_, game, matchId) = made
+                current <- matchService.results(externalId)
+                ofGame <- matchService.results(externalId, CompletedQuery(gameId = Some(game.gameId)))
+                earlier <- matchService.results(externalId, CompletedQuery(page = 1))
+                otherGame <- matchService.results(
+                  externalId,
+                  CompletedQuery(gameId = Some(GameId(game.gameId.value + 1)))
+                )
+            } yield current.exists(_.matchId == matchId) && ofGame.exists(_.matchId == matchId) &&
+                earlier.forall(_.matchId != matchId) && otherGame.forall(_.matchId != matchId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
     property("results are scoped to the caller, so another player sees nothing of them") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
             (nickname, externalId, mid, otherNickname, otherExternalId) =>

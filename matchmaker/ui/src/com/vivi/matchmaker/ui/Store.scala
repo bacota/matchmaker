@@ -619,7 +619,8 @@ object Store {
         reload(ApiClient.notifications(), Fetch.NotificationSettings)(s => notificationSettings.set(Some(s)))
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
-      * match. Loaded whole with the lists, not per row.
+      * match. For the window of the caller's completed list on screen, loaded with it by `showCompleted` in one
+      * request, not per row.
       */
     val resultsByMatch: Var[Map[MatchId, Seq[Json.ParticipantResultView]]] = Var(Map.empty)
 
@@ -1055,7 +1056,6 @@ object Store {
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         completedFor(page.now()).foreach(showCompleted(_))
         load(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
-        load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
         load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
         load(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
@@ -1151,11 +1151,9 @@ object Store {
 
     def reloadMyChallenges(): Future[Unit] = reload(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
 
-    /** The finished matches and their results together: the completed lists show the result table under each row, so
-      * reloading one without the other would leave a match beside somebody else's outcome.
-      */
-    def reloadCompleted(): Future[Unit] = {
-        val matches = completedView.now() match {
+    /** The finished matches and their results together: `showCompleted` brings a window's result tables with it. */
+    def reloadCompleted(): Future[Unit] =
+        completedView.now() match {
             // The same window, measured from the same moment, unless it is the most recent one --
             // asking that again is asking what has finished since, so it is measured from now.
             case Some(view) if completedAsked.now().contains(view.list) =>
@@ -1163,9 +1161,6 @@ object Store {
                 showCompleted(list = view.list, page = page, asOf = Option.when(page > 0)(view.page.asOf))
             case _ => completedAsked.now().fold(Future.unit)(showCompleted(_))
         }
-        val rows = reload(ApiClient.results(), Fetch.Results)(r => resultsByMatch.set(r.groupBy(_.matchId)))
-        matches.zip(rows).map(_ => ())
-    }
 
     /** The completed list a screen shows, if it shows one of the caller's: the main page's, or a game's. Another
       * player's page asks for its own with the rest of that page, in `reloadPublicMatches`.
@@ -1183,6 +1178,8 @@ object Store {
       * would ask again every time the answer redrew it. Through `reload`, so that only the latest ask is committed: a
       * Prev, a Next and a change of frame in quick succession, or a move to another screen, leave the window last asked
       * for. A different list is emptied at once rather than showing the last list's rows under its heading.
+      *
+      * The caller's own list brings the result tables of its window with it — see [[resultsByMatch]].
       */
     def showCompleted(list: CompletedList, page: Int = 0, asOf: Option[java.time.Instant] = None): Future[Unit] = {
         completedAsks += 1
@@ -1193,15 +1190,26 @@ object Store {
         completedFailed.set(None)
         if (!completedView.now().exists(_.list == list)) completedView.set(None)
         val query = CompletedQuery(frame = completedFrame.now(), page = page, asOf = asOf, gameId = list.gameId)
-        def fetch = list match {
-            case CompletedList.Mine(_)             => ApiClient.completedMatches(query)
-            case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query)
-            case CompletedList.OfCharacter(c)      => ApiClient.characterCompletedMatches(c, query)
+        def fetch: Future[(CompletedPage, Option[Seq[Json.ParticipantResultView]])] = list match {
+            // The results of this window's matches, asked for once the window is known -- with the
+            // `asOf` it was measured from, which on a first ask only the answer says -- and committed
+            // with it, so that no row is shown before its outcome or beside another window's.
+            case CompletedList.Mine(_) =>
+                ApiClient.completedMatches(query).flatMap { answer =>
+                    ApiClient.results(query.copy(asOf = Some(answer.asOf))).map(rows => (answer, Some(rows)))
+                }
+            case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query).map(_ -> None)
+            case CompletedList.OfCharacter(c)      => ApiClient.characterCompletedMatches(c, query).map(_ -> None)
+        }
+        val fetches = list match {
+            case CompletedList.Mine(_) => Seq(Fetch.Completed, Fetch.Results)
+            case _                     => Seq(Fetch.Completed)
         }
         var answered = false
-        reload(fetch, Fetch.Completed) { answer =>
+        reload(fetch, fetches*) { case (answer, results) =>
             answered = true
             completedView.set(Some(CompletedView(list, answer)))
+            results.foreach(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
         }.map { _ =>
             // `reload` succeeds whatever happened, having raised the banner for a failure; what tells
             // the two apart here is whether an answer was committed. Only for the latest ask -- an older

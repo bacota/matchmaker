@@ -273,9 +273,11 @@ object ApiClient {
           body = Some(write(request))
         )
 
-    /** How every finished match turned out, in one call — see `MatchService.results`. */
-    def results(): Future[Seq[Json.ParticipantResultView]] =
-        get[Seq[Json.ParticipantResultView]]("/me/results")
+    /** How the finished matches of one window of the caller's completed list turned out, in one call — see
+      * `MatchService.results`.
+      */
+    def results(query: CompletedQuery): Future[Seq[Json.ParticipantResultView]] =
+        get[Seq[Json.ParticipantResultView]]("/me/results" + completedQueryString(query))
 
     def matchDetail(gameId: GameId, matchId: MatchId): Future[Match] =
         get[Match](s"/games/${gameId.value}/matches/${matchId.value}")

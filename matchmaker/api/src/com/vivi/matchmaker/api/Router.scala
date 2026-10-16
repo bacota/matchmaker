@@ -403,28 +403,31 @@ object Router {
                     ok(services.engine.read(gameId = gid, matchId = mid, callerExternalId = caller))
                 )
 
-            // How the caller's finished matches turned out. One call for the whole completed list:
-            // it is a join over five tables, and per-match would be a request per row.
+            // How the caller's finished matches turned out, for one window of their completed list,
+            // named as `/me/matches/completed` names it. One call for the window: it is a join over
+            // five tables, and per-match would be a request per row.
             case ("GET", "me" :: "results" :: Nil) =>
-                ok(
-                  services.matches
-                      .results(caller)
-                      .map(_.map { r =>
-                          Json.ParticipantResultView(
-                            gameId = r.gameId,
-                            matchId = r.matchId,
-                            participantId = r.participantId,
-                            nickname = r.nickname,
-                            roleName = r.roleName,
-                            rank = r.rank,
-                            scores = r.scores.view.mapValues(JsonValues.fromScala).toMap,
-                            isWinner = r.isWinner,
-                            isForfeit = r.isForfeit,
-                            timeTaken = r.timeTaken,
-                            eloStart = r.eloStart,
-                            eloDelta = r.eloDelta
-                          )
-                      })
+                withCompletedQuery(request)(query =>
+                    ok(
+                      services.matches
+                          .results(caller, query)
+                          .map(_.map { r =>
+                              Json.ParticipantResultView(
+                                gameId = r.gameId,
+                                matchId = r.matchId,
+                                participantId = r.participantId,
+                                nickname = r.nickname,
+                                roleName = r.roleName,
+                                rank = r.rank,
+                                scores = r.scores.view.mapValues(JsonValues.fromScala).toMap,
+                                isWinner = r.isWinner,
+                                isForfeit = r.isForfeit,
+                                timeTaken = r.timeTaken,
+                                eloStart = r.eloStart,
+                                eloDelta = r.eloDelta
+                              )
+                          })
+                    )
                 )
 
             // Re-checks a running match with the game engine, for a participant who suspects the
