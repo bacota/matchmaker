@@ -65,7 +65,7 @@ class MatchService(
                 // Asked for at all only when one of these matches is played under a chess clock, which
                 // most are not.
                 if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
-                    withClocks(repo = repo, playerId = playerId, summaries = summaries)
+                    withClocks(repo, summaries)
                 else IO.pure(summaries)
             }
         }
@@ -278,8 +278,8 @@ class MatchService(
                 )
             }
 
-    private def withClocks(repo: MatchRepo, playerId: PlayerId, summaries: List[MatchSummary]): IO[List[MatchSummary]] =
-        repo.clocksForPlayer(playerId).map { rows =>
+    private def withClocks(repo: MatchRepo, summaries: List[MatchSummary]): IO[List[MatchSummary]] =
+        repo.clocksFor(summaries.map(s => (s.gameId, s.matchId))).map { rows =>
             val byMatch = rows
                 .groupBy(row => (row.gameId, row.matchId))
                 .view

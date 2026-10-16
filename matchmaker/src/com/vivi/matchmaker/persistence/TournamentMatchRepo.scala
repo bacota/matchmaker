@@ -246,12 +246,14 @@ class TournamentMatchRepo(session: Session[IO]) {
         session.option(selectTournamentOf)((game, id))
 
     // Seats whose turn it is to choose, for a player: the earliest unchosen seat of each choosing match, whose
-    // participant row names who plays it now.
+    // participant row names who plays it now. Led by the player's seats rather than the matches: `s`'s conditions are
+    // the predicate of the partial index participant_player_choosing, so only their unchosen seats are read, not every
+    // seat they have had.
     private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, Long)] =
         sql"""SELECT m.game_id, m.tournament_id, m.match_id
-          FROM match m
-          JOIN participant s ON s.game_id = m.game_id AND s.match_id = m.match_id
-          WHERE m.status = 'C' AND s.game_role_id IS NULL AND NOT s.is_forfeit AND s.player_id = ${SkunkIdCodecs.playerId}
+          FROM participant s
+          JOIN match m ON m.game_id = s.game_id AND m.match_id = s.match_id
+          WHERE s.player_id = ${SkunkIdCodecs.playerId} AND s.game_role_id IS NULL AND NOT s.is_forfeit AND m.status = 'C'
             AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
                                    WHERE o.game_id = s.game_id AND o.match_id = s.match_id
                                      AND o.game_role_id IS NULL AND NOT o.is_forfeit)
