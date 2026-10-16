@@ -1076,14 +1076,23 @@ object Store {
 
     /** The tournament shown, again. Committed only while it is still the tournament on screen: an answer about one
       * opened before is not this page's.
+      *
+      * Not even asked for unless it is on screen when asked. An action on the tournament shown before can answer after
+      * the player has opened another, and its reload would take a newer stamp than the one the open page is waiting
+      * for: that page's answer would be dropped as superseded, the old one dropped as off screen, and the page left
+      * saying "Loading…".
       */
-    def reloadTournament(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
-        reload(ApiClient.tournament(gameId, tournamentId), Fetch.OneTournament)(found =>
-            page.now() match {
-                case Page.OneTournament(_, shown) if shown == tournamentId => tournament.set(Some(found))
-                case _                                                     => ()
-            }
-        )
+    def reloadTournament(gameId: GameId, tournamentId: TournamentId): Future[Unit] = {
+        def isShown = page.now() match {
+            case Page.OneTournament(_, shown) => shown == tournamentId
+            case _                            => false
+        }
+        if (!isShown) Future.unit
+        else
+            reload(ApiClient.tournament(gameId, tournamentId), Fetch.OneTournament)(found =>
+                if (isShown) tournament.set(Some(found))
+            )
+    }
 
     /** The same as `run`, but handing back a `Future` that says when the request has settled.
       *
