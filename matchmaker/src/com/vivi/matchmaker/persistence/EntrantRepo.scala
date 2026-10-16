@@ -118,6 +118,27 @@ class EntrantRepo(session: Session[IO]) {
     def players(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Option[PlayerId]]] =
         list(game, tournament).map(_.map(e => e.entrantId -> e.playerId).toMap)
 
+    // Each entry with whether anybody plays it now, that player's rating in the game if they have one, and the rating
+    // it entered with. entrant_player holds a row only for an entry somebody plays.
+    private val selectRatings: Query[(GameId, TournamentId), (EntrantId, Boolean, Option[Int], Int)] =
+        sql"""SELECT e.entrant_id, ep.player_id IS NOT NULL, r.rating, e.rating_at_entry
+          FROM entrant e
+          LEFT JOIN entrant_player ep
+                 ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
+          LEFT JOIN elo_rating r ON r.game_id = ep.game_id AND r.player_id = ep.player_id
+          WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId""".query(entrantId *: bool *: int4.opt *: int4)
+
+    /** Each entry's rating now, withdrawn ones included, for seeding: its player's overall rating in the game -- a
+      * character entry's owner's -- or the starting rating for a player with none, and the rating it entered with for a
+      * character nobody owns.
+      */
+    def ratingsNow(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Int]] =
+        session
+            .execute(selectRatings)((game, tournament))
+            .map(_.map { (id, isPlayed, rating, atEntry) =>
+                id -> (if (isPlayed) rating.getOrElse(EloRating.initial) else atEntry)
+            }.toMap)
+
     // Every statement below names the entry by its whole key, tournament included: every key on `entrant` and its two
     // subtypes is (game_id, tournament_id, entrant_id), and the game alone would read the entries of every tournament
     // and challenge the game has had.

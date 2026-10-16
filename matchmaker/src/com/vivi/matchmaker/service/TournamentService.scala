@@ -1086,21 +1086,13 @@ class TournamentService[T](
     private def ratingOf(session: skunk.Session[IO], gameId: GameId, player: PlayerId): IO[Int] =
         new EloRatingRepo(session).read(gameId, player).map(_.fold(EloRating.initial)(_.rating))
 
-    /** Each entrant's rating now — a character entry's owner's — by entrant id, for seeding. */
+    /** Each of `entries`'s rating now — a character entry's owner's — by entrant id, for seeding. */
     private def currentRatings(session: skunk.Session[IO], gameId: GameId, entries: List[Entrant]): IO[Map[Long, Int]] =
-        new EntrantRepo(session)
-            .players(gameId, entries.headOption.map(_.tournamentId).getOrElse(TournamentId.unassigned))
-            .flatMap { players =>
-                entries
-                    .traverse { e =>
-                        players
-                            .get(e.entrantId)
-                            .flatten
-                            .fold(IO.pure(e.ratingAtEntry))(ratingOf(session, gameId, _))
-                            .map(e.entrantId.value -> _)
-                    }
-                    .map(_.toMap)
+        entries.headOption.fold(IO.pure(Map.empty[Long, Int])) { e =>
+            new EntrantRepo(session).ratingsNow(gameId, e.tournamentId).map { ratings =>
+                entries.flatMap(e => ratings.get(e.entrantId).map(e.entrantId.value -> _)).toMap
             }
+        }
 
     private def requireCaller(session: skunk.Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {

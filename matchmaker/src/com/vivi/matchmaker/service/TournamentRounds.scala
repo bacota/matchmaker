@@ -516,8 +516,8 @@ class TournamentRounds[T](
         }
 
     /** Reads the tournament with every result in, under its lock, and if the round being played is complete advances it
-      * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed it
-      * and the tournament goes on: a round is marked complete once, however many endings find it so.
+      * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed
+      * it and the tournament goes on: a round is marked complete once, however many endings find it so.
       */
     private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
         // Asked of the round's rows first: most endings leave the round going, and reading the whole tournament under
@@ -726,16 +726,18 @@ class TournamentRounds[T](
                             new TournamentRepo(session).stop(gameId, tournamentId) *>
                                 requireLoaded(session, t).flatMap { loaded =>
                                     IO.whenA(Progress.isRoundComplete(loaded.state))(
-                                      requireGame(session, gameId).flatMap(game =>
-                                          envFor(session = session, t = t, game = game, design = loaded.design)
-                                      ).flatMap(env =>
-                                          finish(
-                                            session = session,
-                                            t = t,
-                                            loaded = loaded,
-                                            state = Progress.advance(loaded.state, env)
+                                      requireGame(session, gameId)
+                                          .flatMap(game =>
+                                              envFor(session = session, t = t, game = game, design = loaded.design)
                                           )
-                                      )
+                                          .flatMap(env =>
+                                              finish(
+                                                session = session,
+                                                t = t,
+                                                loaded = loaded,
+                                                state = Progress.advance(loaded.state, env)
+                                              )
+                                          )
                                     )
                                 }
                         case _ => IO.raiseError(ConflictError("this tournament is already over"))
@@ -849,21 +851,11 @@ class TournamentRounds[T](
     /** Everyone's rating now, by entrant: a character entry's owner's, and the starting rating for anyone with none. */
     private def envFor(session: Session[IO], t: Tournament, game: Game, design: TournamentDesign): IO[Env] =
         for {
-            entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId)
-            players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
-            ratings <- entries.traverse { e =>
-                players.get(e.entrantId).flatten match {
-                    case Some(p) =>
-                        new EloRatingRepo(session)
-                            .read(t.gameId, p)
-                            .map(r => e.entrantId.value -> r.fold(EloRating.initial)(_.rating))
-                    case None => IO.pure(e.entrantId.value -> e.ratingAtEntry)
-                }
-            }
+            ratings <- new EntrantRepo(session).ratingsNow(t.gameId, t.tournamentId)
         } yield Env(
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
-          ratings = ratings.toMap,
+          ratings = ratings.map((id, r) => id.value -> r),
           defaultPoolSize = Some(t.defaultPoolSize),
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
