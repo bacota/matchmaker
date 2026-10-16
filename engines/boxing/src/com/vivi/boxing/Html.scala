@@ -890,11 +890,13 @@ ${signIn.signInScript}
 
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
-  /* Said, and focused, after something the player did: the list it is about is redrawn under them. */
+  /* Said after something the player did, and focused if the focus was lost with the list it is
+   * about. Not otherwise: `showMine` gives the focus back to the field or button that had it, which
+   * may be another fighter's form the player has gone on to type in. */
   function announce(message) {
     const status = document.getElementById("status");
     status.textContent = message;
-    status.focus();
+    if (!document.activeElement || document.activeElement === document.body) status.focus();
   }
 
   function render() {
@@ -946,14 +948,19 @@ ${signIn.signInScript}
     return response;
   }
 
-  /* The list is cleared as a load starts, so nothing from before it can be left showing, and only
-   * the latest load may draw -- an earlier one answering late is dropped, success or failure. */
+  /* Only the latest load may draw -- an earlier one answering late is dropped, success or failure.
+   *
+   * The list stands while a load is out. A load follows every save, and the player may be typing in
+   * another fighter's form meanwhile: emptying the list took that form, and the focus, away under
+   * them. Another player's list is never left standing, because `forget` empties it when the session
+   * ends. */
   async function loadMine() {
     const ticket = ++loads;
     const note = document.getElementById("yours-note");
-    document.getElementById("fighters").replaceChildren();
-    note.textContent = "Loading your fighters…";
-    note.hidden = false;
+    if (!document.getElementById("fighters").children.length) {
+      note.textContent = "Loading your fighters…";
+      note.hidden = false;
+    }
     try {
       const response = await send(mineUrl, {});
       if (!response || ticket !== loads) return;
@@ -966,13 +973,29 @@ ${signIn.signInScript}
     }
   }
 
-  /* Built from elements rather than markup: a name is whatever a player typed. */
+  /* Built from elements rather than markup: a name is whatever a player typed.
+   *
+   * Drawn afresh, and then given back what had been typed into the forms it replaces and the field
+   * that had the focus, by the fields' ids: one fighter's save must not wipe an edit half made to
+   * another. */
   function showMine(fighters) {
     const note = document.getElementById("yours-note");
     note.textContent = fighters.length ? "" : "You have no fighters yet. Build one below.";
     note.hidden = fighters.length > 0;
     const list = document.getElementById("fighters");
+    const typed = {};
+    list.querySelectorAll("input").forEach(i => { if (i.value !== i.defaultValue) typed[i.id] = i.value; });
+    const focused = list.contains(document.activeElement) ? document.activeElement.id : null;
     list.replaceChildren(...fighters.map(fighterItem));
+    Object.entries(typed).forEach(([id, value]) => {
+      const input = document.getElementById(id);
+      if (!input || !list.contains(input)) return;
+      input.value = value;
+      // So its form's button agrees with what is in the field.
+      input.dispatchEvent(new Event("input"));
+    });
+    const refocus = focused && document.getElementById(focused);
+    if (refocus && list.contains(refocus)) refocus.focus();
   }
 
   function fighterItem(f) {
@@ -1023,6 +1046,8 @@ ${signIn.signInScript}
     input.type = "text";
     input.autocomplete = "off";
     input.maxLength = maxLength;
+    // The default as well as the value, which is how `showMine` tells what has been typed since.
+    input.defaultValue = value;
     input.value = value;
     field.append(label, input);
     return { field, input };
@@ -1039,6 +1064,8 @@ ${signIn.signInScript}
     button.type = "submit";
     button.className = "primary";
     button.textContent = buttonText;
+    // Named after its first field, so that `showMine` can give it the focus back when it draws the list again.
+    button.id = fields[0].input.id + "-submit";
     let sending = false;
     const refresh = () => { button.disabled = sending || !ready(); };
     fields.forEach(f => f.input.addEventListener("input", refresh));
