@@ -149,6 +149,29 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             .map(_.get)
     }
 
+    /** Saves the rules' next state as the service does, and reads it back whole: worked out from the state without its
+      * completed runs, or again from the whole state where that is needed. Whether the open load, with runs left out,
+      * is what it was saved against.
+      */
+    private def savedOpen(
+        s: Setup,
+        next: TournamentState => TournamentState
+    ): (TournamentStateRepo.Loaded, Boolean) = run { session =>
+        val repo = new TournamentStateRepo(session)
+        for {
+            open <- repo.loadOpen(s.game.gameId, s.t.tournamentId).map(_.get)
+            isWhole = TournamentStateRepo.isWholeLoadNeeded(open, next(open.state))
+            before <- if (isWhole) repo.load(s.game.gameId, s.t.tournamentId).map(_.get) else IO.pure(open)
+            _ <- repo.save(
+              game = s.game.gameId,
+              tournament = s.t.tournamentId,
+              before = before,
+              after = next(before.state)
+            )
+            read <- repo.load(s.game.gameId, s.t.tournamentId).map(_.get)
+        } yield (read, !isWhole && open.omittedRunsIn.nonEmpty)
+    }
+
     /** Plays a match of the round being played as an engine reporting it would leave it: over, each seat with a result,
       * the strongest seed -- the lowest entrant -- first.
       */
@@ -172,8 +195,16 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         } yield ()
     }
 
-    /** Plays a whole tournament, checking every state the database holds against the one the rules made. */
-    private def playThrough(key: String, n: Int, poolSize: Option[Int] = None): TournamentState = {
+    /** Plays a whole tournament, checking every state the database holds against the one the rules made: each worked
+      * out from the state without its completed runs, as a round's end and start are. One that runs until stopped is
+      * stopped after `stopAfter` steps.
+      */
+    private def playThrough(
+        key: String,
+        n: Int,
+        poolSize: Option[Int] = None,
+        stopAfter: Option[Int] = None
+    ): TournamentState = {
         val s = setup(key = key, n = n, poolSize = poolSize)
         def check(made: TournamentState, read: TournamentStateRepo.Loaded): TournamentState = {
             assertEquals(normal(read.state.root), normal(made.root), s"$key, round ${made.round}")
@@ -201,12 +232,22 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 Progress.start(entrants = s.entrants, env = s.env, firstPoolId = TournamentStateRepo.NewPoolIds)
             check(started, saved(s, started))
         }
+        // How many steps were saved against a state with runs left out: none would leave the open load untested.
+        var leftOut = 0
+        def step(made: TournamentState, next: TournamentState => TournamentState): TournamentState = {
+            val (read, isOpen) = savedOpen(s, next)
+            if (isOpen) leftOut += 1
+            check(made, read)
+        }
         var steps = 0
         while (!state.isFinished && steps < 200) {
             steps += 1
-            if (Progress.isRoundComplete(state)) {
-                val (next, _) = Progress.nextRound(state, s.env)
-                state = check(next, saved(s, next))
+            if (stopAfter.contains(steps)) {
+                val stopped = Progress.requestStop(state)
+                state = check(stopped, saved(s, stopped))
+            } else if (Progress.isRoundComplete(state)) {
+                val made = state
+                state = step(Progress.nextRound(made, s.env)._1, Progress.nextRound(_, s.env)._1)
             } else {
                 val loaded =
                     run(session => new TournamentStateRepo(session).load(s.game.gameId, s.t.tournamentId).map(_.get))
@@ -221,11 +262,11 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 // Read back with its results, which is how a result is recorded now; then advanced past them.
                 val played =
                     run(session => new TournamentStateRepo(session).load(s.game.gameId, s.t.tournamentId).map(_.get))
-                val next = Progress.advance(played.state, s.env)
-                state = check(next, saved(s, next))
+                state = step(Progress.advance(played.state, s.env), Progress.advance(_, s.env))
             }
         }
         assert(state.isFinished, s"$key did not finish in 200 steps")
+        assert(leftOut > 0, s"$key never saved a state loaded without its completed runs")
         state
     }
 
@@ -249,6 +290,11 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     test("heats take the tournament's pool size, and are read back as they were made") {
         playThrough(key = "heats", n = 9, poolSize = Some(3))
+    }
+
+    test("a ladder, whose runs pile up until it is stopped, is read back as it was made, and ends when stopped") {
+        val end = playThrough(key = "ladder", n = 6, stopAfter = Some(12))
+        assertEquals(end.root.ranking.map(_.size), Some(6))
     }
 
     test("a finished tournament's ranking is read back from its entrants' final ranks") {

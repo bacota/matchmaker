@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -102,6 +103,69 @@ class TournamentStateRepo(session: Session[IO]) {
           WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId"""
             .query(int8 *: int8.opt *: bool *: int4.opt *: int8.opt)
 
+    // ---- what a load without the completed runs reads instead: only the pools of the runs being played ----
+
+    private val selectMembersIn: Query[(GameId, TournamentId, Arr[Long]), MemberRow] =
+        sql"""SELECT pool_id, entrant_id, final_rank, total_score, score_against, pool_points FROM pool_member
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = ANY(${_int8})"""
+            .query(int8 *: int8 *: int4.opt *: float8.opt *: float8.opt *: float8.opt)
+            .to[MemberRow]
+
+    private val selectMatchesIn: Query[(GameId, TournamentId, Arr[Long]), MatchRow] =
+        sql"""SELECT match_id, pool_id, round, status, can_tie, is_rubber, is_cancelled FROM match
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = ANY(${_int8})"""
+            .query(int8 *: int8 *: int4 *: text *: bool *: bool *: bool)
+            .to[MatchRow]
+
+    // As selectSeats, driven by the pools' matches.
+    private val selectSeatsIn: Query[(GameId, TournamentId, Arr[Long]), SeatRow] =
+        sql"""SELECT p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order,
+                 CASE WHEN r.is_forfeit AND m.is_cancelled THEN NULL ELSE r.rank END, r.scores::text
+          FROM match m
+          JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
+          LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
+          WHERE m.game_id = $gameId AND m.tournament_id = $tournamentId AND m.pool_id = ANY(${_int8})
+          ORDER BY p.participant_id"""
+            .query(int8 *: int8 *: int8 *: int4.opt *: int4.opt *: int4.opt *: text.opt)
+            .to[SeatRow]
+
+    // The seed rows a node's members and its open run's pools are read from, for each node given with the round its
+    // open run began in: each member's first row (their initial seed), their last before that round (what they
+    // entered it with), and every row from it on. The members are the root's entrants, or a group's pool members;
+    // each lookup is a range of `seed (game_id, tournament_id, pool_id, entrant_id, round)`, so the rows the runs
+    // before wrote are skipped, not read.
+    private val selectSeedsIn
+        : Query[(Arr[Long], Arr[Int], GameId, TournamentId, Long, GameId, TournamentId, Long), SeedRow] =
+        sql"""WITH scope AS (SELECT * FROM unnest(${_int8}, ${_int4}) AS sc (pool_id, from_round)),
+          pair AS (
+              SELECT e.game_id, e.tournament_id, sc.pool_id, sc.from_round, e.entrant_id FROM scope sc
+              JOIN entrant e ON e.game_id = $gameId AND e.tournament_id = $tournamentId
+              WHERE sc.pool_id = $int8
+              UNION ALL
+              SELECT pm.game_id, pm.tournament_id, sc.pool_id, sc.from_round, pm.entrant_id FROM scope sc
+              JOIN pool_member pm
+                ON pm.game_id = $gameId AND pm.tournament_id = $tournamentId AND pm.pool_id = sc.pool_id
+              WHERE sc.pool_id <> $int8)
+          SELECT s.pool_id, s.entrant_id, s.round, s.seed, s.stratum, s.eliminated
+          FROM pair pr CROSS JOIN LATERAL (
+              (SELECT pool_id, entrant_id, round, seed, stratum, eliminated FROM seed
+                WHERE game_id = pr.game_id AND tournament_id = pr.tournament_id AND pool_id = pr.pool_id
+                  AND entrant_id = pr.entrant_id
+                ORDER BY round LIMIT 1)
+              UNION
+              (SELECT pool_id, entrant_id, round, seed, stratum, eliminated FROM seed
+                WHERE game_id = pr.game_id AND tournament_id = pr.tournament_id AND pool_id = pr.pool_id
+                  AND entrant_id = pr.entrant_id AND round < pr.from_round
+                ORDER BY round DESC LIMIT 1)
+              UNION
+              (SELECT pool_id, entrant_id, round, seed, stratum, eliminated FROM seed
+                WHERE game_id = pr.game_id AND tournament_id = pr.tournament_id AND pool_id = pr.pool_id
+                  AND entrant_id = pr.entrant_id AND round >= pr.from_round)
+          ) s
+          ORDER BY s.round"""
+            .query(int8 *: int8 *: int4 *: int4 *: int4 *: int4.opt)
+            .to[SeedRow]
+
     // A match of the round being played that is not over as `Progress.isRoundComplete` reads it from the state: given
     // the round (so not still to be seated, 'S'), and not finished with a result for every seat, or called off. Served
     // by `match (game_id, tournament_id, round)` and the seats' own keys; a round with no number is complete.
@@ -128,7 +192,18 @@ class TournamentStateRepo(session: Session[IO]) {
     /** The tournament's state as its rows hold it, with what [[save]] needs to know about them. `None` for a tournament
       * that is not there.
       */
-    def load(game: GameId, tournament: TournamentId): IO[Option[Loaded]] =
+    def load(game: GameId, tournament: TournamentId): IO[Option[Loaded]] = loadAs(game, tournament, isWhole = true)
+
+    /** The state as [[load]] reads it, but without the runs every (sub)tournament has completed: only the runs being
+      * played, with their pools, matches and seats, and each node's members as they stand. What advancing a round
+      * needs, unless it finishes a node whose runs were left out, which ranks it from them all: see
+      * [[TournamentStateRepo.isWholeLoadNeeded]]. A ladder's runs pile up for as long as it is played, and are read
+      * here not at all.
+      */
+    def loadOpen(game: GameId, tournament: TournamentId): IO[Option[Loaded]] =
+        loadAs(game, tournament, isWhole = false)
+
+    private def loadAs(game: GameId, tournament: TournamentId, isWhole: Boolean): IO[Option[Loaded]] =
         session.option(selectProgress)((game, tournament)).flatMap {
             case None => IO.pure(None)
             case Some((currentRound, stopRequested, friendly, isPublic, gameType)) =>
@@ -136,10 +211,33 @@ class TournamentStateRepo(session: Session[IO]) {
                     designed <- new StageRepo(session).designWithIds(game, tournament)
                     (design, stageIds) = designed.getOrElse((TournamentDesign(Nil), Map.empty[List[Int], Long]))
                     pools <- session.execute(selectPools)((game, tournament))
-                    members <- session.execute(selectMembers)((game, tournament))
-                    seeds <- session.execute(selectSeeds)((game, tournament))
-                    matches <- session.execute(selectMatches)((game, tournament))
-                    seats <- session.execute(selectSeats)((game, tournament))
+                    open = Option.unless(isWhole)(OpenRuns(pools = pools, stageIds = stageIds))
+                    ids = Arr.fromFoldable(open.fold(List.empty[Long])(_.pools.toList))
+                    members <- open.fold(session.execute(selectMembers)((game, tournament)))(_ =>
+                        session.execute(selectMembersIn)((game, tournament, ids))
+                    )
+                    seeds <- open.fold(session.execute(selectSeeds)((game, tournament))) { o =>
+                        val root = pools.find(_.kind == "R").map(_.id).getOrElse(0L)
+                        val scopes = o.scopes.toList
+                        session.execute(selectSeedsIn)(
+                          (
+                            Arr.fromFoldable(scopes.map(_._1)),
+                            Arr.fromFoldable(scopes.map(_._2.getOrElse(Int.MaxValue))),
+                            game,
+                            tournament,
+                            root,
+                            game,
+                            tournament,
+                            root
+                          )
+                        )
+                    }
+                    matches <- open.fold(session.execute(selectMatches)((game, tournament)))(_ =>
+                        session.execute(selectMatchesIn)((game, tournament, ids))
+                    )
+                    seats <- open.fold(session.execute(selectSeats)((game, tournament)))(_ =>
+                        session.execute(selectSeatsIn)((game, tournament, ids))
+                    )
                     entrants <- session.execute(selectEntrants)((game, tournament))
                 } yield {
                     val built = Assembly(
@@ -150,7 +248,8 @@ class TournamentStateRepo(session: Session[IO]) {
                       seeds = seeds,
                       matches = matches,
                       seats = seats,
-                      entrants = entrants
+                      entrants = entrants,
+                      isWhole = isWhole
                     )
                     built.root.map { (root, matchIds) =>
                         val roundOf = matches.map(m => m.id -> m).toMap
@@ -177,7 +276,8 @@ class TournamentStateRepo(session: Session[IO]) {
                           ),
                           eliminatedRound = seeds
                               .groupBy(r => (r.pool, r.entrant))
-                              .flatMap((key, rows) => rows.last.eliminated.map(key -> _))
+                              .flatMap((key, rows) => rows.last.eliminated.map(key -> _)),
+                          omittedRunsIn = open.fold(Set.empty[Long])(_.omitted)
                         )
                     }
                 }
@@ -302,11 +402,19 @@ class TournamentStateRepo(session: Session[IO]) {
         // a tournament finishes, still has to name one.
         val lastStage: Option[Long] = walked.pools.filterNot(_.isNested).lastOption.map(stageOf)
 
+        // A state with pools still to play always has a round stage. Only a finished tournament falls back to the
+        // last pool's, which a load without the completed runs may not hold: such a state is worked out again from a
+        // whole load first (isWholeLoadNeeded), and a round named after the wrong stage is not written.
         def ensureRound(r: Int, stage: Option[Long]): IO[Unit] =
-            stage
-                .orElse(roundStage)
-                .orElse(lastStage)
-                .traverse_(s => session.execute(insertRound)((game, tournament, r, s)))
+            IO.raiseWhen(stage.isEmpty && roundStage.isEmpty && before.omittedRunsIn.nonEmpty)(
+              new IllegalStateException(
+                "a state loaded without its completed runs cannot name a finished round's stage"
+              )
+            ) *>
+                stage
+                    .orElse(roundStage)
+                    .orElse(lastStage)
+                    .traverse_(s => session.execute(insertRound)((game, tournament, r, s)))
 
         for {
             // ---- new pools, parents first ----
@@ -527,8 +635,70 @@ object TournamentStateRepo {
         rootPool: Long,
         context: Context,
         matchRounds: Map[(Int, Int), Int] = Map.empty,
-        eliminatedRound: Map[(Long, Long), Int] = Map.empty
+        eliminatedRound: Map[(Long, Long), Int] = Map.empty,
+        /** The nodes, by the pool that scopes them, whose completed runs [[TournamentStateRepo.loadOpen]] left out. */
+        omittedRunsIn: Set[Long] = Set.empty
     )
+
+    /** Whether a next state worked out from a [[TournamentStateRepo.loadOpen]] is to be worked out again from a whole
+      * [[TournamentStateRepo.load]]: where it finished a node whose completed runs were left out, since finishing a
+      * node ranks it from every run it played; and where it finished the tournament, whose last round's stage
+      * [[TournamentStateRepo.save]] names from the whole tree. Once for each (sub)tournament, when it ends.
+      */
+    def isWholeLoadNeeded(before: Loaded, after: TournamentState): Boolean =
+        before.omittedRunsIn.nonEmpty && (after.isFinished || {
+            def finished(state: TournamentState) =
+                Walk(state = state, design = before.design, rootPool = before.rootPool).nodes
+                    .filter(_.node.isFinished)
+                    .map(_.scope)
+                    .toSet
+            (finished(after) -- finished(before.state)).exists(before.omittedRunsIn)
+        })
+
+    /** A node's child pools, as the runs they were played in: grouped by the round they began in and their stage, in
+      * that order.
+      */
+    private def runsOf(children: List[PoolRow], keyOf: Map[Long, List[Int]]): List[((Int, Int), List[PoolRow])] =
+        children
+            .groupBy(p => (p.round.getOrElse(0), keyOf.get(p.stage.getOrElse(-1L)).map(_.last).getOrElse(0)))
+            .toList
+            .sortBy(_._1)
+
+    /** A run as its pool rows have it: the round it began in, its stage, its pools, which playing of the stage it is,
+      * whether every pool is complete, and the round the run after it began in.
+      */
+    private case class RunRows(
+        round: Int,
+        stage: Int,
+        pools: List[PoolRow],
+        repetition: Int,
+        isCompleted: Boolean,
+        next: Int
+    )
+
+    /** What a load without the completed runs reads: the pools of every run being played, in every (sub)tournament
+      * reached through them; each such node, by the pool that scopes it, with the round its open run began in, if it
+      * has one; and the nodes some of whose runs are left out.
+      */
+    private case class OpenRuns(pools: Set[Long], scopes: Map[Long, Option[Int]], omitted: Set[Long])
+
+    private object OpenRuns {
+        def apply(pools: List[PoolRow], stageIds: Map[List[Int], Long]): OpenRuns = {
+            val keyOf = stageIds.map(_.swap)
+            val childrenOf = pools.groupBy(_.parent.getOrElse(-1L))
+            def node(scope: Long): OpenRuns = {
+                val (done, open) = runsOf(childrenOf.getOrElse(scope, Nil), keyOf).partition(_._2.forall(_.isCompleted))
+                val kept = open.flatMap(_._2)
+                val inner = kept.filter(_.kind == "G").map(p => node(p.id))
+                OpenRuns(
+                  pools = kept.map(_.id).toSet ++ inner.flatMap(_.pools),
+                  scopes = inner.flatMap(_.scopes).toMap + (scope -> open.map(_._1._1).minOption),
+                  omitted = inner.flatMap(_.omitted).toSet ++ Option.when(done.nonEmpty)(scope)
+                )
+            }
+            pools.find(_.kind == "R").fold(OpenRuns(Set.empty, Map.empty, Set.empty))(r => node(r.id))
+        }
+    }
 
     case class PoolRow(
         id: Long,
@@ -617,7 +787,9 @@ object TournamentStateRepo {
         seeds: List[SeedRow],
         matches: List[MatchRow],
         seats: List[SeatRow],
-        entrants: List[(Long, Option[Long], Boolean, Option[Int], Option[Long])]
+        entrants: List[(Long, Option[Long], Boolean, Option[Int], Option[Long])],
+        /** False for [[TournamentStateRepo.loadOpen]]'s rows: its nodes' completed runs are left out of them. */
+        isWhole: Boolean = true
     ) {
         private val keyOf: Map[Long, List[Int]] = stageIds.map(_.swap)
         private val childrenOf: Map[Long, List[PoolRow]] = pools.groupBy(_.parent.getOrElse(-1L))
@@ -660,17 +832,22 @@ object TournamentStateRepo {
                     )
                 }
                 .sortBy(m => (m.initialSeed, m.entrant))
-            val children = childrenOf.getOrElse(scope, Nil)
-            val grouped: List[((Int, Int), List[PoolRow])] =
-                children
-                    .groupBy(p => (p.round.getOrElse(0), keyOf.get(p.stage.getOrElse(-1L)).map(_.last).getOrElse(0)))
-                    .toList
-                    .sortBy(_._1)
+            val grouped = runsOf(childrenOf.getOrElse(scope, Nil), keyOf)
             val runRounds = grouped.map(_._1._1)
-            val built = grouped.zipWithIndex.map { case (((round, stage), ps), i) =>
-                val repetition = grouped.take(i).count(_._1._2 == stage)
-                val nextRound = runRounds.lift(i + 1).getOrElse(Int.MaxValue)
-                val completed = ps.forall(_.isCompleted)
+            // Every run, counted whether it is read or not: a run's repetition, and the node's stage, are its place
+            // among them all.
+            val all = grouped.zipWithIndex.map { case (((round, stage), ps), i) =>
+                RunRows(
+                  round = round,
+                  stage = stage,
+                  pools = ps,
+                  repetition = grouped.take(i).count(_._1._2 == stage),
+                  isCompleted = ps.forall(_.isCompleted),
+                  next = runRounds.lift(i + 1).getOrElse(Int.MaxValue)
+                )
+            }
+            val built = all.filter(r => isWhole || !r.isCompleted).map { r =>
+                val RunRows(round, stage, ps, repetition, completed, nextRound) = r
                 val made = ps
                     .sortBy(_.id)
                     .map(p =>
@@ -704,7 +881,7 @@ object TournamentStateRepo {
             }
             val runs = built.map(_._1)
             val stagesHere = designAt(path).stages.size
-            val (stage, repetition) = runs.lastOption match {
+            val (stage, repetition) = all.lastOption match {
                 case _ if ranking.isDefined          => (stagesHere, 0)
                 case Some(open) if !open.isCompleted => (open.stage, open.repetition)
                 case Some(done)                      => (done.stage + 1, 0)

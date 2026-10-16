@@ -123,12 +123,13 @@ class TournamentRounds[T](
         for {
             _ <- IO.raiseWhen(t.isStopped)(ConflictError("this tournament has been stopped, and begins no more rounds"))
             game <- requireGame(session, t.gameId)
-            loaded <- requireLoaded(session, t)
-            _ <- IO.raiseUnless(Progress.isRoundComplete(loaded.state))(
+            open <- requireOpenLoaded(session, t)
+            _ <- IO.raiseUnless(Progress.isRoundComplete(open.state))(
               ConflictError("the round being played is not finished")
             )
-            env <- envFor(session = session, t = t, game = game, design = loaded.design)
-            (next, _) = Progress.nextRound(loaded.state, env)
+            env <- envFor(session = session, t = t, game = game, design = open.design)
+            worked <- workedOut(session = session, t = t, open = open)(Progress.nextRound(_, env)._1)
+            (loaded, next) = worked
             result <-
                 if (next.isFinished) finish(session = session, t = t, loaded = loaded, state = next).as((None, Nil))
                 else
@@ -168,9 +169,10 @@ class TournamentRounds[T](
                     } yield (Some(next.round), due)
         } yield result
 
-    /* Each member's seed in the pool their match is in, for who keeps their seat when one player holds two. */
+    /* Each member's seed in the pool their match is in, for who keeps their seat when one player holds two. Read
+     * again, now that the round's pools have their real ids; only the runs being played, which are the round's. */
     private def seedsIn(session: Session[IO], t: Tournament): IO[Map[(Int, Long), Int]] =
-        requireLoaded(session, t).map { loaded =>
+        requireOpenLoaded(session, t).map { loaded =>
             Progress.allPools(loaded.state.root).flatMap(p => p.members.map(m => (p.id, m.entrant) -> m.seedIn)).toMap
         }
 
@@ -525,12 +527,13 @@ class TournamentRounds[T](
         }
 
     private def settleLoaded(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
-        requireLoaded(session, t).flatMap { loaded =>
-            if (!Progress.isRoundComplete(loaded.state) || loaded.state.round == 0) IO.pure(None)
+        requireOpenLoaded(session, t).flatMap { open =>
+            if (!Progress.isRoundComplete(open.state) || open.state.round == 0) IO.pure(None)
             else
                 for {
-                    env <- envFor(session = session, t = t, game = game, design = loaded.design)
-                    advanced = Progress.advance(loaded.state, env)
+                    env <- envFor(session = session, t = t, game = game, design = open.design)
+                    worked <- workedOut(session = session, t = t, open = open)(Progress.advance(_, env))
+                    (loaded, advanced) = worked
                     first <- stateRepo(session).markRoundComplete(
                       game = t.gameId,
                       tournament = t.tournamentId,
@@ -866,11 +869,30 @@ class TournamentRounds[T](
         )
 
     private def requireLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
+        requireState(t)(stateRepo(session).load(t.gameId, t.tournamentId))
+
+    /* The state without the runs its (sub)tournaments have completed (`TournamentStateRepo.loadOpen`): what a round's
+     * end and the next round's start read, rather than every match the tournament has played. */
+    private def requireOpenLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
+        requireState(t)(stateRepo(session).loadOpen(t.gameId, t.tournamentId))
+
+    private def requireState(t: Tournament)(read: IO[Option[Loaded]]): IO[Loaded] =
         IO.raiseWhen(t.startedAt.isEmpty)(ConflictError("this tournament has not started")) *>
-            stateRepo(session).load(t.gameId, t.tournamentId).flatMap {
+            read.flatMap {
                 case Some(l) => IO.pure(l)
                 case None    => IO.raiseError(NotFoundError(s"no tournament ${t.tournamentId} in game ${t.gameId}"))
             }
+
+    /* The rules' next state worked out from `open`, and the state to save it against -- or, where that finished a part
+     * of the tournament whose completed runs `open` left out, which is ranked from every run it played, both worked
+     * out again from the whole state: once for each (sub)tournament, as it ends. */
+    private def workedOut(session: Session[IO], t: Tournament, open: Loaded)(
+        next: TournamentState => TournamentState
+    ): IO[(Loaded, TournamentState)] = {
+        val fromOpen = next(open.state)
+        if (!TournamentStateRepo.isWholeLoadNeeded(open, fromOpen)) IO.pure((open, fromOpen))
+        else requireLoaded(session, t).map(whole => (whole, next(whole.state)))
+    }
 
     private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {
