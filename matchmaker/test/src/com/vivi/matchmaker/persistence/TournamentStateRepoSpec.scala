@@ -178,7 +178,23 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         def check(made: TournamentState, read: TournamentStateRepo.Loaded): TournamentState = {
             assertEquals(normal(read.state.root), normal(made.root), s"$key, round ${made.round}")
             assertEquals(read.state.round, made.round)
+            agrees()
             read.state
+        }
+        // Whether the round is over, asked of its rows, is what the rules say of the state the rows hold.
+        def agrees(): Unit = run { session =>
+            val repo = new TournamentStateRepo(session)
+            (
+              repo.load(s.game.gameId, s.t.tournamentId).map(_.get),
+              repo.isRoundComplete(s.game.gameId, s.t.tournamentId)
+            )
+                .mapN((loaded, isComplete) =>
+                    assertEquals(
+                      isComplete,
+                      Progress.isRoundComplete(loaded.state),
+                      s"$key, round ${loaded.state.round}"
+                    )
+                )
         }
         var state = {
             val started =
@@ -198,8 +214,10 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                     .roundMatches(state)
                     .filterNot(m => Progress.isRecorded(state = state, poolId = m.poolId, matchNo = m.planned.no))
                     .foreach { m =>
+                        agrees()
                         play(s, loaded.matchIds((m.poolId, m.planned.no)))
                     }
+                agrees()
                 // Read back with its results, which is how a result is recorded now; then advanced past them.
                 val played =
                     run(session => new TournamentStateRepo(session).load(s.game.gameId, s.t.tournamentId).map(_.get))

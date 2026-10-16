@@ -99,9 +99,8 @@ class TournamentRounds[T](
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
                         case Some(t)
                             if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds && !t.isStopped =>
-                            requireLoaded(session, t).flatMap { loaded =>
-                                if (Progress.isRoundComplete(loaded.state))
-                                    begin(session = session, t = t, duration = None).map(_._2)
+                            stateRepo(session).isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
+                                if (isComplete) begin(session = session, t = t, duration = None).map(_._2)
                                 else IO.pure(Nil)
                             }
                         case _ => IO.pure(Nil)
@@ -519,6 +518,13 @@ class TournamentRounds[T](
       * and the tournament goes on: a round is marked complete once, however many endings find it so.
       */
     private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
+        // Asked of the round's rows first: most endings leave the round going, and reading the whole tournament under
+        // its lock to find that out made each ending cost as much as the tournament had matches.
+        stateRepo(session).isRoundComplete(t.gameId, t.tournamentId).flatMap { isComplete =>
+            if (isComplete) settleLoaded(session = session, t = t, game = game) else IO.pure(None)
+        }
+
+    private def settleLoaded(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
         requireLoaded(session, t).flatMap { loaded =>
             if (!Progress.isRoundComplete(loaded.state) || loaded.state.round == 0) IO.pure(None)
             else

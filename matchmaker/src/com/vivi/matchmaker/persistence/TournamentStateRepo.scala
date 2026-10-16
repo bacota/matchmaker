@@ -102,6 +102,29 @@ class TournamentStateRepo(session: Session[IO]) {
           WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId"""
             .query(int8 *: int8.opt *: bool *: int4.opt *: int8.opt)
 
+    // A match of the round being played that is not over as `Progress.isRoundComplete` reads it from the state: given
+    // the round (so not still to be seated, 'S'), and not finished with a result for every seat, or called off. Served
+    // by `match (game_id, tournament_id, round)` and the seats' own keys; a round with no number is complete.
+    private val selectRoundComplete: Query[(GameId, TournamentId), Boolean] =
+        sql"""SELECT NOT EXISTS (
+            SELECT 1 FROM tournament t
+            JOIN match m ON m.game_id = t.game_id AND m.tournament_id = t.tournament_id AND m.round = t.current_round
+            WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId AND m.status <> 'S'
+              AND NOT (m.status = 'F'
+                       AND EXISTS (SELECT 1 FROM participant p WHERE p.game_id = m.game_id AND p.match_id = m.match_id)
+                       AND (m.is_cancelled OR NOT EXISTS (
+                            SELECT 1 FROM participant p
+                            LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
+                            WHERE p.game_id = m.game_id AND p.match_id = m.match_id AND r.rank IS NULL))))"""
+            .query(bool)
+
+    /** Whether every match of the round being played is over: what `Progress.isRoundComplete` answers of a [[load]]ed
+      * state, asked of the round's own rows. For the many calls that need only that, such as every match's end, which
+      * would otherwise read the whole tournament under its lock to find the round still going.
+      */
+    def isRoundComplete(game: GameId, tournament: TournamentId): IO[Boolean] =
+        session.unique(selectRoundComplete)((game, tournament))
+
     /** The tournament's state as its rows hold it, with what [[save]] needs to know about them. `None` for a tournament
       * that is not there.
       */
