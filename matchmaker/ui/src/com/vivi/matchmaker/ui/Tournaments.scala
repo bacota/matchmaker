@@ -1311,13 +1311,18 @@ object Tournaments {
                                 )
                             case None => ApiClient.createTournament(game.gameId, request)
                         }
-                        Store.run(saving, busy) { saved =>
-                            if (existing.isDefined) Views.announce("Changes saved.")
-                            onSaved()
+                        // Where the save was asked from. The answer takes the player to the tournament only if they
+                        // are still there, and is dropped whole after a sign-out: it is not the next player's.
+                        val from = Store.page.now()
+                        Store.runSignedIn(saving, busy) { saved =>
                             Store.reloadMyTournaments()
                             Store.reloadTournaments(game.gameId)
-                            Store.show(Store.Page.OneTournament(saved.gameId, saved.tournamentId))
-                            Store.reloadTournament(saved.gameId, saved.tournamentId)
+                            if (Store.page.now() == from) {
+                                if (existing.isDefined) Views.announce("Changes saved.")
+                                onSaved()
+                                Store.show(Store.Page.OneTournament(saved.gameId, saved.tournamentId))
+                                Store.reloadTournament(saved.gameId, saved.tournamentId)
+                            }
                         }
                     }
             )
