@@ -686,7 +686,12 @@ class TournamentService[T](
             entrant <- returning match {
                 case Some(e) =>
                     for {
-                        _ <- entrants.setWithdrawnAt(game = gameId, id = e.entrantId, at = None)
+                        _ <- entrants.setWithdrawnAt(
+                          game = gameId,
+                          tournament = tournamentId,
+                          id = e.entrantId,
+                          at = None
+                        )
                         _ <- IO.whenA(late)(
                           updateState(session = session, t = t, game = game)(s =>
                               Progress.reenter(s, e.entrantId.value)
@@ -769,11 +774,9 @@ class TournamentService[T](
                     for {
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
-                        found <- entrants.readForUpdate(gameId, entrantId).flatMap {
-                            case Some((tid, player, withdrawnAt)) if tid == tournamentId =>
-                                IO.pure((player, withdrawnAt))
-                            case _ => IO.raiseError(NotFoundError(s"no entry $entrantId in tournament $tournamentId"))
-                        }
+                        found <- entrants
+                            .readForUpdate(game = gameId, tournament = tournamentId, id = entrantId)
+                            .flatMap(IO.fromOption(_)(NotFoundError("there is no such entry in this tournament")))
                         (player, withdrawnAt) = found
                         // Whoever plays the entry now -- its player, or its character's owner -- or the owner.
                         _ <- IO.raiseUnless(player.contains(caller.playerId) || t.owner == caller.playerId)(
@@ -782,10 +785,16 @@ class TournamentService[T](
                           )
                         )
                         _ <- t.status match {
-                            case TournamentStatus.Draft | TournamentStatus.Open => entrants.delete(gameId, entrantId)
+                            case TournamentStatus.Draft | TournamentStatus.Open =>
+                                entrants.delete(game = gameId, tournament = tournamentId, id = entrantId)
                             case TournamentStatus.Running if withdrawnAt.isEmpty =>
                                 requireGame(session, gameId).flatMap { game =>
-                                    entrants.setWithdrawnAt(game = gameId, id = entrantId, at = Some(now())) *>
+                                    entrants.setWithdrawnAt(
+                                      game = gameId,
+                                      tournament = tournamentId,
+                                      id = entrantId,
+                                      at = Some(now())
+                                    ) *>
                                         updateState(session = session, t = t, game = game)(
                                           Progress.withdraw(_, entrantId.value)
                                         )

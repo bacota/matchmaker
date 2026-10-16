@@ -118,31 +118,43 @@ class EntrantRepo(session: Session[IO]) {
     def players(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Option[PlayerId]]] =
         list(game, tournament).map(_.map(e => e.entrantId -> e.playerId).toMap)
 
-    private val lockOne: Query[(GameId, EntrantId), (TournamentId, Option[Long], Option[Instant])] =
-        sql"""SELECT e.tournament_id, ep.player_id, e.withdrawn_at FROM entrant e
+    // Every statement below names the entry by its whole key, tournament included: every key on `entrant` and its two
+    // subtypes is (game_id, tournament_id, entrant_id), and the game alone would read the entries of every tournament
+    // and challenge the game has had.
+    private val lockOne: Query[(GameId, TournamentId, EntrantId), (Option[Long], Option[Instant])] =
+        sql"""SELECT ep.player_id, e.withdrawn_at FROM entrant e
           LEFT JOIN entrant_player ep
                  ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
-          WHERE e.game_id = $gameId AND e.entrant_id = $entrantId FOR UPDATE OF e""".query(
-          tournamentId *: int8.opt *: instant.opt
-        )
+          WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId AND e.entrant_id = $entrantId
+          FOR UPDATE OF e""".query(int8.opt *: instant.opt)
 
-    /** An entry's tournament, who plays it now, and when it was withdrawn, locked for the rest of the transaction. */
-    def readForUpdate(game: GameId, id: EntrantId): IO[Option[(TournamentId, Option[PlayerId], Option[Instant])]] =
-        session.option(lockOne)((game, id)).map(_.map((t, p, w) => (t, p.map(PlayerId(_)), w)))
+    /** Who plays an entry of this tournament now, and when it was withdrawn, locked for the rest of the transaction;
+      * `None` for an entry that is not this tournament's.
+      */
+    def readForUpdate(
+        game: GameId,
+        tournament: TournamentId,
+        id: EntrantId
+    ): IO[Option[(Option[PlayerId], Option[Instant])]] =
+        session.option(lockOne)((game, tournament, id)).map(_.map((p, w) => (p.map(PlayerId(_)), w)))
 
-    private val setWithdrawn: Command[(Option[Instant], GameId, EntrantId)] =
-        sql"UPDATE entrant SET withdrawn_at = ${instant.opt} WHERE game_id = $gameId AND entrant_id = $entrantId".command
+    private val setWithdrawn: Command[(Option[Instant], GameId, TournamentId, EntrantId)] =
+        sql"""UPDATE entrant SET withdrawn_at = ${instant.opt}
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND entrant_id = $entrantId""".command
 
     /** Withdraws an entry, or with `None` takes it back. */
-    def setWithdrawnAt(game: GameId, id: EntrantId, at: Option[Instant]): IO[Unit] =
-        session.execute(setWithdrawn)((at, game, id)).void
+    def setWithdrawnAt(game: GameId, tournament: TournamentId, id: EntrantId, at: Option[Instant]): IO[Unit] =
+        session.execute(setWithdrawn)((at, game, tournament, id)).void
 
-    private val deleteOne: Command[(GameId, EntrantId, GameId, EntrantId, GameId, EntrantId)] =
-        sql"""WITH c AS (DELETE FROM character_entrant WHERE game_id = $gameId AND entrant_id = $entrantId),
-               p AS (DELETE FROM player_entrant WHERE game_id = $gameId AND entrant_id = $entrantId)
-          DELETE FROM entrant WHERE game_id = $gameId AND entrant_id = $entrantId""".command
+    private val deleteOne
+        : Command[(GameId, TournamentId, EntrantId, GameId, TournamentId, EntrantId, GameId, TournamentId, EntrantId)] =
+        sql"""WITH c AS (DELETE FROM character_entrant
+                        WHERE game_id = $gameId AND tournament_id = $tournamentId AND entrant_id = $entrantId),
+               p AS (DELETE FROM player_entrant
+                        WHERE game_id = $gameId AND tournament_id = $tournamentId AND entrant_id = $entrantId)
+          DELETE FROM entrant WHERE game_id = $gameId AND tournament_id = $tournamentId AND entrant_id = $entrantId""".command
 
     /** Removes an entry outright, with its subtype: only before the tournament starts, when nothing refers to it. */
-    def delete(game: GameId, id: EntrantId): IO[Unit] =
-        session.execute(deleteOne)((game, id, game, id, game, id)).void
+    def delete(game: GameId, tournament: TournamentId, id: EntrantId): IO[Unit] =
+        session.execute(deleteOne)((game, tournament, id, game, tournament, id, game, tournament, id)).void
 }
