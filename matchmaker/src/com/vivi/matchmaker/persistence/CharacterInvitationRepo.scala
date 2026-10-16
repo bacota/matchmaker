@@ -2,6 +2,7 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -56,22 +57,31 @@ class CharacterInvitationRepo(session: Session[IO]) {
     def isInvited(game: GameId, tournament: TournamentId, character: CharacterId): IO[Boolean] =
         session.unique(selectOne)((game, tournament, character)).map(_ > 0)
 
-    // Each invited character with its owner now, if it has one.
-    private val selectAll: Query[(GameId, TournamentId), (Long, String, Option[Long], Option[String])] =
-        sql"""SELECT c.character_id, c.name, p.player_id, p.nickname FROM character_invitation i
+    // Each invited character with its owner now, if it has one: of each tournament named, unnested as (game,
+    // tournament) pairs so that each is a lookup on its key.
+    private val selectAll
+        : Query[(Arr[Int], Arr[Long]), (GameId, TournamentId, Long, String, Option[Long], Option[String])] =
+        sql"""SELECT i.game_id, i.tournament_id, c.character_id, c.name, p.player_id, p.nickname
+          FROM unnest(${_int4}, ${_int8}) AS k (game_id, tournament_id)
+          JOIN character_invitation i ON i.game_id = k.game_id AND i.tournament_id = k.tournament_id
           JOIN "character" c ON c.game_id = i.game_id AND c.character_id = i.character_id
           LEFT JOIN player p ON p.player_id = c.player_id
-          WHERE i.game_id = $gameId AND i.tournament_id = $tournamentId
-          ORDER BY c.name, c.character_id""".query(int8 *: text *: int8.opt *: text.opt)
+          ORDER BY c.name, c.character_id""".query(gameId *: tournamentId *: int8 *: text *: int8.opt *: text.opt)
 
     /** Every character invited, by name, with whoever owns it now. */
     def list(game: GameId, tournament: TournamentId): IO[List[InvitedCharacter]] =
-        session
-            .execute(selectAll)((game, tournament))
-            .map(_.map { (id, name, owner, nickname) =>
-                InvitedCharacter(
-                  CharacterName(characterId = CharacterId(id), gameId = game, name = name),
-                  owner.zip(nickname).map((o, n) => PlayerName(PlayerId(o), n))
-                )
-            })
+        listFor(List(TournamentKey(game, tournament))).map(_.getOrElse(TournamentKey(game, tournament), Nil))
+
+    /** As [[list]], for each of several tournaments in one query: those with no character invited are left out. */
+    def listFor(tournaments: List[TournamentKey]): IO[Map[TournamentKey, List[InvitedCharacter]]] =
+        if (tournaments.isEmpty) IO.pure(Map.empty)
+        else
+            session
+                .execute(selectAll)(TournamentKey.arrays(tournaments))
+                .map(_.groupMap((g, t, _, _, _, _) => TournamentKey(g, t)) { (game, _, id, name, owner, nickname) =>
+                    InvitedCharacter(
+                      CharacterName(characterId = CharacterId(id), gameId = game, name = name),
+                      owner.zip(nickname).map((o, n) => PlayerName(PlayerId(o), n))
+                    )
+                })
 }
