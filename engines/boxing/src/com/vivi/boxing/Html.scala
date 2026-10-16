@@ -867,6 +867,13 @@ ${signIn.signInScript}
    * sign-in's `busy`, which is about the sign-in form. */
   let building = false;
 
+  /* The change forms whose request is out, by their button's id, and how to bring each one's button
+   * up to date. Here rather than in the form: `showMine` draws every form again when the list comes
+   * back, and a form drawn while its own save was still out started not sending, so its button came
+   * back enabled and a second press sent the change twice. */
+  const sendingForms = new Set();
+  const formRefreshers = new Map();
+
   function left() {
     const values = traits.map(([key]) => value(inputs[key]));
     const out = traits.find(([key]) => value(inputs[key]) < rules.min || value(inputs[key]) > rules.max);
@@ -1054,9 +1061,9 @@ ${signIn.signInScript}
   }
 
   /* A form that sends one change about a fighter. `ready` says whether what is typed is worth
-   * sending, `request` makes the call, and `done` says what happened. Each has its own in-flight
-   * flag, for the reason `building` is the build form's: editing a field must not re-enable a
-   * button whose request has not answered. */
+   * sending, `request` makes the call, and `done` says what happened. Each is held in `sendingForms`
+   * while its request is out, for the reason `building` is the build form's: editing a field, or
+   * drawing the form again, must not re-enable a button whose request has not answered. */
   function changeForm(fields, buttonText, ready, request, done) {
     const form = document.createElement("form");
     form.noValidate = true;
@@ -1066,15 +1073,16 @@ ${signIn.signInScript}
     button.textContent = buttonText;
     // Named after its first field, so that `showMine` can give it the focus back when it draws the list again.
     button.id = fields[0].input.id + "-submit";
-    let sending = false;
-    const refresh = () => { button.disabled = sending || !ready(); };
+    const key = button.id;
+    const refresh = () => { button.disabled = sendingForms.has(key) || !ready(); };
+    formRefreshers.set(key, refresh);
     fields.forEach(f => f.input.addEventListener("input", refresh));
     refresh();
     form.append(...fields.map(f => f.field), button);
     form.addEventListener("submit", async e => {
       e.preventDefault();
-      if (sending || !ready()) return;
-      sending = true;
+      if (sendingForms.has(key) || !ready()) return;
+      sendingForms.add(key);
       refresh();
       show("");
       const asked = session;
@@ -1089,8 +1097,9 @@ ${signIn.signInScript}
       } catch (err) {
         if (asked === session) show("Could not reach the engine.");
       } finally {
-        sending = false;
-        refresh();
+        sendingForms.delete(key);
+        // The form now on the page, which is a newer one than this if the list was drawn meanwhile.
+        formRefreshers.get(key)();
       }
     });
     return form;
