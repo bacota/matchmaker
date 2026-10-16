@@ -158,6 +158,12 @@ class MatchRepo(session: Session[IO]) {
     /** A new match's id, drawn before its row is written: one sequence serves every game's matches. */
     def nextId: IO[MatchId] = session.unique(selectNextId)
 
+    private val selectNextIds: Query[Int, MatchId] =
+        sql"SELECT nextval('match_id_seq') FROM generate_series(1, $int4)".query(matchId)
+
+    /** `n` new matches' ids, drawn in one statement: for a round's matches, written together. */
+    def nextIds(n: Int): IO[List[MatchId]] = session.execute(selectNextIds)(n)
+
     def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
         session.option(selectMatch)((gameId, matchId)).map(_.map(toMatch(gameId, matchId, _)))
 

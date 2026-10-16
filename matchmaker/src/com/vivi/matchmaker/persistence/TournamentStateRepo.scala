@@ -1,6 +1,6 @@
 package com.vivi.matchmaker.persistence
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all._
 import java.time.Instant
 import skunk._
@@ -284,93 +284,120 @@ class TournamentStateRepo(session: Session[IO]) {
         }
 
     // ---- writing ----------------------------------------------------------------------------
+    // Each kind of row a save writes is written in one statement, from arrays a row apiece: a first round of a large
+    // tournament is hundreds of pools, matches and seats, written while its lock is held.
 
     private val insertRound: Command[(GameId, TournamentId, Int, Long)] =
         sql"""INSERT INTO round (game_id, tournament_id, round, stage_id) VALUES ($gameId, $tournamentId, $int4, $int8)
           ON CONFLICT (game_id, tournament_id, round) DO NOTHING""".command
 
-    private val insertPool: Query[(GameId, TournamentId, String, Long, Int, Int), Long] =
-        sql"""INSERT INTO pool (game_id, tournament_id, kind, parent_pool_id, round, stratum)
-          VALUES ($gameId, $tournamentId, $text, $int8, $int4, $int4)
-          RETURNING pool_id""".query(int8)
+    // New pools' and seats' ids, drawn from their identity columns ahead of the rows, so that the rows that name them
+    // can be written in a statement of their own.
+    private val nextPoolIds: Query[Int, Long] =
+        sql"""SELECT nextval(pg_get_serial_sequence('pool', 'pool_id')) FROM generate_series(1, $int4)""".query(int8)
 
-    private val insertAtomicPool: Command[(GameId, TournamentId, Long, Long)] =
-        sql"""INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id)
-          VALUES ($gameId, $tournamentId, $int8, $int8)""".command
+    private val nextSeatIds: Query[Int, Long] =
+        sql"""SELECT nextval(pg_get_serial_sequence('participant', 'participant_id'))
+          FROM generate_series(1, $int4)""".query(int8)
 
-    private val insertGroup: Command[(GameId, TournamentId, Long, Long)] =
-        sql"""INSERT INTO pool_group (game_id, tournament_id, pool_id, stage_id)
-          VALUES ($gameId, $tournamentId, $int8, $int8)""".command
+    // Parents among them: a pool's parent may be written in the same statement, and its key is checked at the end.
+    private val insertPools: Command[(GameId, TournamentId, Int, Arr[Long], Arr[String], Arr[Long], Arr[Int])] =
+        sql"""INSERT INTO pool (game_id, tournament_id, pool_id, kind, parent_pool_id, round, stratum)
+          OVERRIDING SYSTEM VALUE
+          SELECT $gameId, $tournamentId, u.pool_id, u.kind, u.parent_pool_id, $int4, u.stratum
+          FROM unnest(${_int8}, ${_text}, ${_int8}, ${_int4}) AS u (pool_id, kind, parent_pool_id, stratum)""".command
 
-    private val insertMember: Command[(GameId, TournamentId, Long, Long)] =
+    private def insertPoolsOf(table: String): Command[(GameId, TournamentId, Arr[Long], Arr[Long])] =
+        sql"""INSERT INTO #$table (game_id, tournament_id, pool_id, stage_id)
+          SELECT $gameId, $tournamentId, u.pool_id, u.stage_id FROM unnest(${_int8}, ${_int8}) AS u (pool_id, stage_id)""".command
+
+    private val insertAtomicPools = insertPoolsOf("atomic_pool")
+    private val insertGroups = insertPoolsOf("pool_group")
+
+    private val insertMembers: Command[(GameId, TournamentId, Arr[Long], Arr[Long])] =
         sql"""INSERT INTO pool_member (game_id, tournament_id, pool_id, entrant_id)
-          VALUES ($gameId, $tournamentId, $int8, $int8)""".command
+          SELECT $gameId, $tournamentId, u.pool_id, u.entrant_id
+          FROM unnest(${_int8}, ${_int8}) AS u (pool_id, entrant_id)""".command
 
-    private val updateMember: Command[
-      (Option[Int], Option[Double], Option[Double], Option[Double], GameId, TournamentId, Long, Long)
-    ] =
-        sql"""UPDATE pool_member SET final_rank = ${int4.opt}, total_score = ${float8.opt},
-                 score_against = ${float8.opt}, pool_points = ${float8.opt}
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int8 AND entrant_id = $int8""".command
+    // The results, any of which may be missing, are array literals: see `nullable`.
+    private val updateMembers: Command[(Arr[Long], Arr[Long], String, String, String, String, GameId, TournamentId)] =
+        sql"""UPDATE pool_member pm SET final_rank = u.final_rank, total_score = u.total_score,
+                 score_against = u.score_against, pool_points = u.pool_points
+          FROM unnest(${_int8}, ${_int8}, $text::int4[], $text::float8[], $text::float8[], $text::float8[])
+              AS u (pool_id, entrant_id, final_rank, total_score, score_against, pool_points)
+          WHERE pm.game_id = $gameId AND pm.tournament_id = $tournamentId
+            AND pm.pool_id = u.pool_id AND pm.entrant_id = u.entrant_id""".command
 
-    private val completePool: Command[(GameId, TournamentId, Long)] =
+    private val completePools: Command[(GameId, TournamentId, Arr[Long])] =
         sql"""UPDATE pool SET completed_at = now()
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int8 AND completed_at IS NULL""".command
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = ANY(${_int8})
+            AND completed_at IS NULL""".command
 
-    private val insertSeed: Command[(GameId, TournamentId, Long, Long, Int, Int, Int, Option[Int])] =
+    private val deleteSeeds: Command[(Arr[Long], Arr[Long], GameId, TournamentId, Int)] =
+        sql"""DELETE FROM seed s USING unnest(${_int8}, ${_int8}) AS u (pool_id, entrant_id)
+          WHERE s.game_id = $gameId AND s.tournament_id = $tournamentId AND s.round = $int4
+            AND s.pool_id = u.pool_id AND s.entrant_id = u.entrant_id""".command
+
+    private val insertSeeds: Command[(GameId, TournamentId, Int, Arr[Long], Arr[Long], Arr[Int], Arr[Int], String)] =
         sql"""INSERT INTO seed (game_id, tournament_id, pool_id, entrant_id, round, seed, stratum, eliminated)
-          VALUES ($gameId, $tournamentId, $int8, $int8, $int4, $int4, $int4, ${int4.opt})""".command
+          SELECT $gameId, $tournamentId, u.pool_id, u.entrant_id, $int4, u.seed, u.stratum, u.eliminated
+          FROM unnest(${_int8}, ${_int8}, ${_int4}, ${_int4}, $text::int4[])
+              AS u (pool_id, entrant_id, seed, stratum, eliminated)""".command
 
-    private val insertMatch: Command[
-      (GameId, Long, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
+    private val insertMatches: Command[
+      (GameId, Boolean, Boolean, TournamentId, Arr[Long], Arr[Long], Arr[Int], Arr[Long], String, String)
     ] =
         sql"""INSERT INTO match (game_id, match_id, description, settings, is_public, is_friendly, status,
                                  tournament_id, pool_id, round, stage_id, can_tie, is_rubber)
-          VALUES ($gameId, $int8, '', '{}', $bool, $bool, 'S',
-                  $tournamentId, $int8, $int4, $int8, $bool, $bool)""".command
+          SELECT $gameId, u.match_id, '', '{}', $bool, $bool, 'S',
+                 $tournamentId, u.pool_id, u.round, u.stage_id, u.can_tie, u.is_rubber
+          FROM unnest(${_int8}, ${_int8}, ${_int4}, ${_int8}, $text::bool[], $text::bool[])
+              AS u (match_id, pool_id, round, stage_id, can_tie, is_rubber)""".command
 
-    private val beginMatch: Command[(String, Int, GameId, Long)] =
-        sql"""UPDATE match SET status = $text, round = $int4
-          WHERE game_id = $gameId AND match_id = $int8 AND status = 'S'""".command
+    private val beginMatches: Command[(Arr[Long], Arr[String], Arr[Int], GameId)] =
+        sql"""UPDATE match m SET status = u.status, round = u.round
+          FROM unnest(${_int8}, ${_text}, ${_int4}) AS u (match_id, status, round)
+          WHERE m.game_id = $gameId AND m.match_id = u.match_id AND m.status = 'S'""".command
 
     // Stamped with what its player wants to hear about it -- or everything, for a seat nobody plays, whose character
-    // has no owner: it forfeits before play and is told nothing.
-    private val insertSeat: Query[
-      (GameId, Long, String, Option[Long], Option[Int], TournamentId, Long, Option[Int], GameId, Option[Long]),
-      Long
+    // has no owner: it forfeits before play and is told nothing. The player, role and turn to choose may each be
+    // missing, so they are array literals: see `nullable`.
+    private val insertSeats: Command[
+      (GameId, String, TournamentId, Arr[Long], Arr[Long], String, String, Arr[Long], String, GameId)
     ] =
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, due, game_role_id,
-              tournament_id, entrant_id, choose_order, is_notified_of_match_started, is_notified_of_turn_taken, is_notified_of_your_turn,
-              is_notified_of_match_ended)
-          SELECT $gameId, $int8, $text, ${int8.opt}, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
+        sql"""INSERT INTO participant (game_id, participant_id, match_id, game_type, player_id, is_pending, due,
+              game_role_id, tournament_id, entrant_id, choose_order, is_notified_of_match_started,
+              is_notified_of_turn_taken, is_notified_of_your_turn, is_notified_of_match_ended)
+          OVERRIDING SYSTEM VALUE
+          SELECT $gameId, u.participant_id, u.match_id, $text, u.player_id, false, NULL,
+                 u.game_role_id, $tournamentId, u.entrant_id, u.choose_order,
                  COALESCE(pg.is_notified_of_match_started, pl.is_notified_of_match_started, TRUE),
                  COALESCE(pg.is_notified_of_turn_taken, pl.is_notified_of_turn_taken, TRUE),
                  COALESCE(pg.is_notified_of_your_turn, pl.is_notified_of_your_turn, TRUE),
                  COALESCE(pg.is_notified_of_match_ended, pl.is_notified_of_match_ended, TRUE)
-          FROM (SELECT 1) one
-              LEFT JOIN player pl ON pl.player_id = ${int8.opt}
-              LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
-          RETURNING participant_id"""
-            .query(int8)
-            .contramap { case (game, matchId, gt, player, role, tournament, entrant, order, game2, player2) =>
-                (game, matchId, gt, player, role, tournament, entrant, order, player2, game2)
-            }
+          FROM unnest(${_int8}, ${_int8}, $text::int8[], $text::int4[], ${_int8}, $text::int4[])
+              AS u (participant_id, match_id, player_id, game_role_id, entrant_id, choose_order)
+              LEFT JOIN player pl ON pl.player_id = u.player_id
+              LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId""".command
 
-    private val insertPlayerSeat: Command[(GameId, Long, TournamentId, Long)] =
+    private val insertPlayerSeats: Command[(GameId, TournamentId, Arr[Long], Arr[Long])] =
         sql"""INSERT INTO player_participant (game_id, participant_id, tournament_id, entrant_id)
-          VALUES ($gameId, $int8, $tournamentId, $int8)""".command
+          SELECT $gameId, u.participant_id, $tournamentId, u.entrant_id
+          FROM unnest(${_int8}, ${_int8}) AS u (participant_id, entrant_id)""".command
 
-    private val insertCharacterSeat: Command[(GameId, Long, Long, TournamentId, Long)] =
+    private val insertCharacterSeats: Command[(GameId, TournamentId, Arr[Long], Arr[Long], Arr[Long])] =
         sql"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id, entrant_id)
-          VALUES ($gameId, $int8, $int8, $tournamentId, $int8)""".command
+          SELECT $gameId, u.participant_id, u.character_id, $tournamentId, u.entrant_id
+          FROM unnest(${_int8}, ${_int8}, ${_int8}) AS u (participant_id, character_id, entrant_id)""".command
 
     private val updateProgress: Command[(Option[Int], Boolean, GameId, TournamentId)] =
         sql"""UPDATE tournament SET current_round = ${int4.opt}, is_stop_requested = $bool
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
-    private val setFinalRank: Command[(Int, GameId, TournamentId, Long)] =
-        sql"""UPDATE entrant SET final_rank = $int4
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND entrant_id = $int8""".command
+    private val setFinalRanks: Command[(Arr[Long], Arr[Int], GameId, TournamentId)] =
+        sql"""UPDATE entrant e SET final_rank = u.final_rank
+          FROM unnest(${_int8}, ${_int4}) AS u (entrant_id, final_rank)
+          WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId AND e.entrant_id = u.entrant_id""".command
 
     /** Writes what changed from `before` -- as [[load]] read it -- to `after`, the rules' next state: new pools with
       * their members and matches and seats, results and completions of pools, members' new seeds and strata, the round
@@ -405,7 +432,10 @@ class TournamentStateRepo(session: Session[IO]) {
         // A state with pools still to play always has a round stage. Only a finished tournament falls back to the
         // last pool's, which a load without the completed runs may not hold: such a state is worked out again from a
         // whole load first (isWholeLoadNeeded), and a round named after the wrong stage is not written.
-        def ensureRound(r: Int, stage: Option[Long]): IO[Unit] =
+        //
+        // A round's row is written once in a save: it keeps the stage the first call names, so a second changes
+        // nothing.
+        def ensureRound(written: Ref[IO, Set[Int]])(r: Int, stage: Option[Long]): IO[Unit] =
             IO.raiseWhen(stage.isEmpty && roundStage.isEmpty && before.omittedRunsIn.nonEmpty)(
               new IllegalStateException(
                 "a state loaded without its completed runs cannot name a finished round's stage"
@@ -414,74 +444,129 @@ class TournamentStateRepo(session: Session[IO]) {
                 stage
                     .orElse(roundStage)
                     .orElse(lastStage)
-                    .traverse_(s => session.execute(insertRound)((game, tournament, r, s)))
+                    .traverse_ { s =>
+                        written.modify(done => (done + r, done.contains(r))).flatMap { isDone =>
+                            IO.unlessA(isDone)(session.execute(insertRound)((game, tournament, r, s)).void)
+                        }
+                    }
 
         for {
-            // ---- new pools, parents first ----
-            ids <- walked.pools.filter(_.pool.id < 0).foldLeftM(Map.empty[Int, Long]) { (ids, w) =>
-                val parent = if (w.scope < 0) ids(w.scope.toInt) else w.scope
-                val kind = if (w.isNested) "G" else "A"
-                val stage = stageOf(w)
-                for {
-                    _ <- ensureRound(effective, if (w.isNested) None else Some(stage))
-                    id <- session.unique(insertPool)((game, tournament, kind, parent, effective, w.pool.stratum))
-                    _ <- session
-                        .execute(if (w.isNested) insertGroup else insertAtomicPool)((game, tournament, id, stage))
-                    _ <- w.pool.members.traverse_(m => session.execute(insertMember)((game, tournament, id, m.entrant)))
-                } yield ids + (w.pool.id -> id)
-            }
+            written <- Ref.of[IO, Set[Int]](Set.empty)
+            ensure = ensureRound(written)
+
+            // ---- new pools, with their members ----
+            fresh = walked.pools.filter(_.pool.id < 0)
+            _ <- fresh.traverse_(w => ensure(effective, Option.unless(w.isNested)(stageOf(w))))
+            drawn <- if (fresh.isEmpty) IO.pure(Nil) else session.execute(nextPoolIds)(fresh.size)
+            ids = fresh.map(_.pool.id).zip(drawn.sorted).toMap
             realId = (id: Int) => if (id < 0) ids(id) else id.toLong
+            _ <- IO.whenA(fresh.nonEmpty) {
+                val (groups, atomics) = fresh.partition(_.isNested)
+                val members = fresh.flatMap(w => w.pool.members.map(m => ids(w.pool.id) -> m.entrant))
+                session.execute(insertPools)(
+                  (
+                    game,
+                    tournament,
+                    effective,
+                    arr(fresh.map(w => ids(w.pool.id))),
+                    arr(fresh.map(w => if (w.isNested) "G" else "A")),
+                    arr(fresh.map(w => if (w.scope < 0) ids(w.scope.toInt) else w.scope)),
+                    arr(fresh.map(_.pool.stratum))
+                  )
+                ) *>
+                    IO.whenA(atomics.nonEmpty)(
+                      session
+                          .execute(insertAtomicPools)(
+                            (game, tournament, arr(atomics.map(w => ids(w.pool.id))), arr(atomics.map(stageOf)))
+                          )
+                          .void
+                    ) *>
+                    IO.whenA(groups.nonEmpty)(
+                      session
+                          .execute(insertGroups)(
+                            (game, tournament, arr(groups.map(w => ids(w.pool.id))), arr(groups.map(stageOf)))
+                          )
+                          .void
+                    ) *>
+                    IO.whenA(members.nonEmpty)(
+                      session
+                          .execute(insertMembers)((game, tournament, arr(members.map(_._1)), arr(members.map(_._2))))
+                          .void
+                    )
+            }
 
             // ---- pools' results and completion ----
-            _ <- walked.pools.traverse_ { w =>
+            results = walked.pools.flatMap { w =>
                 val was = beforePools.get(w.pool.id).map(_.pool)
-                val id = realId(w.pool.id)
-                val members = w.pool.members.filter(m => !was.exists(_.members.contains(m)))
-                members.traverse_(m =>
-                    session.execute(updateMember)(
+                w.pool.members.filter(m => !was.exists(_.members.contains(m))).map(realId(w.pool.id) -> _)
+            }
+            _ <- IO.whenA(results.nonEmpty) {
+                val members = results.map(_._2)
+                session
+                    .execute(updateMembers)(
                       (
-                        m.rank,
-                        m.totalScore,
-                        m.totalScore.zip(m.scoreDiff).map(_ - _),
-                        m.points,
+                        arr(results.map(_._1)),
+                        arr(members.map(_.entrant)),
+                        nullable(members.map(_.rank)),
+                        nullable(members.map(_.totalScore)),
+                        nullable(members.map(m => m.totalScore.zip(m.scoreDiff).map(_ - _))),
+                        nullable(members.map(_.points)),
                         game,
-                        tournament,
-                        id,
-                        m.entrant
+                        tournament
                       )
                     )
-                ) *> IO.whenA(w.pool.isCompleted && !was.exists(_.isCompleted))(
-                  session.execute(completePool)((game, tournament, id)).void
-                )
+                    .void
             }
+            completed = walked.pools
+                .filter(w => w.pool.isCompleted && !beforePools.get(w.pool.id).exists(_.pool.isCompleted))
+                .map(w => realId(w.pool.id))
+            _ <- IO.whenA(completed.nonEmpty)(
+              session.execute(completePools)((game, tournament, arr(completed))).void
+            )
 
             // ---- seeds and strata, per node ----
             // From the next round, as everything else. A tournament that has just finished has no next round to play,
             // so that round's row is written for its last seeds alone, and is never begun.
             seedRound = effective
             beforeNodes = beforeWalk.nodes.map(n => n.scope -> n.node).toMap
-            _ <- walked.nodes.traverse_ { n =>
+            seeds = walked.nodes.flatMap { n =>
                 val scope = if (n.scope < 0) ids(n.scope.toInt) else n.scope
                 val was = beforeNodes.get(n.scope).map(_.members.map(m => m.entrant -> m).toMap).getOrElse(Map.empty)
-                val changed = n.node.members.filterNot(m => was.get(m.entrant).contains(m))
-                val eliminatedAt = (m: Member) =>
-                    Option.when(m.isEliminated)(
-                      before.eliminatedRound.getOrElse((scope, m.entrant), seedRound)
+                n.node.members
+                    .filterNot(m => was.get(m.entrant).contains(m))
+                    .map(m =>
+                        (
+                          scope,
+                          m,
+                          Option.when(m.isEliminated)(before.eliminatedRound.getOrElse((scope, m.entrant), seedRound))
+                        )
                     )
-                IO.whenA(changed.nonEmpty)(
-                  ensureRound(effective, None) *>
-                      // Its row for this round replaced, where an earlier call in the same round wrote one.
-                      changed.traverse_(m =>
-                          session.execute(deleteSeedOf)((game, tournament, scope, seedRound, m.entrant)) *>
-                              session.execute(insertSeed)(
-                                (game, tournament, scope, m.entrant, seedRound, m.seed, m.stratum, eliminatedAt(m))
-                              )
-                      )
-                )
             }
+            // A member's row for this round replaced, where an earlier call in the same round wrote one: all of them
+            // removed before any is written, since two members may trade seeds.
+            _ <- IO.whenA(seeds.nonEmpty)(
+              ensure(effective, None) *>
+                  session.execute(deleteSeeds)(
+                    (arr(seeds.map(_._1)), arr(seeds.map(_._2.entrant)), game, tournament, seedRound)
+                  ) *>
+                  session
+                      .execute(insertSeeds)(
+                        (
+                          game,
+                          tournament,
+                          seedRound,
+                          arr(seeds.map(_._1)),
+                          arr(seeds.map(_._2.entrant)),
+                          arr(seeds.map(_._2.seed)),
+                          arr(seeds.map(_._2.stratum)),
+                          nullable(seeds.map(_._3))
+                        )
+                      )
+                      .void
+            )
 
             // ---- matches and their seats ----
-            _ <- walked.pools.filter(w => w.pool.sub.isEmpty).traverse_ { w =>
+            writes = walked.pools.filter(w => w.pool.sub.isEmpty).flatMap { w =>
                 val poolId = realId(w.pool.id)
                 val stage = stageOf(w)
                 val waitingSlots = w.pool.matches.filter(_.round.isEmpty).map(_.planned.slot).distinct.sorted
@@ -489,88 +574,136 @@ class TournamentStateRepo(session: Session[IO]) {
                     (w.pool.matches.flatMap(_.round) ++
                         before.matchRounds.collect { case ((p, _), r) if p == w.pool.id => r }).maxOption
                         .getOrElse(effective - 1)
-                w.pool.matches.traverse_ { m =>
+                w.pool.matches.flatMap { m =>
                     before.matchIds.get((w.pool.id, m.planned.no)) match {
                         case Some(existing) =>
-                            m.round.filter(_ => before.matchRounds.get((w.pool.id, m.planned.no)).isEmpty) match {
-                                case Some(r) =>
-                                    ensureRound(r, Some(stage)) *>
-                                        session.execute(beginMatch)((statusAt(m), r, game, existing.value)).void
-                                case None => IO.unit
-                            }
+                            m.round
+                                .filter(_ => before.matchRounds.get((w.pool.id, m.planned.no)).isEmpty)
+                                .map(r =>
+                                    BegunMatch(matchId = existing.value, stage = stage, round = r, status = statusAt(m))
+                                )
                         case None =>
-                            val planned = m.round.getOrElse(lastRound + 1 + waitingSlots.indexOf(m.planned.slot))
-                            for {
-                                id <- new MatchRepo(session).nextId.map(_.value)
-                                _ <- ensureRound(planned, Some(stage))
-                                _ <- session.execute(insertMatch)(
-                                  (
-                                    game,
-                                    id,
-                                    ctx.isPublic,
-                                    ctx.isFriendly,
-                                    tournament,
-                                    poolId,
-                                    planned,
-                                    stage,
-                                    m.canTie,
-                                    m.planned.isRubber
-                                  )
-                                )
-                                _ <- m.planned.seats.traverse_(seat =>
-                                    writeSeat(
-                                      game = game,
-                                      tournament = tournament,
-                                      ctx = ctx,
-                                      matchId = id,
-                                      seat = seat
-                                    )
-                                )
-                                _ <- m.round.traverse_(r => session.execute(beginMatch)((statusAt(m), r, game, id)))
-                            } yield ()
+                            Some(
+                              NewMatch(
+                                pool = poolId,
+                                stage = stage,
+                                round = m.round.getOrElse(lastRound + 1 + waitingSlots.indexOf(m.planned.slot)),
+                                m = m
+                              )
+                            )
                     }
                 }
             }
+            _ <- writes.traverse_(w => ensure(w.round, Some(w.stage)))
+            created = writes.collect { case n: NewMatch => n }
+            matchIds <- if (created.isEmpty) IO.pure(Nil) else new MatchRepo(session).nextIds(created.size)
+            made = created.zip(matchIds.map(_.value).sorted)
+            _ <- IO.whenA(made.nonEmpty)(
+              session
+                  .execute(insertMatches)(
+                    (
+                      game,
+                      ctx.isPublic,
+                      ctx.isFriendly,
+                      tournament,
+                      arr(made.map(_._2)),
+                      arr(made.map(_._1.pool)),
+                      arr(made.map(_._1.round)),
+                      arr(made.map(_._1.stage)),
+                      nullable(made.map(n => Some(n._1.m.canTie))),
+                      nullable(made.map(n => Some(n._1.m.planned.isRubber)))
+                    )
+                  )
+                  .void
+            )
+            planned = made.flatMap((n, id) => n.m.planned.seats.map(id -> _))
+            seatIds <- if (planned.isEmpty) IO.pure(Nil) else session.execute(nextSeatIds)(planned.size)
+            _ <- IO.whenA(planned.nonEmpty)(
+              writeSeats(game = game, tournament = tournament, ctx = ctx, seats = planned.zip(seatIds.sorted))
+            )
+            begun = writes.collect { case b: BegunMatch => (b.matchId, b.status, b.round) } ++
+                made.flatMap((n, id) => n.m.round.map(r => (id, statusAt(n.m), r)))
+            _ <- IO.whenA(begun.nonEmpty)(
+              session
+                  .execute(beginMatches)((arr(begun.map(_._1)), arr(begun.map(_._2)), arr(begun.map(_._3)), game))
+                  .void
+            )
 
             // ---- the round being played, and whether a stage is to stop ----
-            _ <- IO.whenA(after.round > before.state.round)(ensureRound(after.round, None))
+            _ <- IO.whenA(after.round > before.state.round)(ensure(after.round, None))
             _ <- session.execute(updateProgress)(
               (Option.when(after.round > 0)(after.round), after.isStopRequested, game, tournament)
             )
 
             // ---- a finished tournament's ranking ----
             _ <- (after.root.ranking, before.state.root.ranking) match {
-                case (Some(ranking), None) =>
-                    ranking.toList.traverse_((e, rank) => session.execute(setFinalRank)((rank, game, tournament, e)))
+                case (Some(ranking), None) if ranking.nonEmpty =>
+                    val ranks = ranking.toList
+                    session
+                        .execute(setFinalRanks)((arr(ranks.map(_._1)), arr(ranks.map(_._2)), game, tournament))
+                        .void
                 case _ => IO.unit
             }
         } yield ids
     }
 
-    private val deleteSeedOf: Command[(GameId, TournamentId, Long, Int, Long)] =
-        sql"""DELETE FROM seed WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int8
-             AND round = $int4 AND entrant_id = $int8""".command
-
-    /* A seat of a new match: who plays it now (its player, or its character's current owner), the role it was given or
-     * none while it is to be chosen, and its turn to choose -- with its subtype, a player's or a character's seat. */
-    private def writeSeat(
+    /* The seats of new matches, each with the id drawn for it: who plays it now (its player, or its character's
+     * current owner), the role it was given or none while it is to be chosen, and its turn to choose -- with its
+     * subtype, a player's or a character's seat. */
+    private def writeSeats(
         game: GameId,
         tournament: TournamentId,
         ctx: Context,
-        matchId: Long,
-        seat: SeatPlan
+        seats: List[((Long, SeatPlan), Long)]
     ): IO[Unit] = {
-        val (player, character) = ctx.entrants.getOrElse(seat.entrant, (None, None))
-        for {
-            id <- session.unique(insertSeat)(
-              (game, matchId, ctx.gameType, player, seat.role, tournament, seat.entrant, seat.chooseOrder, game, player)
+        val rows = seats.map { case ((matchId, seat), id) =>
+            val (player, character) = ctx.entrants.getOrElse(seat.entrant, (None, None))
+            (id, matchId, seat, player, character)
+        }
+        val (ofCharacters, ofPlayers) = rows.partition(_._5.isDefined)
+        session.execute(insertSeats)(
+          (
+            game,
+            ctx.gameType,
+            tournament,
+            arr(rows.map(_._1)),
+            arr(rows.map(_._2)),
+            nullable(rows.map(_._4)),
+            nullable(rows.map(_._3.role)),
+            arr(rows.map(_._3.entrant)),
+            nullable(rows.map(_._3.chooseOrder)),
+            game
+          )
+        ) *>
+            IO.whenA(ofPlayers.nonEmpty)(
+              session
+                  .execute(insertPlayerSeats)(
+                    (game, tournament, arr(ofPlayers.map(_._1)), arr(ofPlayers.map(_._3.entrant)))
+                  )
+                  .void
+            ) *>
+            IO.whenA(ofCharacters.nonEmpty)(
+              session
+                  .execute(insertCharacterSeats)(
+                    (
+                      game,
+                      tournament,
+                      arr(ofCharacters.map(_._1)),
+                      arr(ofCharacters.flatMap(_._5)),
+                      arr(ofCharacters.map(_._3.entrant))
+                    )
+                  )
+                  .void
             )
-            _ <- character match {
-                case Some(c) => session.execute(insertCharacterSeat)((game, id, c, tournament, seat.entrant))
-                case None    => session.execute(insertPlayerSeat)((game, id, tournament, seat.entrant))
-            }
-        } yield ()
     }
+
+    private def arr[A](xs: List[A]): Arr[A] = Arr.fromFoldable(xs)
+
+    /* An array of values any of which may be missing, as a Postgres array literal for a parameter cast to the array's
+     * type, since skunk's array codecs hold no NULL -- and have none for booleans at all. Only values whose text needs
+     * no quoting: an Int, a Long, a Boolean, or a Double, whose toString (NaN and Infinity included) Postgres reads
+     * back as the same float8. */
+    private def nullable[A](xs: List[Option[A]]): String = xs.map(_.fold("NULL")(_.toString)).mkString("{", ",", "}")
 
     private val startRound: Command[(Instant, Option[Instant], GameId, TournamentId, Int)] =
         sql"""UPDATE round SET start_date = ${SkunkCodecs.instant}, deadline = ${SkunkCodecs.instant.opt}
@@ -617,6 +750,18 @@ object TournamentStateRepo {
     /** What a save needs to know of the tournament beyond its state: how its matches are played, and each entrant's
       * player and character.
       */
+    /** What a save writes of a match of the state: a new one, with the round it is planned for, or one already written
+      * that is now begun, in round `round`. Either names the round's stage, for the round's row.
+      */
+    private sealed trait MatchWrite {
+        def round: Int
+        def stage: Long
+    }
+
+    private case class NewMatch(pool: Long, stage: Long, round: Int, m: PoolMatch) extends MatchWrite
+
+    private case class BegunMatch(matchId: Long, stage: Long, round: Int, status: String) extends MatchWrite
+
     case class Context(
         isFriendly: Boolean,
         isPublic: Boolean,
