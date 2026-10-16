@@ -194,6 +194,17 @@ class ResultRepo(session: Session[IO]) {
     def createManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
         session.execute(insertManual)((gameId, id, rank, isWinner)).void
 
+    private val deleteManualForMatch: Command[(GameId, MatchId)] =
+        sql"""DELETE FROM result r USING participant p
+          WHERE r.game_id = p.game_id AND r.participant_id = p.participant_id AND r.is_manual
+            AND p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}""".command
+
+    /** Removes the ranks given by hand to the seats of a match: for a launch the engine refused, taking back the last
+      * places it recorded for its forfeited seats, so that the next attempt can record them again.
+      */
+    def deleteManualForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.execute(deleteManualForMatch)((gameId, matchId)).void
+
     private val updateToManual: Command[(Int, Boolean, GameId, ParticipantId)] =
         sql"""UPDATE result SET rank = $int4, scores = '{}'::jsonb, is_winner = $bool, is_forfeit = false, is_manual = true,
                  elo_delta = NULL, elo_role_delta = NULL

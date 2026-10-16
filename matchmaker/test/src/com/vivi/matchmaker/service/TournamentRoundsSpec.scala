@@ -714,6 +714,40 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(owed, 1)
     }
 
+    // A launch records each forfeited seat's last place before it asks the engine; one the engine refuses must take
+    // those back with it, or the next attempt finds them already there.
+    test("a match with a forfeited seat that the engine could not create is created when asked again") {
+        val (owedStatus, settled, startedStatus, created) = run(for {
+            f <- started(
+              n = 4,
+              design = "challenge",
+              game = Some(Generators.genRolelessGame(least = 2, most = None)),
+              poolSize = Some(4)
+            )
+            entries <- detail(f).map(_.entries)
+            _ <- f.w.services.tournaments.withdraw(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              entrantId = entries.head.entrantId,
+              callerExternalId = f.players.head.externalId
+            )
+            _ = f.w.engine.refusals.set(1)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            before <- round(f).map(_.head)
+            settled <- f.w.services.rounds
+                .createMatch(gameId = f.game.gameId, tournamentId = f.t.tournamentId, matchId = before.matchId)
+            after <- round(f).map(_.head)
+        } yield (before.status, settled, after.status, f.w.engine.created.get))
+        assertEquals(owedStatus, TournamentMatchStatus.Due)
+        assertEquals(settled, Settlement.Settled)
+        assertEquals(startedStatus, TournamentMatchStatus.Started)
+        assertEquals(created, 1)
+    }
+
     test("a withdrawn entrant's seat forfeits, and their opponent wins without a match") {
         val d = run(for {
             f <- started(n = 2, roles = false)

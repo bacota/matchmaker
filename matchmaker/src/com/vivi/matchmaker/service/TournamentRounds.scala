@@ -470,14 +470,21 @@ class TournamentRounds[T](
         } yield Prepared.Launch(saved = saved, game = game, players = enginePlayers, canTie = tm.canTie)
     }
 
-    /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed: the
+    /** Puts back a match whose engine would not create it, so that it is due again under the same id: its turns and its
+      * forfeited seats' last places gone, as [[launch]] will write them again. Only while it is still being launched,
+      * read under its lock: one its owner called off or decided meanwhile keeps what that wrote. Swallowed: the
       * engine's failure is the news.
       */
     private def undo(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
         session.transaction
             .use { _ =>
-                new TurnRepo(session).deleteForMatch(gameId, matchId) *>
-                    new TournamentMatchRepo(session).backToDue(gameId, matchId)
+                new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
+                    case Some(m) if m.status == MatchStatus.InProgress =>
+                        new TurnRepo(session).deleteForMatch(gameId, matchId) *>
+                            new ResultRepo(session).deleteManualForMatch(gameId, matchId) *>
+                            new TournamentMatchRepo(session).backToDue(gameId, matchId)
+                    case _ => IO.unit
+                }
             }
             .handleError(_ => ())
 
