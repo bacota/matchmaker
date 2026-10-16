@@ -336,11 +336,19 @@ object Tournaments {
                   busy
                 )(_ => reload(d))
             )
-        def stopButton(label: String, question: String)(after: Unit => Unit) =
+        // `after` is told whether the owner is still on the page they pressed it on: the answer can come after they
+        // have gone elsewhere, and must not pull them back or speak about a page they have left. An answer that comes
+        // after a sign-out is dropped whole; it is not the next player's.
+        def stopButton(label: String, question: String)(after: Boolean => Unit) =
             busyButton(label = label, classes = Some("warn"), busy = heldBusy(s"stop tournament ${t.tournamentId}"))(
               busy =>
-                  if (dom.window.confirm(question))
-                      Store.run(ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId), busy)(after)
+                  if (dom.window.confirm(question)) {
+                      val from = Store.page.now()
+                      Store.runSignedIn(
+                        ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
+                        busy
+                      )(_ => after(Store.page.now() == from))
+                  }
             )
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
         val entered = d.entries.count(!_.isWithdrawn)
@@ -445,10 +453,10 @@ object Tournaments {
                     stopButton(
                       label = "Cancel Tournament",
                       question = "Cancel this tournament? It will be deleted, with its entries."
-                    )(_ => {
+                    )(isStillHere => {
                         Store.reloadMyTournaments()
                         Store.reloadTournaments(t.gameId)
-                        Store.show(Store.Page.OneGame(t.gameId))
+                        if (isStillHere) Store.show(Store.Page.OneGame(t.gameId))
                     })
                 case TournamentStatus.Running if !t.isStopped =>
                     // The button goes with the reload, and the note that takes its place is drawn with the page, so
@@ -456,8 +464,8 @@ object Tournaments {
                     stopButton(
                       label = "Stop Tournament",
                       question = "Stop this tournament? Its current round is played out, and then it finishes."
-                    )(_ => {
-                        Views.announce(stoppedNote)
+                    )(isStillHere => {
+                        if (isStillHere) Views.announce(stoppedNote)
                         reload(d)
                     })
                 case _ => emptyNode
