@@ -127,7 +127,7 @@ class ResultRepo(session: Session[IO]) {
      * of their completed list: the same matches, chosen the same way, as `selectResultsForPlayer`.
      *
      * Its own query rather than a column of the one above, and an aggregate rather than a join,
-     * for the same reason `MatchRepo.clocksForPlayer` is: this is a sum over every turn a seat has
+     * for the same reason `MatchRepo.clocksFor` is: this is a sum over every turn a seat has
      * taken, and joining `turn` into the result list would multiply each seat's row by its every
      * move for the caller to add up again — a long match would cross the wire once per move, per
      * seat, per time anybody opened their history.

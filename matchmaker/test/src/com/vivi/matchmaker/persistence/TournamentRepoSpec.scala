@@ -167,7 +167,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
     }
 
     test("entrants are listed in the order they entered, with characters, and can withdraw and come back") {
-        val (listed, withdrawn, back, players, handedOn) = run { session =>
+        val (listed, withdrawn, back, elsewhere, players, handedOn) = run { session =>
             val repo = new EntrantRepo(session)
             val characters = new CharacterRepo[String](session)
             for {
@@ -195,24 +195,37 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                 )
                 _ <- repo.setWithdrawnAt(
                   game = f.game.gameId,
+                  tournament = t.tournamentId,
                   id = first.entrantId,
                   at = Some(Instant.parse("2026-10-11T00:00:00Z"))
                 )
-                withdrawn <- repo.readForUpdate(f.game.gameId, first.entrantId)
-                _ <- repo.setWithdrawnAt(game = f.game.gameId, id = first.entrantId, at = None)
+                withdrawn <- repo.readForUpdate(game = f.game.gameId, tournament = t.tournamentId, id = first.entrantId)
+                _ <- repo.setWithdrawnAt(
+                  game = f.game.gameId,
+                  tournament = t.tournamentId,
+                  id = first.entrantId,
+                  at = None
+                )
                 listed <- repo.list(f.game.gameId, t.tournamentId)
-                back <- repo.readForUpdate(f.game.gameId, first.entrantId)
+                back <- repo.readForUpdate(game = f.game.gameId, tournament = t.tournamentId, id = first.entrantId)
+                // An entry is read by its tournament as well: under any other, there is none.
+                elsewhere <- repo.readForUpdate(
+                  game = f.game.gameId,
+                  tournament = TournamentId(t.tournamentId.value + 1),
+                  id = first.entrantId
+                )
                 players <- repo.players(f.game.gameId, t.tournamentId)
                 // The character changes hands: its entry is played by whoever owns it now.
                 _ <- characters.update(character.copy(playerId = Some(f.owner.playerId)))
                 handedOn <- repo.players(f.game.gameId, t.tournamentId)
-            } yield (listed, withdrawn, back, players, handedOn(second.entrantId))
+            } yield (listed, withdrawn, back, elsewhere, players, handedOn(second.entrantId))
         }
         assertEquals(listed.map(_.ratingAtEntry), List(1500, 1700))
         assert(listed.forall(e => e.characterId.isDefined && e.characterName.isDefined))
         assertEquals(listed.head.nickname.nonEmpty, true)
-        assert(withdrawn.exists(_._3.isDefined))
-        assert(back.exists(_._3.isEmpty))
+        assert(withdrawn.exists(_._2.isDefined))
+        assert(back.exists(_._2.isEmpty))
+        assertEquals(elsewhere, None)
         // A character entry is played by its character's owner.
         assertEquals(players(listed(1).entrantId), listed(1).playerId)
         assertEquals(handedOn, listed.head.playerId)

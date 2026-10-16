@@ -410,7 +410,14 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.completed_at IS NULL AND NOT m.is_cancelled
+          -- The caller's seat still being played, as the public list below has it: a player who is
+          -- out of a match that is still running has finished with it, and it is among their
+          -- completed matches, not here as well. That is also what makes the read a lookup: the
+          -- index on participant(player_id, completed_at) serves it, where the match's own
+          -- completed_at would mean reading every seat the player has ever had. The match's
+          -- conditions stay, for a seat whose match ended without retiring it.
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.completed_at IS NULL
+            AND m.completed_at IS NULL AND NOT m.is_cancelled
           -- Ordered by the caller's own deadline, most urgent first, with NULLS LAST so matches
           -- with no deadline do not crowd out ones that have one; then by seat, so a match's
           -- rows arrive together and in a stable order.
@@ -577,7 +584,9 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.is_pending = true AND m.completed_at IS NULL AND m.is_cancelled = false
+          -- `p.is_pending` written bare, as the partial index participant_player_pending's predicate is,
+          -- so that the planner matches the two and reads only the player's pending seats.
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.is_pending AND m.completed_at IS NULL AND NOT m.is_cancelled
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
@@ -747,20 +756,23 @@ class MatchRepo(session: Session[IO]) {
      * matches under a total limit: there is no balance to run down under a per-turn one.
      *
      * `due` comes along so the caller can tell the player on the clock from the rest -- theirs is
-     * the balance that is being spent as it is read. */
-    private val selectClocksForPlayer: Query[PlayerId, (GameId, MatchId, String, Double, Option[Instant])] =
+     * the balance that is being spent as it is read.
+     *
+     * For the matches named, which are the caller's: the list they come from was read for the
+     * caller, so asking again here whether the caller sits in each would read every seat the
+     * caller has ever had. Unnested as (game, match) pairs so each is a lookup on
+     * participant(game_id, match_id). */
+    private val selectClocksFor: Query[(Arr[Int], Arr[Long]), (GameId, MatchId, String, Double, Option[Instant])] =
         sql"""SELECT p.game_id, p.match_id, pl.nickname,
                  EXTRACT(EPOCH FROM (m.time_limit - coalesce(sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0')), INTERVAL '0')))::float8,
                  p.due
-          FROM participant p
+          FROM unnest(${_int4}, ${_int8}) AS k (game_id, match_id)
+          JOIN participant p ON p.game_id = k.game_id AND p.match_id = k.match_id
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN player pl ON pl.player_id = p.player_id
           LEFT JOIN turn t ON t.game_id = p.game_id AND t.participant_id = p.participant_id
           WHERE m.start IS NOT NULL AND m.completed_at IS NULL AND NOT m.is_cancelled
             AND m.time_limit IS NOT NULL AND m.time_limit_kind = 'TOTAL'
-            AND EXISTS (SELECT 1 FROM participant mine
-                         WHERE mine.game_id = p.game_id AND mine.match_id = p.match_id
-                           AND mine.player_id = $playerId)
           GROUP BY p.game_id, p.match_id, p.participant_id, pl.nickname, p.due, m.time_limit
           ORDER BY p.participant_id"""
             .query(gameId *: matchId *: text *: float8 *: instant.opt)
@@ -847,19 +859,24 @@ class MatchRepo(session: Session[IO]) {
               )
             )
 
-    /** Every seat's remaining budget, across the caller's running chess-clock matches. */
-    def clocksForPlayer(playerId: PlayerId): IO[List[MatchClockRow]] =
-        session
-            .execute(selectClocksForPlayer)(playerId)
-            .map(_.map { case (gameId, matchId, nickname, seconds, due) =>
-                MatchClockRow(
-                  gameId = gameId,
-                  matchId = matchId,
-                  nickname = nickname,
-                  remaining = Duration.ofMillis((seconds * 1000).toLong),
-                  due = due
-                )
-            })
+    /** Every seat's remaining budget, in those of these running matches that are played under a chess clock. */
+    def clocksFor(matches: List[(GameId, MatchId)]): IO[List[MatchClockRow]] =
+        if (matches.isEmpty) IO.pure(Nil)
+        else {
+            val games = Arr.fromFoldable(matches.map(_._1.value))
+            val ids = Arr.fromFoldable(matches.map(_._2.value))
+            session
+                .execute(selectClocksFor)((games, ids))
+                .map(_.map { case (gameId, matchId, nickname, seconds, due) =>
+                    MatchClockRow(
+                      gameId = gameId,
+                      matchId = matchId,
+                      nickname = nickname,
+                      remaining = Duration.ofMillis((seconds * 1000).toLong),
+                      due = due
+                    )
+                })
+        }
 }
 
 object MatchRepo {
