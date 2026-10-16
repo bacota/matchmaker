@@ -444,6 +444,8 @@ object Tournaments {
             else
                 button(
                   tpe := "button",
+                  // Whether the form is open, in the state that is announced as well as in the label.
+                  aria.expanded <-- editing.signal,
                   child.text <-- editing.signal.map(if (_) "Close Edit" else "Edit"),
                   onClick --> (_ => editing.update(!_))
                 ),
