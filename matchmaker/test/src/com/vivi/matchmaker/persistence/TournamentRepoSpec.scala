@@ -283,6 +283,54 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         assert(!after)
     }
 
+    test("several tournaments' entries, invitations and rows are read at once, each tournament's its own") {
+        val (keys, entries, invited, read, inCharacterGame, characters) = run { session =>
+            for {
+                f <- fixture(session)
+                first <- made(session, f)
+                second <- made(session, f)
+                empty <- made(session, f)
+                _ <- new EntrantRepo(session).create(
+                  game = f.game.gameId,
+                  gt = GameType.Plain,
+                  tournament = first.tournamentId,
+                  player = f.owner.playerId,
+                  character = None,
+                  rating = 1500
+                )
+                _ <- new InvitationRepo(session).invite(
+                  game = f.game.gameId,
+                  tournament = second.tournamentId,
+                  player = f.other.playerId
+                )
+                keys = List(first, second, empty).map(t => TournamentKey(f.game.gameId, t.tournamentId))
+                entries <- new EntrantRepo(session).listFor(keys)
+                invited <- new InvitationRepo(session).listFor(keys)
+                read <- new TournamentRepo(session).readFor(keys)
+                // Characters are invited only in a character game.
+                cf <- fixture(session, GameType.Character)
+                inviting <- made(session, cf)
+                other <- made(session, cf)
+                theirs <- new CharacterRepo[String](session)
+                    .create(Generators.genCharacter(cf.game.gameId, Some(cf.other.playerId)).sample.get)
+                _ <- new CharacterInvitationRepo(session).invite(
+                  game = cf.game.gameId,
+                  tournament = inviting.tournamentId,
+                  character = theirs.characterId
+                )
+                inCharacterGame = List(inviting, other).map(t => TournamentKey(cf.game.gameId, t.tournamentId))
+                characters <- new CharacterInvitationRepo(session).listFor(inCharacterGame)
+            } yield (keys, entries, invited, read, inCharacterGame, characters)
+        }
+        val List(first, second, empty) = keys: @unchecked
+        assertEquals(entries.keySet, Set(first))
+        assertEquals(entries(first).size, 1)
+        assertEquals(invited.keySet, Set(second))
+        assertEquals(read.keySet, Set(first, second, empty))
+        assertEquals(read(second).tournamentId, second.tournamentId)
+        assertEquals(characters.keySet, Set(inCharacterGame.head))
+    }
+
     test("a player's tournaments are those they own, entered or were invited to") {
         val (mine, theirs, stranger) = run { session =>
             for {

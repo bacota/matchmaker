@@ -3,6 +3,7 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -212,6 +213,23 @@ class TournamentRepo(session: Session[IO]) {
 
     def read(game: GameId, id: TournamentId): IO[Option[Tournament]] =
         session.option(select)((game, id)).map(_.map(tournamentOf(game, id, _)))
+
+    // Of each tournament named, unnested as (game, tournament) pairs so that each is a lookup on its key.
+    private val selectFor: Query[(Arr[Int], Arr[Long]), GameId *: TournamentId *: Row] =
+        sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}
+          FROM unnest(${_int4}, ${_int8}) AS k (game_id, tournament_id)
+          JOIN tournament t ON t.game_id = k.game_id AND t.tournament_id = k.tournament_id"""
+            .query(gameId *: tournamentId *: row)
+
+    /** As [[read]], for each of several tournaments in one query, by key: those not there are left out. */
+    def readFor(tournaments: List[TournamentKey]): IO[Map[TournamentKey, Tournament]] =
+        if (tournaments.isEmpty) IO.pure(Map.empty)
+        else
+            session
+                .execute(selectFor)(TournamentKey.arrays(tournaments))
+                .map(_.map { case game *: id *: r =>
+                    TournamentKey(game, id) -> tournamentOf(game = game, id = id, r = r)
+                }.toMap)
 
     /** As [[read]], locking the tournament for the rest of the transaction: what every change to it reads first. */
     def readForUpdate(game: GameId, id: TournamentId): IO[Option[Tournament]] =

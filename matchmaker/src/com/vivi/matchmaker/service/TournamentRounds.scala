@@ -265,31 +265,36 @@ class TournamentRounds[T](
     private def allowedRoles(game: Game, seats: Int): List[GameRoleId] =
         TournamentGame.of(game).seatingRoles.take(seats).map(r => GameRoleId(r.id))
 
-    /** Every seat whose turn it is to choose a role, across the caller's tournaments, with when their time runs out. */
+    /** Every seat whose turn it is to choose a role, across the caller's tournaments, with when their time runs out.
+      * Its matches, their tournaments and their games are each read once for the whole list.
+      */
     def choicesFor(callerExternalId: String): IO[List[TournamentChoice]] =
         sessionPool.use { session =>
             for {
                 caller <- requireCaller(session, callerExternalId)
                 waiting <- new TournamentMatchRepo(session).choosingFor(caller.playerId)
-                choices <- waiting.traverse { (gameId, tournamentId, matchId) =>
-                    for {
-                        t <- new TournamentRepo(session).read(gameId, tournamentId)
-                        tm <- new TournamentMatchRepo(session).read(gameId, matchId)
-                        game <- new GameRepo[T](session).read(gameId)
-                    } yield for {
-                        t <- t
-                        tm <- tm
-                        game <- game
-                    } yield TournamentChoice(
-                      gameId = gameId,
-                      tournamentId = tournamentId,
-                      tournamentName = t.name,
-                      gameName = game.displayName,
-                      matchId = matchId,
-                      chooseBy = TournamentRounds.chooseBy(t = t, game = game, tm = tm)
-                    )
-                }
-            } yield choices.flatten
+                tournaments <- new TournamentRepo(session).readFor(
+                  waiting.map(tm => TournamentKey(tm.gameId, tm.tournamentId)).distinct
+                )
+                // The few games they are in, read plainly, as everywhere here: see requireGame.
+                games <- waiting
+                    .map(_.gameId)
+                    .distinct
+                    .traverse(g => new GameRepo[T](session).read(g).map(_.map(g -> _)))
+                    .map(_.flatten.toMap)
+            } yield waiting.flatMap { tm =>
+                for {
+                    t <- tournaments.get(TournamentKey(tm.gameId, tm.tournamentId))
+                    game <- games.get(tm.gameId)
+                } yield TournamentChoice(
+                  gameId = tm.gameId,
+                  tournamentId = tm.tournamentId,
+                  tournamentName = t.name,
+                  gameName = game.displayName,
+                  matchId = tm.matchId,
+                  chooseBy = TournamentRounds.chooseBy(t = t, game = game, tm = tm)
+                )
+            }
         }
 
     // ---- creating a match ------------------------------------------------------------------
