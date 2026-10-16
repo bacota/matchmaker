@@ -248,11 +248,15 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                   player = f.other.playerId
                 )
                 nobody <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
-                mine <- new TournamentRepo(session).listForPlayer(f.owner.playerId)
-                theirs <- new TournamentRepo(session).listForPlayer(f.other.playerId)
-                stranger <- new TournamentRepo(session).listForPlayer(nobody.playerId)
+                mine <- new TournamentRepo(session).summariesForPlayer(f.owner.playerId)
+                theirs <- new TournamentRepo(session).summariesForPlayer(f.other.playerId)
+                stranger <- new TournamentRepo(session).summariesForPlayer(nobody.playerId)
                 game <- new TournamentRepo(session).listForGame(f.game.gameId)
-            } yield (mine.map(_.tournamentId), theirs.map(_.tournamentId), stranger.size + 0 * game.size)
+            } yield (
+              mine.map(_.tournament.tournamentId),
+              theirs.map(_.tournament.tournamentId),
+              stranger.size + 0 * game.size
+            )
         }
         assertEquals(mine, theirs)
         assertEquals(mine.size, 1)

@@ -271,27 +271,26 @@ class TournamentRepo(session: Session[IO]) {
     def listForGame(game: GameId): IO[List[Tournament]] =
         session.execute(selectForGame)(game).map(_.map { case id *: r => tournamentOf(game = game, id = id, r = r) })
 
-    // A player's tournaments: owned, entered (with any entry, withdrawn or not), or invited to -- themselves, or a
-    // character they own now.
-    private val selectForPlayer: Query[(PlayerId, PlayerId, PlayerId), GameId *: TournamentId *: Row] =
-        sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")} FROM tournament t
-          WHERE t.owner = $playerId
-             OR EXISTS (SELECT 1 FROM entrant_player e
-                         WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM player me WHERE me.player_id = $playerId AND (
-                         EXISTS (SELECT 1 FROM player_invitation i
-                                  WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = me.player_id)
-                         OR EXISTS (SELECT 1 FROM character_invitation ci
-                                    JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
-                                    WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
-                                      AND c.player_id = me.player_id)))
-          ORDER BY t.create_date DESC, t.tournament_id DESC""".query(gameId *: tournamentId *: row)
+    // A player's tournaments, by key: owned, entered (with any entry, withdrawn or not), or invited to -- themselves,
+    // or a character they own now. A union of four lookups, each served by an index on the player, where an OR of
+    // them across `tournament` would read every tournament there is.
+    private val playersTournaments: Fragment[(PlayerId, PlayerId, PlayerId, PlayerId)] =
+        sql"""SELECT game_id, tournament_id FROM tournament WHERE owner = $playerId
+          UNION SELECT game_id, tournament_id FROM entrant_player WHERE player_id = $playerId
+          UNION SELECT game_id, tournament_id FROM player_invitation WHERE player_id = $playerId
+          UNION SELECT ci.game_id, ci.tournament_id FROM character_invitation ci
+                JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                WHERE c.player_id = $playerId"""
 
-    /** The tournaments a player owns, has entered or is invited to, in any game, newest first. */
-    def listForPlayer(player: PlayerId): IO[List[Tournament]] =
-        session
-            .execute(selectForPlayer)((player, player, player))
-            .map(_.map { case g *: id *: r => tournamentOf(game = g, id = id, r = r) })
+    // A challenge that is over is a match played, which the completed matches list: the tournament lists leave it
+    // out, so that they grow with the tournaments being played and not with every challenge ever played. Written
+    // with literals, as the partial indexes `tournament_listed` and `tournament_open_challenge` are, so that the
+    // planner can match them.
+    private val challenge = com.vivi.matchmaker.model.tournament.standard.Challenge.modelId.value
+    private val isListed: Fragment[Void] =
+        sql"(t.tournament_model_id <> '#$challenge' OR t.status IN ('draft', 'open', 'running'))"
+    private val isOpenChallenge: Fragment[Void] =
+        sql"t.tournament_model_id = '#$challenge' AND t.status = 'open'"
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
     // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
@@ -335,40 +334,56 @@ class TournamentRepo(session: Session[IO]) {
         )
     }
 
-    private val selectSummariesForGame: Query[((PlayerId, PlayerId), GameId), SummaryRow] =
+    private def selectSummariesForGame(where: Fragment[Void]): Query[((PlayerId, PlayerId), GameId), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
-          WHERE t.game_id = $gameId
+          WHERE t.game_id = $gameId AND $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
-    private val selectSummariesForPlayer: Query[((PlayerId, PlayerId), PlayerId, PlayerId, PlayerId), SummaryRow] =
+    private val selectListedForGame = selectSummariesForGame(isListed)
+    private val selectOpenChallengesForGame = selectSummariesForGame(isOpenChallenge)
+
+    private def selectSummariesForPlayer(
+        where: Fragment[Void]
+    ): Query[((PlayerId, PlayerId), (PlayerId, PlayerId, PlayerId, PlayerId)), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
-          FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
-          WHERE t.owner = $playerId
-             OR EXISTS (SELECT 1 FROM entrant_player e
-                         WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM player me WHERE me.player_id = $playerId AND (
-                         EXISTS (SELECT 1 FROM player_invitation i
-                                  WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = me.player_id)
-                         OR EXISTS (SELECT 1 FROM character_invitation ci
-                                    JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
-                                    WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
-                                      AND c.player_id = me.player_id)))
+          FROM ($playersTournaments) mine
+          JOIN tournament t ON t.game_id = mine.game_id AND t.tournament_id = mine.tournament_id
+          JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
+          WHERE $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
+
+    private val selectListedForPlayer = selectSummariesForPlayer(isListed)
+    private val selectOpenChallengesForPlayer = selectSummariesForPlayer(isOpenChallenge)
 
     private val selectSummary: Query[((PlayerId, PlayerId), GameId, TournamentId), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId""".query(summaryCodec)
 
-    /** A game's tournaments as `viewer` sees them in a list, newest first. */
+    /** A game's tournaments as `viewer` sees them in a list, newest first: all but the challenges that are over. */
     def summariesForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
-        session.execute(selectSummariesForGame)(((viewer, viewer), game)).map(_.map(summaryOf(viewer)))
+        session.execute(selectListedForGame)(((viewer, viewer), game)).map(_.map(summaryOf(viewer)))
 
-    /** The tournaments `viewer` owns, has entered or is invited to, in every game, newest first. */
+    /** A game's challenges still taking entries, as `viewer` sees them, newest first: every one, invitational or not.
+      */
+    def openChallengesForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
+        session.execute(selectOpenChallengesForGame)(((viewer, viewer), game)).map(_.map(summaryOf(viewer)))
+
+    /** The tournaments `viewer` owns, has entered or is invited to, in every game, newest first: all but the challenges
+      * that are over.
+      */
     def summariesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
         session
-            .execute(selectSummariesForPlayer)(((viewer, viewer), viewer, viewer, viewer))
+            .execute(selectListedForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer)))
+            .map(_.map(summaryOf(viewer)))
+
+    /** The challenges still taking entries that `viewer` owns, has entered or is invited to, in every game, newest
+      * first.
+      */
+    def openChallengesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
+        session
+            .execute(selectOpenChallengesForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer)))
             .map(_.map(summaryOf(viewer)))
 
     /** One tournament as `viewer` sees it in a list. */
@@ -398,7 +413,7 @@ class TournamentRepo(session: Session[IO]) {
                 AND p.kind = 'R'
               ORDER BY sd.round DESC LIMIT 1
           ) s ON true
-          WHERE ep.player_id = $playerId
+          WHERE ep.player_id = $playerId AND $isListed
           ORDER BY t.status = 'running' DESC, t.create_date DESC, e.entrant_id"""
             .query(
               gameId *: tournamentId *: text *: text *: status *: int8 *: text.opt *: int4.opt *: int4.opt *: bool *:
@@ -421,7 +436,9 @@ class TournamentRepo(session: Session[IO]) {
             Option[Int]
         )
 
-    /** Where a player stands in every tournament they have entered, those under way first and then the newest. */
+    /** Where a player stands in every tournament they have entered, bar the challenges that are over: those under way
+      * first and then the newest.
+      */
     def standingsForPlayer(player: PlayerId): IO[List[TournamentStanding]] =
         session
             .execute(selectStandings)(player)

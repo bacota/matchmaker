@@ -42,7 +42,7 @@ class TournamentService[T](
 
     // ---- reading ---------------------------------------------------------------------------
 
-    /** A game's tournaments, as the caller sees them in a list. */
+    /** A game's tournaments, as the caller sees them in a list, bar the challenges that are over. */
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
@@ -50,9 +50,9 @@ class TournamentService[T](
             )
         }
 
-    /** Where the caller stands in every tournament they have entered, those under way first: their seed and stratum as
-      * they stand, and their final place once one is over. A ladder that runs for ever is one of these, always under
-      * way.
+    /** Where the caller stands in every tournament they have entered, bar the challenges that are over, those under way
+      * first: their seed and stratum as they stand, and their final place once one is over. A ladder that runs for ever
+      * is one of these, always under way.
       */
     def standings(callerExternalId: String): IO[List[TournamentStanding]] =
         sessionPool.use { session =>
@@ -61,7 +61,9 @@ class TournamentService[T](
             )
         }
 
-    /** The tournaments the caller owns, has entered, or is invited to. */
+    /** The tournaments the caller owns, has entered, or is invited to, bar the challenges that are over: those are
+      * matches played, and the completed matches list them.
+      */
     def mine(callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
@@ -135,10 +137,9 @@ class TournamentService[T](
         sessionPool.use { session =>
             for {
                 caller <- requireCaller(session, callerExternalId)
-                all <- new TournamentRepo(session).summariesForGame(gameId, caller.playerId)
-                visible = all.filter(s =>
-                    TournamentService.isOpenChallenge(s) &&
-                        (!s.tournament.settings.isInvitational || s.isOwner || s.isEntered || s.isInvited)
+                open <- new TournamentRepo(session).openChallengesForGame(gameId, caller.playerId)
+                visible = open.filter(s =>
+                    !s.tournament.settings.isInvitational || s.isOwner || s.isEntered || s.isInvited
                 )
                 summaries <- withEntries(session, visible)
             } yield summaries
@@ -151,8 +152,8 @@ class TournamentService[T](
         sessionPool.use { session =>
             for {
                 caller <- requireCaller(session, callerExternalId)
-                mine <- new TournamentRepo(session).summariesForPlayer(caller.playerId)
-                summaries <- withEntries(session, mine.filter(TournamentService.isOpenChallenge))
+                mine <- new TournamentRepo(session).openChallengesForPlayer(caller.playerId)
+                summaries <- withEntries(session, mine)
             } yield summaries
         }
 
@@ -1134,10 +1135,6 @@ object TournamentService {
       */
     def settingsFor(model: TournamentModel, settings: TournamentSettings): TournamentSettings =
         settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
-
-    /** Whether a tournament is a challenge still taking entries. */
-    def isOpenChallenge(s: TournamentSummary): Boolean =
-        s.tournament.tournamentModelId == Challenge.modelId && s.tournament.status == TournamentStatus.Open
 
     /** What a tournament is called in a refusal: a challenge, or a tournament. */
     def noun(t: Tournament): String = if (t.tournamentModelId == Challenge.modelId) "challenge" else "tournament"

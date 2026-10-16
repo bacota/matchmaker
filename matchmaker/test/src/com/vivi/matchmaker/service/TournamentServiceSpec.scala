@@ -15,7 +15,8 @@ import com.vivi.matchmaker.persistence.{
     GameRepo,
     Generators,
     TestSession,
-    TournamentModelRepo
+    TournamentModelRepo,
+    TournamentRepo
 }
 
 /** Creating, entering and starting tournaments, against the local database. */
@@ -832,6 +833,92 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         )
         assert(mine.exists(_.isOwner))
         assert(theirs.exists(s => s.isInvited && !s.isOwner))
+    }
+
+    test("a challenge that is over leaves every tournament and challenge list; a tournament that is over stays") {
+        // A challenge's status as a finished or cancelled one's: the lists read nothing else of how it ended.
+        def ended(t: Tournament, status: TournamentStatus): IO[Unit] =
+            TestSession.resource.use { session =>
+                val repo = new TournamentRepo(session)
+                repo.read(t.gameId, t.tournamentId).flatMap(found => repo.update(found.get.copy(status = status)))
+            }
+        case class Listed(
+            mine: Set[TournamentId],
+            standings: Set[TournamentId],
+            game: Set[TournamentId],
+            challenges: Set[TournamentId],
+            gameChallenges: Set[TournamentId]
+        )
+        def listed(f: Fixture, p: Player): IO[Listed] =
+            (
+              tournaments.mine(p.externalId).map(_.map(_.tournament.tournamentId)),
+              tournaments.standings(p.externalId).map(_.map(_.tournamentId)),
+              tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId)),
+              tournaments.challengesFor(p.externalId).map(_.map(_.summary.tournament.tournamentId)),
+              tournaments.challengesForGame(f.game.gameId, p.externalId).map(_.map(_.summary.tournament.tournamentId))
+            ).mapN((a, b, c, d, e) =>
+                Listed(
+                  mine = a.toSet,
+                  standings = b.toSet,
+                  game = c.toSet,
+                  challenges = d.toSet,
+                  gameChallenges = e.toSet
+                )
+            )
+        val (ids, open, over) = run(for {
+            f <- fixture(2)
+            entrant = f.players.head
+            // Each reaches the player by a different road: entered, invited to, and the player's own.
+            entered <- tournaments.createChallenge(
+              gameId = f.game.gameId,
+              request = ChallengeRequest(poolSize = Some(3)),
+              callerExternalId = f.owner.externalId
+            )
+            _ <- tournaments.enter(
+              gameId = f.game.gameId,
+              tournamentId = entered.tournamentId,
+              characterId = None,
+              callerExternalId = entrant.externalId
+            )
+            invited <- tournaments.createChallenge(
+              gameId = f.game.gameId,
+              request = ChallengeRequest(isOpen = false, invitations = List(entrant.playerId)),
+              callerExternalId = f.owner.externalId
+            )
+            owned <- tournaments.createChallenge(
+              gameId = f.game.gameId,
+              request = ChallengeRequest(),
+              callerExternalId = entrant.externalId
+            )
+            tournament <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = entrant.externalId
+            )
+            open <- listed(f, entrant)
+            _ <- ended(entered, TournamentStatus.Finished)
+            _ <- ended(invited, TournamentStatus.Cancelled)
+            _ <- ended(owned, TournamentStatus.Finished)
+            _ <- ended(tournament, TournamentStatus.Finished)
+            over <- listed(f, entrant)
+        } yield (List(entered, invited, owned, tournament).map(_.tournamentId), open, over))
+        val List(entered, invited, owned, tournament) = ids: @unchecked
+        val challenges = Set(entered, invited, owned)
+        assertEquals(open.mine, challenges + tournament)
+        assertEquals(open.standings, Set(entered, owned))
+        assertEquals(open.game, challenges + tournament)
+        assertEquals(open.challenges, challenges)
+        assertEquals(open.gameChallenges, challenges)
+        assertEquals(
+          over,
+          Listed(
+            mine = Set(tournament),
+            standings = Set.empty,
+            game = Set(tournament),
+            challenges = Set.empty,
+            gameChallenges = Set.empty
+          )
+        )
     }
 
     test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {
