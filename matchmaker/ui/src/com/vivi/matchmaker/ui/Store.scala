@@ -99,6 +99,7 @@ object Store {
         games.set(Seq.empty)
         unlistedGames.set(Map.empty)
         lookingForGames.set(Set.empty)
+        disabledGames.set(None)
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         gameAdminsByGame.set(Map.empty)
@@ -161,6 +162,8 @@ object Store {
         case Challenges(gameId: GameId)
         case Characters(gameId: GameId)
         case Game(gameId: GameId)
+        // The games an admin has disabled, for the page that lists them.
+        case DisabledGames
         case GameAdmins(gameId: GameId)
         case PublicMatches
         case PlayerSearch
@@ -1280,7 +1283,8 @@ object Store {
              * made would otherwise release a lookup this one is still waiting on -- the counter is
              * incremented before anything is cleared, so a request in flight across a sign-out is
              * exactly the case it catches. */
-            val answered = ApiClient.games(activeOnly = false).transform {
+            // A `def`, so that the request is made when `load` lets it go rather than here, past the Coalescer.
+            def answered = ApiClient.games(activeOnly = false).transform {
                 case failure @ Failure(_) =>
                     if (isStillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
                     failure
@@ -1300,6 +1304,17 @@ object Store {
                 lookingForGames.update(_ - gameId)
             }
         }
+
+    /** The games an admin has disabled: `None` until they have been fetched. */
+    val disabledGames: Var[Option[Seq[Game]]] = Var(None)
+
+    /** Fetches them again, for the page that lists them each time it opens. Through `reload` like every other list, so
+      * that opening the page again and again is not a request each time, and a failure raises the banner.
+      */
+    def reloadDisabledGames(): Future[Unit] =
+        reload(ApiClient.games(activeOnly = false), Fetch.DisabledGames)(all =>
+            disabledGames.set(Some(all.filterNot(_.isActive)))
+        )
 
     /** The game a screen is about: active, or reachable-but-deactivated, or not yet known.
       *

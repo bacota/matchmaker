@@ -262,27 +262,22 @@ object Games {
       *
       * Here because nowhere else lists them: a disabled game is out of the menu and every picker, which is the point of
       * disabling it, and without this the only way back to one would be a link somebody kept. Fetched each time the
-      * page opens, into this page alone — it is the one screen that wants the disabled games as a list.
+      * page opens — it is the one screen that wants the disabled games as a list.
       */
-    private def disabledGames: HtmlElement = {
-        val found = Var(Option.empty[Either[String, Seq[Game]]])
+    private def disabledGames: HtmlElement =
         div(
           cls := "detail-panel",
           h3("Disabled Games"),
-          onMountCallback { _ =>
-              ApiClient.games(activeOnly = false).onComplete {
-                  case scala.util.Success(all) => found.set(Some(Right(all.filterNot(_.isActive))))
-                  case scala.util.Failure(e)   => found.set(Some(Left(s"Could not load them: ${e.getMessage}")))
-              }
-          },
+          // Through the store, like every fetch: the Coalescer, and nothing committed after a sign-out.
+          onMountCallback(_ => Store.reloadDisabledGames()),
           div(
             // Announced when it arrives, rather than left for a reader to find has changed.
             aria.live := "polite",
-            child <-- found.signal.map {
-                case None               => p(cls := "detail", "Loading…")
-                case Some(Left(why))    => p(cls := "error", why)
-                case Some(Right(Seq())) => p(cls := "empty", "None.")
-                case Some(Right(games)) =>
+            child <-- Store.disabledGames.signal.combineWith(Store.failed(Store.Fetch.DisabledGames)).map {
+                case (_, true)        => p(cls := "error", "Could not load them just now.")
+                case (None, _)        => p(cls := "detail", "Loading…")
+                case (Some(Seq()), _) => p(cls := "empty", "None.")
+                case (Some(games), _) =>
                     ul(
                       games.map(game =>
                           li(
@@ -297,5 +292,4 @@ object Games {
             }
           )
         )
-    }
 }
