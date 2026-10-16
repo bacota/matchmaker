@@ -716,7 +716,7 @@ ${rulesDialogCss}
   button.primary { font: inherit; font-weight: 600; width: 100%; min-height: 44px; margin-top: .5rem; border-radius: 6px;
                    border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 80%, var(--ink));
                    color: var(--ink); cursor: pointer; }
-  button.primary:disabled { opacity: .45; cursor: default; }
+  button.primary:disabled, button.primary[aria-disabled="true"] { opacity: .45; cursor: default; }
   .left { margin: .5rem 0 0; font-weight: 600; }
   .left.off { color: var(--error); }
   #fighters { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
@@ -885,7 +885,11 @@ ${signIn.signInScript}
       : remaining > 0 ? remaining + " points left to spend." : -remaining + " points too many.";
     const bad = !!out || remaining !== 0;
     line.classList.toggle("off", bad);
-    document.getElementById("build-submit").disabled = bad || nameInput.value.trim() === "" || building;
+    // `disabled` for a fighter not worth sending yet; `aria-disabled` while one is on its way, since a
+    // disabled button drops the keyboard's focus. The submit handler refuses a press meanwhile.
+    const button = document.getElementById("build-submit");
+    button.disabled = bad || nameInput.value.trim() === "";
+    button.setAttribute("aria-disabled", String(building));
   }
 
   Object.values(inputs).forEach(i => i.addEventListener("input", left));
@@ -1074,7 +1078,12 @@ ${signIn.signInScript}
     // Named after its first field, so that `showMine` can give it the focus back when it draws the list again.
     button.id = fields[0].input.id + "-submit";
     const key = button.id;
-    const refresh = () => { button.disabled = sendingForms.has(key) || !ready(); };
+    // `disabled` while nothing worth sending is typed; `aria-disabled` while the change is on its way,
+    // since a disabled button drops the keyboard's focus. The submit handler refuses a press meanwhile.
+    const refresh = () => {
+      button.disabled = !ready();
+      button.setAttribute("aria-disabled", String(sendingForms.has(key)));
+    };
     formRefreshers.set(key, refresh);
     fields.forEach(f => f.input.addEventListener("input", refresh));
     refresh();
@@ -1143,7 +1152,7 @@ ${signIn.signInScript}
     show("");
     const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
     traits.forEach(([key]) => { body[key] = value(inputs[key]); });
-    document.getElementById("build-submit").disabled = true;
+    left();
     const asked = session;
     try {
       const response = await send(buildUrl, { method: "POST", body: JSON.stringify(body) });
