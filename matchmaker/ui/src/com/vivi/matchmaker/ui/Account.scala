@@ -130,8 +130,10 @@ object Account {
                     // The rename went through, but for a session that has since ended. Nothing to say
                     // and nobody to say it to: this panel was closed by the sign-out.
                     case Success(_) => ()
-                    case Failure(error) =>
+                    case Failure(error) if Store.isStillSignedInAs(signIn) =>
                         nicknameOutcome.set(Some(Outcome(true, explain(error))))
+                    // Nor is its failure: the next player would be told their rename was refused.
+                    case Failure(_) => ()
                 }
             }
         }
@@ -170,11 +172,9 @@ object Account {
         // give.
         if (!isPlausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
         else
-            withAccessToken(emailOutcome, busy) { token =>
-                CognitoIdp.updateEmail(token, wanted).map { destination =>
-                    emailStage.set(EmailStage.Sent(destination))
-                    emailOutcome.set(None)
-                }
+            withAccessToken(emailOutcome, busy)(CognitoIdp.updateEmail(_, wanted)) { destination =>
+                emailStage.set(EmailStage.Sent(destination))
+                emailOutcome.set(None)
             }
     }
 
@@ -183,21 +183,19 @@ object Account {
 
         if (code.isEmpty) emailOutcome.set(Some(Outcome(true, "Enter the code we sent.")))
         else
-            withAccessToken(emailOutcome, busy) { token =>
-                CognitoIdp.verifyEmail(token, code).map { _ =>
-                    val changed = email.now().trim
-                    currentEmail.set(Some(changed))
-                    emailStage.set(EmailStage.Idle)
-                    email.set("")
-                    emailCode.set("")
-                    adoptNewEmail()
-                    // Worth saying explicitly: the address is the username on this pool, so the next sign-in
-                    // is with the new one, and a player who does not know that has locked themselves out as
-                    // far as they can tell.
-                    emailOutcome.set(
-                      Some(Outcome(false, s"Your email address is now $changed. Sign in with it next time."))
-                    )
-                }
+            withAccessToken(emailOutcome, busy)(CognitoIdp.verifyEmail(_, code)) { _ =>
+                val changed = email.now().trim
+                currentEmail.set(Some(changed))
+                emailStage.set(EmailStage.Idle)
+                email.set("")
+                emailCode.set("")
+                adoptNewEmail()
+                // Worth saying explicitly: the address is the username on this pool, so the next sign-in
+                // is with the new one, and a player who does not know that has locked themselves out as
+                // far as they can tell.
+                emailOutcome.set(
+                  Some(Outcome(false, s"Your email address is now $changed. Sign in with it next time."))
+                )
             }
     }
 
@@ -246,27 +244,30 @@ object Account {
         if (currentPassword.now().isEmpty || newPassword.now().isEmpty)
             passwordOutcome.set(Some(Outcome(true, "Enter your current password and the new one.")))
         else
-            withAccessToken(passwordOutcome, busy) { token =>
+            withAccessToken(passwordOutcome, busy)(token =>
                 CognitoIdp
                     .changePassword(accessToken = token, previous = currentPassword.now(), proposed = newPassword.now())
-                    .map { _ =>
-                        currentPassword.set("")
-                        newPassword.set("")
-                        // The session is not ended: Cognito leaves the existing tokens valid, and signing the
-                        // user out of the tab they are working in would be a surprising cost for a change they
-                        // made deliberately.
-                        passwordOutcome.set(Some(Outcome(false, "Your password has been changed.")))
-                    }
+            ) { _ =>
+                currentPassword.set("")
+                newPassword.set("")
+                // The session is not ended: Cognito leaves the existing tokens valid, and signing the
+                // user out of the tab they are working in would be a surprising cost for a change they
+                // made deliberately.
+                passwordOutcome.set(Some(Outcome(false, "Your password has been changed.")))
             }
 
     /** Runs a Cognito account operation with an access token, obtaining one first.
       *
       * The API calls carry the ID token; these do not accept it. The access token is refreshed on demand rather than
       * assumed present, since a session that began before it was stored has only the other two.
+      *
+      * Neither the answer nor a failure is written unless the session that asked is still here: these forms write
+      * module-level Vars the next player's panel opens on, and a code sent, or a refusal, is not theirs.
       */
-    private def withAccessToken(outcome: Var[Option[Outcome]], busy: Var[Boolean])(
-        action: String => Future[Unit]
-    ): Unit = {
+    private def withAccessToken[A](outcome: Var[Option[Outcome]], busy: Var[Boolean])(
+        action: String => Future[A]
+    )(commit: A => Unit): Unit = {
+        val signIn = Store.currentSignIn
         outcome.set(None)
         busy.set(true)
 
@@ -279,7 +280,10 @@ object Account {
             }
             .onComplete { result =>
                 busy.set(false)
-                result.failed.foreach(error => outcome.set(Some(Outcome(true, explain(error)))))
+                if (Store.isStillSignedInAs(signIn)) result match {
+                    case Success(answer) => commit(answer)
+                    case Failure(error)  => outcome.set(Some(Outcome(true, explain(error))))
+                }
             }
     }
 
