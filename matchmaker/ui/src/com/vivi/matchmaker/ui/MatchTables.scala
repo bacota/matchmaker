@@ -408,8 +408,7 @@ object MatchTables {
       * closed an open form and threw away the choices in it.
       */
     private def matchNotifications(summary: MatchSummary): HtmlElement = {
-        val NotificationDraft(shown, fetched, preferences) = notificationDraft(summary.matchId)
-        val busy = Var(false)
+        val NotificationDraft(shown, fetched, preferences, busy, saving) = notificationDraft(summary.matchId)
 
         div(
           button(
@@ -450,7 +449,8 @@ object MatchTables {
                     preferences = preferences,
                     withDefault = false,
                     saveLabel = "Save for this match",
-                    kinds = NotificationType.duringMatch
+                    kinds = NotificationType.duringMatch,
+                    busy = saving
                   ) { chosen =>
                       chosen.completeForSeat match {
                           case Some(answers) =>
@@ -473,10 +473,15 @@ object MatchTables {
         )
     }
 
+    /** `fetching` and `saving` are here with the answers so that a row drawn again while either request is out is drawn
+      * busy, and its button cannot send the request a second time.
+      */
     private case class NotificationDraft(
         shown: Var[Boolean],
         fetched: Var[Boolean],
-        preferences: Var[NotificationPreferences]
+        preferences: Var[NotificationPreferences],
+        fetching: Var[Boolean],
+        saving: Var[Boolean]
     )
 
     /** Each match's notifications form as the player left it, and the sign-in it belongs to: one player's answers are
@@ -492,7 +497,13 @@ object MatchTables {
         }
         notificationDrafts.getOrElseUpdate(
           matchId,
-          NotificationDraft(shown = Var(false), fetched = Var(false), preferences = Var(NotificationPreferences.unset))
+          NotificationDraft(
+            shown = Var(false),
+            fetched = Var(false),
+            preferences = Var(NotificationPreferences.unset),
+            fetching = Var(false),
+            saving = Var(false)
+          )
         )
     }
 

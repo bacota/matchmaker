@@ -176,6 +176,9 @@ object Notifications {
       * `cascades` are rendered between the questions and the button, and are not passed to `save`: whoever offered one
       * reads its `chosen` inside their own save, because what it means is a parameter of their request and not
       * something this form could carry out.
+      *
+      * `busy` is for a form that can be drawn again while its save is out -- one in a row that a reload rebuilds -- so
+      * that the new form's button is busy too and cannot send the save twice. Held by the caller, outside the form.
       */
     def form(
         heading: String,
@@ -185,9 +188,9 @@ object Notifications {
         saveLabel: String = "Save",
         cascades: Seq[Cascade] = Nil,
         kinds: Seq[NotificationType] = NotificationType.values.toSeq,
-        deferred: Option[Deferred] = None
+        deferred: Option[Deferred] = None,
+        busy: Var[Boolean] = Var(false)
     )(save: NotificationPreferences => Future[Unit]): HtmlElement = {
-        val busy = Var(false)
         val outcome: Var[Option[Outcome]] = Var(None)
 
         /* Whether the dialog is up. Only ever true when `deferred` is set, and the same `Var` is what
