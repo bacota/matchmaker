@@ -716,7 +716,7 @@ ${rulesDialogCss}
   button.primary { font: inherit; font-weight: 600; width: 100%; min-height: 44px; margin-top: .5rem; border-radius: 6px;
                    border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 80%, var(--ink));
                    color: var(--ink); cursor: pointer; }
-  button.primary:disabled { opacity: .45; cursor: default; }
+  button.primary:disabled, button.primary[aria-disabled="true"] { opacity: .45; cursor: default; }
   .left { margin: .5rem 0 0; font-weight: 600; }
   .left.off { color: var(--error); }
   #fighters { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
@@ -867,6 +867,13 @@ ${signIn.signInScript}
    * sign-in's `busy`, which is about the sign-in form. */
   let building = false;
 
+  /* The change forms whose request is out, by their button's id, and how to bring each one's button
+   * up to date. Here rather than in the form: `showMine` draws every form again when the list comes
+   * back, and a form drawn while its own save was still out started not sending, so its button came
+   * back enabled and a second press sent the change twice. */
+  const sendingForms = new Set();
+  const formRefreshers = new Map();
+
   function left() {
     const values = traits.map(([key]) => value(inputs[key]));
     const out = traits.find(([key]) => value(inputs[key]) < rules.min || value(inputs[key]) > rules.max);
@@ -878,7 +885,11 @@ ${signIn.signInScript}
       : remaining > 0 ? remaining + " points left to spend." : -remaining + " points too many.";
     const bad = !!out || remaining !== 0;
     line.classList.toggle("off", bad);
-    document.getElementById("build-submit").disabled = bad || nameInput.value.trim() === "" || building;
+    // `disabled` for a fighter not worth sending yet; `aria-disabled` while one is on its way, since a
+    // disabled button drops the keyboard's focus. The submit handler refuses a press meanwhile.
+    const button = document.getElementById("build-submit");
+    button.disabled = bad || nameInput.value.trim() === "";
+    button.setAttribute("aria-disabled", String(building));
   }
 
   Object.values(inputs).forEach(i => i.addEventListener("input", left));
@@ -1054,9 +1065,9 @@ ${signIn.signInScript}
   }
 
   /* A form that sends one change about a fighter. `ready` says whether what is typed is worth
-   * sending, `request` makes the call, and `done` says what happened. Each has its own in-flight
-   * flag, for the reason `building` is the build form's: editing a field must not re-enable a
-   * button whose request has not answered. */
+   * sending, `request` makes the call, and `done` says what happened. Each is held in `sendingForms`
+   * while its request is out, for the reason `building` is the build form's: editing a field, or
+   * drawing the form again, must not re-enable a button whose request has not answered. */
   function changeForm(fields, buttonText, ready, request, done) {
     const form = document.createElement("form");
     form.noValidate = true;
@@ -1066,15 +1077,21 @@ ${signIn.signInScript}
     button.textContent = buttonText;
     // Named after its first field, so that `showMine` can give it the focus back when it draws the list again.
     button.id = fields[0].input.id + "-submit";
-    let sending = false;
-    const refresh = () => { button.disabled = sending || !ready(); };
+    const key = button.id;
+    // `disabled` while nothing worth sending is typed; `aria-disabled` while the change is on its way,
+    // since a disabled button drops the keyboard's focus. The submit handler refuses a press meanwhile.
+    const refresh = () => {
+      button.disabled = !ready();
+      button.setAttribute("aria-disabled", String(sendingForms.has(key)));
+    };
+    formRefreshers.set(key, refresh);
     fields.forEach(f => f.input.addEventListener("input", refresh));
     refresh();
     form.append(...fields.map(f => f.field), button);
     form.addEventListener("submit", async e => {
       e.preventDefault();
-      if (sending || !ready()) return;
-      sending = true;
+      if (sendingForms.has(key) || !ready()) return;
+      sendingForms.add(key);
       refresh();
       show("");
       const asked = session;
@@ -1089,8 +1106,9 @@ ${signIn.signInScript}
       } catch (err) {
         if (asked === session) show("Could not reach the engine.");
       } finally {
-        sending = false;
-        refresh();
+        sendingForms.delete(key);
+        // The form now on the page, which is a newer one than this if the list was drawn meanwhile.
+        formRefreshers.get(key)();
       }
     });
     return form;
@@ -1134,7 +1152,7 @@ ${signIn.signInScript}
     show("");
     const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
     traits.forEach(([key]) => { body[key] = value(inputs[key]); });
-    document.getElementById("build-submit").disabled = true;
+    left();
     const asked = session;
     try {
       const response = await send(buildUrl, { method: "POST", body: JSON.stringify(body) });

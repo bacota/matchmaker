@@ -1193,14 +1193,18 @@ button.toggle {
 /* Where the focus is put on arriving at a new screen: its heading, or the screen itself while it has
    none (`focusNewScreen` in Main). Ringed when a keyboard brought it there, so a keyboard user can see
    where they have landed; not after a click, which would ring a heading for no reason anybody using a
-   mouse can see. */
+   mouse can see. The same for the section, card and dialog headings FocusKeeper takes the focus to
+   when the control that had it is gone: h3s as well, and not only inside the screen, since a dialog
+   is not. */
 .screen:focus:not(:focus-visible),
-.screen h2[tabindex="-1"]:focus:not(:focus-visible) {
+h2[tabindex="-1"]:focus:not(:focus-visible),
+h3[tabindex="-1"]:focus:not(:focus-visible) {
   outline: none;
 }
 
 .screen:focus-visible,
-.screen h2[tabindex="-1"]:focus-visible {
+h2[tabindex="-1"]:focus-visible,
+h3[tabindex="-1"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;

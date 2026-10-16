@@ -301,7 +301,7 @@ object Challenges {
           // roles, the strongest first.
           if (c.entries.size >= least)
               busyButton(label = "Start") { busy =>
-                  Store.run(
+                  Store.runSignedIn(
                     action =
                         ApiClient.tournamentStep(gameId = game.gameId, tournamentId = t.tournamentId, step = "start"),
                     busy = busy,
@@ -313,7 +313,7 @@ object Challenges {
               }
           else div(cls := "detail", s"needs at least $least players to start"),
           busyButton(label = "Cancel") { busy =>
-              Store.run(
+              Store.runSignedIn(
                 action = ApiClient.stopTournament(gameId = game.gameId, tournamentId = t.tournamentId),
                 busy = busy,
                 onFailure = MatchSections.challengeStale(t)
@@ -347,7 +347,7 @@ object Challenges {
                       if (entered) emptyNode
                       else
                           busyButton(label = "Revoke", classes = Some("link")) { busy =>
-                              Store.run(
+                              Store.runSignedIn(
                                 action = ApiClient.revokeTournamentInvitation(
                                   gameId = game.gameId,
                                   tournamentId = t.tournamentId,
@@ -375,7 +375,7 @@ object Challenges {
                       if (entered) emptyNode
                       else
                           busyButton(label = "Revoke", classes = Some("link")) { busy =>
-                              Store.run(
+                              Store.runSignedIn(
                                 action = ApiClient.revokeTournamentCharacterInvitation(
                                   gameId = game.gameId,
                                   tournamentId = t.tournamentId,
@@ -563,7 +563,7 @@ object Challenges {
                   div(
                     div(cls := "detail", "you have entered"),
                     busyButton(label = "Withdraw", classes = Some("link")) { busy =>
-                        Store.run(
+                        Store.runSignedIn(
                           action = ApiClient.withdrawFromTournament(
                             gameId = game.gameId,
                             tournamentId = t.tournamentId,
@@ -605,7 +605,7 @@ object Challenges {
                     else emptyNode,
                     busyButton(label = "Enter", disabledWhen = character.signal.map(_.isEmpty && characterGame)) {
                         busy =>
-                            Store.run(
+                            Store.runSignedIn(
                               action = ApiClient
                                   .enterTournament(
                                     gameId = game.gameId,

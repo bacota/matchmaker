@@ -378,7 +378,7 @@ object MatchTables {
                       "Cancel this match? Every player forfeits, and it won't change anyone's rating."
                     )
                   )
-                      Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
+                      Store.runSignedIn(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
                           Views.announce("Match cancelled.")
                           Store.refreshMatches()
                       }
@@ -401,36 +401,41 @@ object MatchTables {
       *
       * The answers live in a `Var` outside the toggle, so closing and reopening the form shows what was being typed
       * rather than re-fetching over the top of it. Only the "Saved." line is lost, which is a message about something
-      * that has already happened.
+      * that has already happened -- unless the save is still out, when what it says is shown in the reopened form.
       *
       * Outside the row, too ([[notificationDrafts]]): the row is rebuilt by every reload of its list -- the player's
       * own refresh, or the cross-refresh a Start or Accept elsewhere fires -- and state made with the row silently
       * closed an open form and threw away the choices in it.
       */
     private def matchNotifications(summary: MatchSummary): HtmlElement = {
-        val NotificationDraft(shown, fetched, preferences) = notificationDraft(summary.matchId)
-        val busy = Var(false)
+        val NotificationDraft(shown, fetched, preferences, busy, saving, said) = notificationDraft(summary.matchId)
+        // Opening the form starts it with nothing said, unless a save is still out: what that save says is the news.
+        def open(): Unit = {
+            if (!saving.now()) said.set(None)
+            shown.set(true)
+        }
 
         div(
           button(
             tpe := "button",
             cls := "link",
-            // The button is the form's control, so it says whether the form is open — both in the
-            // label, which is what a sighted user reads, and in the state, which is what is announced.
+            // The button is the form's control, so it says whether the form is open -- in the announced state,
+            // not a second label, which would be read out as "Hide notifications, expanded". The form below it
+            // shows a sighted user, as on the tournament page's Edit.
             aria.expanded <-- shown.signal,
             // Not disabled while the form is fetched, which would drop the keyboard's focus.
             aria.disabled <-- busy.signal,
             child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-            child.text <-- shown.signal.map(if (_) "Hide notifications" else "Notifications"),
+            "Notifications",
             onClick --> { _ =>
                 if (busy.now()) ()
                 else if (shown.now()) shown.set(false)
-                else if (fetched.now()) shown.set(true)
+                else if (fetched.now()) open()
                 else
                     Store.run(ApiClient.matchNotifications(summary.gameId, summary.matchId), busy) { current =>
                         preferences.set(current.asPreferences)
                         fetched.set(true)
-                        shown.set(true)
+                        open()
                     }
             }
           ),
@@ -450,7 +455,9 @@ object MatchTables {
                     preferences = preferences,
                     withDefault = false,
                     saveLabel = "Save for this match",
-                    kinds = NotificationType.duringMatch
+                    kinds = NotificationType.duringMatch,
+                    busy = saving,
+                    outcome = said
                   ) { chosen =>
                       chosen.completeForSeat match {
                           case Some(answers) =>
@@ -473,10 +480,17 @@ object MatchTables {
         )
     }
 
+    /** `fetching` and `saving` are here with the answers so that a row drawn again while either request is out is drawn
+      * busy, and its button cannot send the request a second time; and `said`, how the last save went, so that the form
+      * drawn again is the one that reports it.
+      */
     private case class NotificationDraft(
         shown: Var[Boolean],
         fetched: Var[Boolean],
-        preferences: Var[NotificationPreferences]
+        preferences: Var[NotificationPreferences],
+        fetching: Var[Boolean],
+        saving: Var[Boolean],
+        said: Var[Option[Notifications.Outcome]]
     )
 
     /** Each match's notifications form as the player left it, and the sign-in it belongs to: one player's answers are
@@ -492,7 +506,14 @@ object MatchTables {
         }
         notificationDrafts.getOrElseUpdate(
           matchId,
-          NotificationDraft(shown = Var(false), fetched = Var(false), preferences = Var(NotificationPreferences.unset))
+          NotificationDraft(
+            shown = Var(false),
+            fetched = Var(false),
+            preferences = Var(NotificationPreferences.unset),
+            fetching = Var(false),
+            saving = Var(false),
+            said = Var(None)
+          )
         )
     }
 
