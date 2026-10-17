@@ -22,13 +22,13 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
 
     private case class Fixture(game: Game, owner: Player, other: Player, model: TournamentModel)
 
-    /** A standard model under an id of its own, with no classification: every game's models are shared by the specs
-      * running at once, and a sync removes any classified model the code does not define.
+    /** A standard model under an id of its own, not a root: every game's models are shared by the specs running at
+      * once, and a sync removes any root model the code does not define.
       */
     private def copyOf(m: StandardModel): TournamentModel =
         m.model.copy(
           tournamentModelId = TournamentModelId(s"test-${m.id}-${java.util.UUID.randomUUID()}"),
-          classification = None
+          isRoot = false
         )
 
     private def fixture(session: Session[IO], gameType: GameType = GameType.Plain): IO[Fixture] =
@@ -101,7 +101,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             .unsafeRunSync()
         assertEquals(offered.map(_.tournamentModelId.value), List("ladder", "world-cup"))
         assertEquals(withdrawn.map(_.tournamentModelId.value), List("world-cup"))
-        assertEquals(inner.map(_.classification), Some(None))
+        assertEquals(inner.map(_.isRoot), Some(false))
     }
 
     test("a model is rewritten whole, and removed with its inner models, but not while a tournament is made from it") {

@@ -13,9 +13,9 @@ import com.vivi.matchmaker.service.TournamentModelService
 /** Matches and seats written straight into the tables, for specs about matches rather than about how they come to be.
   *
   * Every match is a tournament's, so each one written here is given a tournament of its own -- running, owned by the
-  * owner given, made from an unclassified model of one round-robin stage that no spec's sync removes -- and the pool
-  * and round it is played in. A seat is given an entry in that tournament, with its character in a character game, and
-  * is stamped with what its player wants to hear about it, as a round's seat is.
+  * owner given, made from a model of one round-robin stage, not a root, that no spec's sync removes -- and the pool and
+  * round it is played in. A seat is given an entry in that tournament, with its character in a character game, and is
+  * stamped with what its player wants to hear about it, as a round's seat is.
   */
 object TestMatches {
 

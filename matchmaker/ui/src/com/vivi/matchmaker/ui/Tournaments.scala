@@ -952,20 +952,20 @@ object Tournaments {
           }
         )
 
-    /** The models offered for a game, grouped by classification, as a select's options. */
-    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] =
-        models
-            .groupBy(_.classification.getOrElse(""))
-            .toSeq
-            .sortBy(_._1)
-            .map { (classification, inGroup) =>
-                optGroup(
-                  labelAttr := classification,
-                  inGroup
-                      .sortBy(_.name.toLowerCase)
-                      .map(m => option(value := m.tournamentModelId.value.toString, m.name))
-                )
-            }
+    /** The models offered for a game, grouped by classification, as a select's options: those with none first, under no
+      * heading.
+      */
+    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] = {
+        def options(ms: Seq[TournamentModel]): Seq[HtmlElement] =
+            ms.sortBy(_.name.toLowerCase).map(m => option(value := m.tournamentModelId.value.toString, m.name))
+        val (classified, unclassified) = models.partition(_.classification.isDefined)
+        options(unclassified) ++
+            classified
+                .groupBy(_.classification.get)
+                .toSeq
+                .sortBy(_._1)
+                .map((classification, inGroup) => optGroup(labelAttr := classification, options(inGroup)))
+    }
 
     private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
 
