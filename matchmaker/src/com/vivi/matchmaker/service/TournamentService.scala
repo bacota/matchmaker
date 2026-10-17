@@ -906,7 +906,7 @@ class TournamentService[T](
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
-    /* The model a tournament is made from: one the game offers, with a classification and active -- or, if it is the
+    /* The model a tournament is made from: one the game offers, a root and active -- or, if it is the
      * one the tournament being edited was `kept` from all along, whatever has become of it since. The challenge model
      * is no exception: a game offers challenges as it offers any format. Held FOR SHARE, the
      * middle course (CLAUDE.md): a sync removing the model looks at the tournaments made from it, and deletes it if
@@ -924,8 +924,8 @@ class TournamentService[T](
             model <- repo.read(id)
             offered <- repo.offeredIn(gameId, id)
             found <- model match {
-                case Some(m) if kept.contains(id)                                   => IO.pure(m)
-                case Some(m) if m.classification.isDefined && m.isActive && offered => IO.pure(m)
+                case Some(m) if kept.contains(id)                 => IO.pure(m)
+                case Some(m) if m.isRoot && m.isActive && offered => IO.pure(m)
                 case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
             }
         } yield found

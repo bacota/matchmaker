@@ -8,7 +8,7 @@ object Fencing
       name = "Fencing",
       displayOrder = 90,
       description = "Pools whose winners go through to single elimination.",
-      classification = "Pools, then elimination"
+      classification = Some("Pools, then elimination")
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

@@ -65,11 +65,12 @@ case class TournamentSettings(
 
 /** A design every game may offer, which a tournament is made from by copying its stages: one of the standard formats
   * the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
-  * wrote it, at `version`. `classification` is the group it is listed under where a tournament is created; a model with
-  * none is never offered on its own, being the inner design of another's nesting stage. `poolSize` is the default pool
-  * size to suggest, `None` for the game's R. `hasRoleChoice` is what a tournament made from it starts with: every
-  * match's seats choose their roles. A model that is not `isActive` is one the code no longer defines, kept for the
-  * tournaments made from it. `displayOrder` is where it is listed among the formats, lowest first, ties by name.
+  * wrote it, at `version`. `isRoot` is whether a tournament can be made from it; a model that is not is never listed or
+  * offered, being the inner design of another's nesting stage. `classification` is the heading it is listed under where
+  * a tournament is created, if any. `poolSize` is the default pool size to suggest, `None` for the game's R.
+  * `hasRoleChoice` is what a tournament made from it starts with: every match's seats choose their roles. A model that
+  * is not `isActive` is one the code no longer defines, kept for the tournaments made from it. `displayOrder` is where
+  * it is listed among the formats, lowest first, ties by name.
   */
 case class TournamentModel(
     tournamentModelId: TournamentModelId,
@@ -82,7 +83,8 @@ case class TournamentModel(
     design: TournamentDesign,
     isActive: Boolean = true,
     hasRoleChoice: Boolean = false,
-    displayOrder: Int = 0
+    displayOrder: Int = 0,
+    isRoot: Boolean = false
 )
 
 /** What a site admin's sync of the models with the code did: the models it `added`, those it `updated` to a newer

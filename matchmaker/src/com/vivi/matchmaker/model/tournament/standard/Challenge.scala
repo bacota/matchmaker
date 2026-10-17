@@ -14,9 +14,9 @@ object Challenge
       id = "challenge",
       version = 2,
       name = "Challenge",
-      displayOrder = 10,
-      description = "One match, of everyone who enters. The players choose their roles once it starts.",
-      classification = "Challenge",
+      displayOrder = 1,
+      description = "A challenge issued by a player",
+      classification = Some("Challenge"),
       hasRoleChoice = true
     ) {
 

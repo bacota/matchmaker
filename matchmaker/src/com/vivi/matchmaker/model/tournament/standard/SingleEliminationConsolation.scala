@@ -8,7 +8,7 @@ object SingleEliminationConsolation
       name = "Single Elimination with Consolation",
       displayOrder = 30,
       description = "Single elimination, with a match for third place.",
-      classification = "Elimination"
+      classification = Some("Elimination")
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

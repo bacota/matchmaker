@@ -9,7 +9,7 @@ object Heats
       name = "Heats with Single Elimination",
       displayOrder = 70,
       description = "Round-robin heats seed a single elimination.",
-      classification = "Pools, then elimination",
+      classification = Some("Pools, then elimination"),
       poolSize = Some(4)
     ) {
 

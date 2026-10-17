@@ -8,7 +8,7 @@ object DoubleElimination
       name = "Double Elimination",
       displayOrder = 50,
       description = "Lose twice and you are out; the two brackets' winners meet in a final.",
-      classification = "Elimination"
+      classification = Some("Elimination")
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

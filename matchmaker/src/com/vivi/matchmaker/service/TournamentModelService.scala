@@ -46,7 +46,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                     found <- repo.lockForShare(id)
                     model <- if (found) repo.read(id) else IO.pure(None)
                     _ <- model match {
-                        case Some(m) if m.isActive && m.classification.isDefined => repo.offer(gameId, id)
+                        case Some(m) if m.isActive && m.isRoot => repo.offer(gameId, id)
                         case _ => IO.raiseError(NotFoundError(s"there is no tournament model $id to offer"))
                     }
                     offered <- repo.listOffered(gameId)
@@ -139,7 +139,7 @@ object TournamentModelService {
         for {
             _ <- lockSync(session)
             written <- StandardModels.all.traverse(m => write(repo, m))
-            stored <- repo.listClassified
+            stored <- repo.listRoots
             gone = stored.filterNot(s => StandardModels.find(s.tournamentModelId.value).isDefined)
             removed <- gone.traverse { s =>
                 val id = s.tournamentModelId
