@@ -8,7 +8,7 @@ object WorldCup
       name = "Soccer World Cup",
       displayOrder = 80,
       description = "Group round robins, then single elimination.",
-      classification = Some("Pools, then elimination")
+      classification = "Pools, then elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

@@ -85,7 +85,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
     test("every model a game could offer is listed for its admins to choose from") {
         val all = run(fixture.flatMap((_, _, player) => models.listAll(player.externalId)))
         assert(all.exists(_.tournamentModelId == worldCup), all.map(_.tournamentModelId))
-        assert(all.forall(m => m.isRoot && m.isActive), all)
+        assert(all.forall(m => m.classification.isDefined && m.isActive), all)
     }
 
     test("the models are listed by their display order, then by name") {
@@ -150,7 +150,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
     // ---- a sync removing a model the code no longer defines ----
 
-    /** A root model the code does not define, so that a sync takes it for one the code dropped. */
+    /** A model the code does not define, with a classification, so that a sync takes it for one the code dropped. */
     private def dropped: TournamentModel =
         TournamentModel(
           tournamentModelId = TournamentModelId(unique("test-dropped")),
@@ -160,8 +160,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
           classification = Some("Round robin"),
           poolSize = None,
           hasLateEntries = false,
-          design = TournamentDesign(List(StageDesign(hasBrackets = false, demote = None))),
-          isRoot = true
+          TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
         )
 
     /** `model` written and offered in `game`. */

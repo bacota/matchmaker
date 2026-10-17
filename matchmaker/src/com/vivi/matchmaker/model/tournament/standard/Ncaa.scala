@@ -8,7 +8,7 @@ object Ncaa
       name = "NCAA Football Style",
       displayOrder = 100,
       description = "Large round-robin conferences, then single elimination.",
-      classification = Some("Pools, then elimination")
+      classification = "Pools, then elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

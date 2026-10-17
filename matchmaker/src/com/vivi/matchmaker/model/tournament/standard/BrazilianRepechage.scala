@@ -8,7 +8,7 @@ object BrazilianRepechage
       name = "Brazilian Repechage",
       displayOrder = 60,
       description = "Single elimination down to eight, then modified double elimination.",
-      classification = Some("Elimination")
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

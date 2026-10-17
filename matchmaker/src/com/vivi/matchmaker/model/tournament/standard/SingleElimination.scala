@@ -8,7 +8,7 @@ object SingleElimination
       name = "Single Elimination",
       displayOrder = 20,
       description = "Lose once and you are out, until one is left.",
-      classification = Some("Elimination")
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

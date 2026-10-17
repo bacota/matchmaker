@@ -14,7 +14,7 @@ package standard
   * unset, to be the tournament's default pool size -- the game's R unless whoever creates it says otherwise -- and a
   * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `hasRoleChoice` is what a
   * tournament made from it starts with: every match's seats choose their roles. `displayOrder` is where it is listed
-  * among the formats a game offers, lowest first, and `classification` the heading it is listed under, if any.
+  * among the formats a game offers, lowest first.
   */
 abstract class StandardModel(
     val id: String,
@@ -22,7 +22,7 @@ abstract class StandardModel(
     val name: String,
     val displayOrder: Int,
     val description: String,
-    val classification: Option[String] = None,
+    val classification: String,
     val poolSize: Option[Int] = None,
     val hasLateEntries: Boolean = false,
     val hasRoleChoice: Boolean = false
@@ -37,12 +37,11 @@ abstract class StandardModel(
           name = name,
           displayOrder = displayOrder,
           description = description,
-          classification = classification,
+          classification = Some(classification),
           poolSize = poolSize,
           hasLateEntries = hasLateEntries,
           design = design,
-          hasRoleChoice = hasRoleChoice,
-          isRoot = true
+          hasRoleChoice = hasRoleChoice
         )
 }
 
