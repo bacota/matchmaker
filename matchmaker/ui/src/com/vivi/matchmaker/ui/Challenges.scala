@@ -488,7 +488,7 @@ object Challenges {
                                               owner = candidate,
                                               exclude = charactersAsked
                                             ) { (ch, busy) =>
-                                                Store.run(
+                                                Store.runSignedIn(
                                                   action = ApiClient.inviteCharacterToTournament(
                                                     gameId = game.gameId,
                                                     tournamentId = t.tournamentId,
@@ -507,7 +507,7 @@ object Challenges {
                                               label = s"Invite ${candidate.nickname}",
                                               classes = Some("link")
                                             ) { busy =>
-                                                Store.run(
+                                                Store.runSignedIn(
                                                   action = ApiClient.inviteToTournament(
                                                     gameId = game.gameId,
                                                     tournamentId = t.tournamentId,

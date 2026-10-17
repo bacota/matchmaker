@@ -123,7 +123,7 @@ object Tournaments {
                             ),
                             span(cls := "detail", s" · ${s.gameName} · every match of the round is over"),
                             busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
-                                Store.run(
+                                Store.runSignedIn(
                                   ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId),
                                   busy
                                 ) { _ =>
@@ -337,7 +337,7 @@ object Tournaments {
         val t = d.summary.tournament
         def step(label: String, name: String) =
             busyButton(label = label, busy = heldBusy(s"$name tournament ${t.tournamentId}"))(busy =>
-                Store.run(
+                Store.runSignedIn(
                   ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name),
                   busy
                 )(_ => reload(d))
@@ -404,7 +404,7 @@ object Tournaments {
                               )
                             ),
                             busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
-                                Store.run(
+                                Store.runSignedIn(
                                   ApiClient.startRound(
                                     gameId = t.gameId,
                                     tournamentId = t.tournamentId,
@@ -555,7 +555,7 @@ object Tournaments {
                   label = if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter",
                   busy = heldBusy(s"enter tournament ${t.tournamentId}")
                 )(busy =>
-                    Store.run(
+                    Store.runSignedIn(
                       ApiClient.enterTournament(
                         gameId = t.gameId,
                         tournamentId = t.tournamentId,
@@ -772,7 +772,7 @@ object Tournaments {
               picked
                   .now()
                   .foreach(r =>
-                      Store.run(
+                      Store.runSignedIn(
                         ApiClient.chooseRole(
                           gameId = t.gameId,
                           tournamentId = t.tournamentId,
@@ -830,7 +830,7 @@ object Tournaments {
                         val typed = ranks.map((e, v) => v.now().trim.toIntOption.filter(_ >= 1).map(EntrantRank(e, _)))
                         if (typed.exists(_.isEmpty)) Store.reportProblem("Give every seat a rank of 1 or more.")
                         else
-                            Store.run(
+                            Store.runSignedIn(
                               ApiClient
                                   .decideMatch(
                                     gameId = t.gameId,
