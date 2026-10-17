@@ -149,7 +149,7 @@ object Notifications {
     /** What one form has to say for itself. As `Account.Outcome`, and for the same reason: these forms live inside
       * other screens, and a failure saving one belongs beside it rather than in the banner at the top of the page.
       */
-    private case class Outcome(isFailed: Boolean, message: String)
+    private[ui] case class Outcome(isFailed: Boolean, message: String)
 
     /* Says how a save went, out loud as well as on screen. The live region is on the container, not
      * on the message: a region added to the document with its text already in it has not changed and
@@ -179,6 +179,8 @@ object Notifications {
       *
       * `busy` is for a form that can be drawn again while its save is out -- one in a row that a reload rebuilds -- so
       * that the new form's button is busy too and cannot send the save twice. Held by the caller, outside the form.
+      * `outcome` is held the same way, for the same form: a save that finishes after the row was rebuilt says how it
+      * went in the new form, not in the old one that is no longer on the page.
       */
     def form(
         heading: String,
@@ -189,9 +191,9 @@ object Notifications {
         cascades: Seq[Cascade] = Nil,
         kinds: Seq[NotificationType] = NotificationType.values.toSeq,
         deferred: Option[Deferred] = None,
-        busy: Var[Boolean] = Var(false)
+        busy: Var[Boolean] = Var(false),
+        outcome: Var[Option[Outcome]] = Var(None)
     )(save: NotificationPreferences => Future[Unit]): HtmlElement = {
-        val outcome: Var[Option[Outcome]] = Var(None)
 
         /* Whether the dialog is up. Only ever true when `deferred` is set, and the same `Var` is what
          * decides where the outcome is reported: the message belongs wherever the button that produced

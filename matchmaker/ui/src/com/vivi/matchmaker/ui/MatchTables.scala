@@ -400,15 +400,15 @@ object MatchTables {
       * `MatchSummary` does not carry it.
       *
       * The answers live in a `Var` outside the toggle, so closing and reopening the form shows what was being typed
-      * rather than re-fetching over the top of it. Only the "Saved." line is lost, which is a message about something
-      * that has already happened.
+      * rather than re-fetching over the top of it. Only the "Saved." line is cleared, which is a message about
+      * something that has already happened.
       *
       * Outside the row, too ([[notificationDrafts]]): the row is rebuilt by every reload of its list -- the player's
       * own refresh, or the cross-refresh a Start or Accept elsewhere fires -- and state made with the row silently
       * closed an open form and threw away the choices in it.
       */
     private def matchNotifications(summary: MatchSummary): HtmlElement = {
-        val NotificationDraft(shown, fetched, preferences, busy, saving) = notificationDraft(summary.matchId)
+        val NotificationDraft(shown, fetched, preferences, busy, saving, outcome) = notificationDraft(summary.matchId)
 
         div(
           button(
@@ -423,8 +423,10 @@ object MatchTables {
             child.text <-- shown.signal.map(if (_) "Hide notifications" else "Notifications"),
             onClick --> { _ =>
                 if (busy.now()) ()
-                else if (shown.now()) shown.set(false)
-                else if (fetched.now()) shown.set(true)
+                else if (shown.now()) {
+                    shown.set(false)
+                    outcome.set(None)
+                } else if (fetched.now()) shown.set(true)
                 else
                     Store.run(ApiClient.matchNotifications(summary.gameId, summary.matchId), busy) { current =>
                         preferences.set(current.asPreferences)
@@ -450,7 +452,8 @@ object MatchTables {
                     withDefault = false,
                     saveLabel = "Save for this match",
                     kinds = NotificationType.duringMatch,
-                    busy = saving
+                    busy = saving,
+                    outcome = outcome
                   ) { chosen =>
                       chosen.completeForSeat match {
                           case Some(answers) =>
@@ -474,14 +477,16 @@ object MatchTables {
     }
 
     /** `fetching` and `saving` are here with the answers so that a row drawn again while either request is out is drawn
-      * busy, and its button cannot send the request a second time.
+      * busy, and its button cannot send the request a second time; `outcome` so that a save finishing after the row was
+      * drawn again says how it went in the form now on the page.
       */
     private case class NotificationDraft(
         shown: Var[Boolean],
         fetched: Var[Boolean],
         preferences: Var[NotificationPreferences],
         fetching: Var[Boolean],
-        saving: Var[Boolean]
+        saving: Var[Boolean],
+        outcome: Var[Option[Notifications.Outcome]]
     )
 
     /** Each match's notifications form as the player left it, and the sign-in it belongs to: one player's answers are
@@ -502,7 +507,8 @@ object MatchTables {
             fetched = Var(false),
             preferences = Var(NotificationPreferences.unset),
             fetching = Var(false),
-            saving = Var(false)
+            saving = Var(false),
+            outcome = Var(None)
           )
         )
     }
