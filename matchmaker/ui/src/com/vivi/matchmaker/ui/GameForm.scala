@@ -78,7 +78,7 @@ object GameForm {
             text = "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
                 "every required role is filled, or, for a challenge that starts itself, every required and " +
                 "recommended role. Optional roles can always be left empty, and a recommended one counts " +
-                "toward a tournament's pool size. A role that already exists can " +
+                "toward a competition's pool size. A role that already exists can " +
                 "be renamed but not removed — acceptances and played matches name it, so retire one by " +
                 "making it optional."
           )(h4("Roles")),
@@ -139,7 +139,7 @@ object GameForm {
                 withTip(
                   id = preferenceTip,
                   subject = "Role preference level",
-                  text = "In a tournament where roles are chosen, the role with the highest level goes to the " +
+                  text = "In a competition where roles are chosen, the role with the highest level goes to the " +
                       "highest seed. Leave blank for no preference."
                 )(
                   label(
@@ -484,7 +484,7 @@ object GameForm {
               tipField(
                 id = s"$formKey-timeout-action-tip",
                 caption = "When a turn runs out",
-                text = "What happens to a player who takes longer over a turn than the tournament allows."
+                text = "What happens to a player who takes longer over a turn than the competition allows."
               )(
                 select(
                   onChange.mapToValue --> (code => timeoutAction.set(TimeoutAction.fromCode(code))),
@@ -522,7 +522,7 @@ object GameForm {
                 id = tipId,
                 subject = "Seats",
                 text = "Whether each player takes one of the game's roles, or the game is played by any number of " +
-                    "players with no roles at all. A tournament of a game without roles says how many players each " +
+                    "players with no roles at all. A competition of a game without roles says how many players each " +
                     "match has. Such a game is always played with everyone moving at once."
               )(
                 label(
@@ -577,7 +577,7 @@ object GameForm {
               withTip(
                 id = tipId,
                 subject = "Moves",
-                text = "Whether players take turns one after another, or all move at once. A tournament gives each " +
+                text = "Whether players take turns one after another, or all move at once. A competition gives each " +
                     "player a chess clock in the first case and a time limit per turn in the second."
               )(
                 label(
@@ -599,7 +599,7 @@ object GameForm {
               withTip(
                 id = tipId,
                 subject = "Maximum turns",
-                text = "How many turns a match lasts, if the game always ends after a fixed number. A tournament " +
+                text = "How many turns a match lasts, if the game always ends after a fixed number. A competition " +
                     "divides a round's time by it when everyone moves at once. Leave blank if it varies."
               )(
                 label(

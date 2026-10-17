@@ -32,21 +32,27 @@ object Tournaments {
 
     // ---- lists -------------------------------------------------------------------------------
 
-    /** A game's tournaments, on its screen, with the button that creates one. */
+    /** A game's tournaments, on its screen, with the button that creates one: subsections of the screen's
+      * "Competitions", beside its challenges, and called competitions wherever a player reads them.
+      */
     def gameSection(game: Game): HtmlElement =
-        Views.refreshableSection(
-          heading = "Tournaments",
-          reload = () => Store.reloadTournaments(game.gameId),
-          subsection = false
-        )(
-          listing(
-            Store.tournamentsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
-            Store.loading(Store.Fetch.Tournaments(game.gameId))
-          )(p(cls := "empty", "No tournaments in this game yet."))(rows => summaryList(rows, showGame = false)),
-          button(
-            tpe := "button",
-            "New Tournament",
-            onClick --> (_ => Store.show(Store.Page.NewTournament(game.gameId)))
+        div(
+          Views.refreshableSection(
+            heading = "Other Competitions",
+            reload = () => Store.reloadTournaments(game.gameId),
+            subsection = true
+          )(
+            listing(
+              Store.tournamentsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
+              Store.loading(Store.Fetch.Tournaments(game.gameId))
+            )(p(cls := "empty", "No other competitions in this game yet."))(rows =>
+                summaryList(rows, showGame = false)
+            ),
+            button(
+              tpe := "button",
+              "New Competition",
+              onClick --> (_ => Store.show(Store.Page.NewTournament(game.gameId)))
+            )
           ),
           // The formats the game offers, for whoever administers it: nothing at all for anybody else.
           child <-- Store.currentPlayer.flatMapSwitch {
@@ -134,7 +140,7 @@ object Tournaments {
               if (mine.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = "My Tournaments",
+                    heading = "My Competitions",
                     reload = () => Store.reloadMyTournaments(),
                     subsection = false
                   )(
@@ -161,10 +167,10 @@ object Tournaments {
         div(
           cls := "table-scroll",
           table(
-            caption(cls := "sr-only", "Your place in each tournament you entered"),
+            caption(cls := "sr-only", "Your place in each competition you entered"),
             thead(
               tr(
-                th(scopeAttr := "col", "Tournament"),
+                th(scopeAttr := "col", "Competition"),
                 th(scopeAttr := "col", "Game"),
                 th(scopeAttr := "col", "Entry"),
                 th(scopeAttr := "col", "Standing")
@@ -362,7 +368,7 @@ object Tournaments {
             cls := "detail",
             role := "status",
             s"$entered have entered and pools hold ${t.defaultPoolSize}, so this will start as more than one pool. " +
-                "Edit the tournament to change the pool size."
+                "Edit the competition to change the pool size."
           )
         )
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
@@ -373,13 +379,13 @@ object Tournaments {
             roundHours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round))
         div(
           cls := "card",
-          h3("Run This Tournament"),
+          h3("Run This Competition"),
           morePools.getOrElse(emptyNode),
           div(
             cls := "row",
             t.status match {
                 case TournamentStatus.Draft => step("Open for Entries", "open")
-                case TournamentStatus.Open  => step("Start Tournament", "start")
+                case TournamentStatus.Open  => step("Start Competition", "start")
                 case TournamentStatus.Running =>
                     span(
                       if (roundOpen) emptyNode
@@ -388,7 +394,7 @@ object Tournaments {
                             Views.tipField(
                               id = freshTipId("round-length-tip"),
                               caption = "This round's length (hours)",
-                              text = "How long this round lasts. Blank uses the tournament's round length."
+                              text = "How long this round lasts. Blank uses the competition's round length."
                             )(
                               input(
                                 tpe := "number",
@@ -453,8 +459,8 @@ object Tournaments {
                 // Not started, so nothing has been played: stopping it deletes it, which is cancelling it.
                 case TournamentStatus.Draft | TournamentStatus.Open =>
                     stopButton(
-                      label = "Cancel Tournament",
-                      question = "Cancel this tournament? It will be deleted, with its entries."
+                      label = "Cancel Competition",
+                      question = "Cancel this competition? It will be deleted, with its entries."
                     )(isStillHere => {
                         Store.reloadMyTournaments()
                         Store.reloadTournaments(t.gameId)
@@ -464,8 +470,8 @@ object Tournaments {
                     // The button goes with the reload, and the note that takes its place is drawn with the page, so
                     // it is said here. FocusKeeper takes the focus to this card's heading.
                     stopButton(
-                      label = "Stop Tournament",
-                      question = "Stop this tournament? Its current round is played out, and then it finishes."
+                      label = "Stop Competition",
+                      question = "Stop this competition? Its current round is played out, and then it finishes."
                     )(isStillHere => {
                         if (isStillHere) Views.announce(stoppedNote)
                         reload(d)
@@ -795,7 +801,7 @@ object Tournaments {
             subject = "Decide by hand",
             text =
                 "For a match that cannot be played, such as one a player never turned up to: it is called off, and its " +
-                    "seats ranked as you say. The ranks decide the tournament and move nobody's rating."
+                    "seats ranked as you say. The ranks decide the competition and move nobody's rating."
           )(
             button(
               tpe := "button",
@@ -939,7 +945,7 @@ object Tournaments {
     /** The page that creates a tournament in a game. */
     def newPage(gameId: GameId): HtmlElement =
         div(
-          h2("New Tournament"),
+          h2("New Competition"),
           child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
               case Some(g) => form(game = g, existing = None, onSaved = () => ())
               case None    => p(cls := "empty", "Loading…")
@@ -1146,7 +1152,7 @@ object Tournaments {
           },
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-          if (running) p(cls := "detail", "The format of a tournament under way cannot be changed.")
+          if (running) p(cls := "detail", "The format of a competition under way cannot be changed.")
           else
               div(
                 Views.tipField(
@@ -1181,7 +1187,7 @@ object Tournaments {
                 ),
                 child <-- models.combineWith(chosen.signal).map {
                     case (ms, _) if ms.isEmpty =>
-                        p(cls := "empty", "This game offers no tournament formats yet; its admins add them.")
+                        p(cls := "empty", "This game offers no competition formats yet; its admins add them.")
                     case (_, Some(m)) => p(cls := "detail", m.description)
                     case _            => emptyNode
                 },
@@ -1189,7 +1195,7 @@ object Tournaments {
                     case (Some(id), Some(current)) if id == current =>
                         p(
                           cls := "detail",
-                          "This game no longer offers the format this tournament was made from. It keeps it " +
+                          "This game no longer offers the format this competition was made from. It keeps it " +
                               "unless you choose another."
                         )
                     case _ => emptyNode
@@ -1215,7 +1221,7 @@ object Tournaments {
           checkbox(
             caption = "Invitational",
             v = invitational,
-            tip = "Only players you invite may enter. You may always enter your own tournament."
+            tip = "Only players you invite may enter. You may always enter your own competition."
           ),
           checkbox(
             caption = "Automatic rounds",
@@ -1262,7 +1268,7 @@ object Tournaments {
             caption = "When to play (optional)",
             text =
                 "When you mean it to be played, shown to anyone deciding whether to enter. It does not schedule or start " +
-                    "the tournament."
+                    "the competition."
           )(
             input(
               tpe := "datetime-local",
@@ -1298,10 +1304,10 @@ object Tournaments {
           div(
             cls := "row",
             button(tpe := "button", "Check", onClick --> (_ => check())),
-            busyButton(label = if (existing.isDefined) "Save Changes" else "Create Tournament")(busy =>
+            busyButton(label = if (existing.isDefined) "Save Changes" else "Create Competition")(busy =>
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
-                if (name.now().trim.isEmpty) Store.reportProblem("A tournament needs a name.")
+                if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else
                     modelId.now().foreach { id =>
@@ -1366,11 +1372,11 @@ object Tournaments {
         div(
           withTip(
             id = tipId,
-            subject = "Tournament Formats",
+            subject = "Competition Formats",
             text =
-                "The formats ticked here are the ones offered when a tournament of this game is created. A tournament " +
+                "The formats ticked here are the ones offered when a competition of this game is created. A competition " +
                     "already made keeps its format whatever you change here."
-          )(h3("Tournament Formats")),
+          )(h3("Competition Formats")),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
           listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
             p(cls := "empty", "There are no formats yet.")
@@ -1426,7 +1432,7 @@ object Tournaments {
                 subject = "Sync Formats",
                 text =
                     "Makes every game's formats the ones the code defines: adds new ones and updates changed ones. A " +
-                        "format the code no longer has is removed with its tournaments if nobody has entered one, and " +
+                        "format the code no longer has is removed with its competitions if nobody has entered one, and " +
                         "otherwise only taken off every list."
               )(
                 busyButton(label = "Sync Formats")(busy =>

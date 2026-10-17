@@ -226,7 +226,7 @@ object Validation {
                 Problem(
                   where = "",
                   message = "this game's players move at once and it has no maximum number of turns, so the " +
-                      "tournament must give one"
+                      "competition must give one"
                 )
               )
             ).flatten

@@ -22,7 +22,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
         extends NotificationType(
           code = "CHALLENGE_ACCEPTED",
           label = "Someone enters my challenge",
-          detail = "Or my tournament. Also when someone withdraws."
+          detail = "Or my competition. Also when someone withdraws."
         )
 
     /** (2) A challenge or tournament you own is full, so you can start it. */
@@ -30,7 +30,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
         extends NotificationType(
           code = "CHALLENGE_READY",
           label = "My challenge can start",
-          detail = "Or my tournament: it is full."
+          detail = "Or my competition: it is full."
         )
 
     /** (3) Somebody else entered a challenge or tournament you had entered, or withdrew from one. */
@@ -38,7 +38,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
         extends NotificationType(
           code = "ACCEPTANCE_CHANGED",
           label = "Someone joins a challenge",
-          detail = "Or a tournament you entered. Also when one of them withdraws."
+          detail = "Or a competition you entered. Also when one of them withdraws."
         )
 
     /** (4) A challenge or tournament you entered is full, so its owner can start it. */
@@ -46,7 +46,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
         extends NotificationType(
           code = "ACCEPTED_CHALLENGE_READY",
           label = "A challenge can start",
-          detail = "Or a tournament you entered: you are waiting on its owner."
+          detail = "Or a competition you entered: you are waiting on its owner."
         )
 
     /** (5) Somebody has invited you to a challenge or tournament of theirs.
@@ -59,7 +59,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
         extends NotificationType(
           code = "INVITATION_RECEIVED",
           label = "Someone invites me to a challenge",
-          detail = "Or to a tournament, offered to you in particular."
+          detail = "Or to a competition, offered to you in particular."
         )
 
     /** (6) Somebody has accepted an invitation you sent, by entering. */
@@ -122,7 +122,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case TournamentRoundDone
         extends NotificationType(
           code = "TOURNAMENT_ROUND_DONE",
-          label = "A round of my tournament ends",
+          label = "A round of my competition ends",
           detail = "When you start each round yourself."
         )
 
