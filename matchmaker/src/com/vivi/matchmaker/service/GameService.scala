@@ -64,7 +64,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                    // A new game offers every tournament model it can play, which its admins may then change.
+                    // A new game offers every tournament model it can play but the challenge, which its admins may then change.
                     _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
                       TournamentModelService.offerPlayable(session, result).void
                     )

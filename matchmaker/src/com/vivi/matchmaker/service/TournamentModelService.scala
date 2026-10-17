@@ -7,7 +7,7 @@ import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{TournamentGame, Validation}
-import com.vivi.matchmaker.model.tournament.standard.{StandardModel, StandardModels}
+import com.vivi.matchmaker.model.tournament.standard.{Challenge, StandardModel, StandardModels}
 import com.vivi.matchmaker.persistence._
 
 /** The models every game's tournaments are made from: the standard formats the code defines ([[StandardModels]]), which
@@ -180,7 +180,8 @@ object TournamentModelService {
     }
 
     /** Offers in `game` every active model it can play -- whose design has no problem for it but warnings: what a new
-      * game is given as it is created, for its admins to change. The models offered.
+      * game is given as it is created, for its admins to change. The challenge model is not among them: a game's admins
+      * offer challenges themselves. The models offered.
       *
       * Under [[SyncLock]], shared, taken before the models are listed: a sync would otherwise delete or deactivate
       * models between the list and the offers -- an offer of a deleted model fails its foreign key -- and lock them in
@@ -197,6 +198,7 @@ object TournamentModelService {
                 if (tg.requiredSeats == 0) Nil
                 else
                     models
+                        .filter(_.tournamentModelId != Challenge.modelId)
                         .filter(m =>
                             Validation
                                 .designProblems(design = m.design, game = tg, defaultPoolSize = m.poolSize)

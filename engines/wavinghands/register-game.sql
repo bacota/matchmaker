@@ -47,12 +47,4 @@ VALUES (
   8
 );
 
--- Challenges, at least, so that the game can be played as soon as it is registered: a game offers
--- only the formats it has been given, which the admin page does when a game is created there. The
--- other formats can be ticked on the game's admin page.
-INSERT INTO tournament_model_game (game_id, tournament_model_id)
-SELECT g.game_id, m.tournament_model_id
-FROM game g JOIN tournament_model m ON m.tournament_model_id = 'challenge' AND m.is_active
-WHERE g.name = 'Waving Hands' AND g.game_id = (SELECT max(game_id) FROM game WHERE name = 'Waving Hands');
-
 SELECT game_id, name, url, external_id FROM game WHERE name = 'Waving Hands' ORDER BY game_id DESC LIMIT 1;
