@@ -952,13 +952,22 @@ object Tournaments {
           }
         )
 
-    /** The models offered for a game as a select's options, in their display order and then by name -- the order the
-      * server lists them in, kept here so the drop-down does not depend on it. Not grouped by classification for now.
-      */
+    /** The models offered for a game, grouped by classification, as a select's options. */
     private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] =
         models
-            .sortBy(m => (m.displayOrder, m.name.toLowerCase))
-            .map(m => option(value := m.tournamentModelId.value.toString, m.name))
+            .groupBy(_.classification.getOrElse(""))
+            .toSeq
+            .sortBy(_._1)
+            .map { (classification, inGroup) =>
+                optGroup(
+                  labelAttr := classification,
+                  inGroup
+                      .sortBy(_.name.toLowerCase)
+                      .map(m => option(value := m.tournamentModelId.value.toString, m.name))
+                )
+            }
+
+    private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
 
     /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
       * tournament's model and default pool size are not offered for editing, since its stages cannot change.
@@ -1407,6 +1416,7 @@ object Tournaments {
                         ),
                         m.name
                       ),
+                      m.classification.fold(emptyNode)(c => span(cls := "detail", s" — $c")),
                       unplayable.fold(emptyNode)(problem =>
                           p(cls := "detail", s"Can't be played in this game: ${problem.describe}")
                       )

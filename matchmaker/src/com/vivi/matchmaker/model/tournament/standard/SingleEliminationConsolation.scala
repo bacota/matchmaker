@@ -4,9 +4,8 @@ package standard
 object SingleEliminationConsolation
     extends StandardModel(
       id = "single-elimination-consolation",
-      version = 2,
+      version = 1,
       name = "Single Elimination with Consolation",
-      displayOrder = 30,
       description = "Single elimination, with a match for third place.",
       classification = "Elimination"
     ) {

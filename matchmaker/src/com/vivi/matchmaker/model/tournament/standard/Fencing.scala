@@ -4,9 +4,8 @@ package standard
 object Fencing
     extends StandardModel(
       id = "fencing",
-      version = 2,
+      version = 1,
       name = "Fencing",
-      displayOrder = 90,
       description = "Pools whose winners go through to single elimination.",
       classification = "Pools, then elimination"
     ) {

@@ -4,9 +4,8 @@ package standard
 object SingleElimination
     extends StandardModel(
       id = "single-elimination",
-      version = 2,
+      version = 1,
       name = "Single Elimination",
-      displayOrder = 20,
       description = "Lose once and you are out, until one is left.",
       classification = "Elimination"
     ) {

@@ -4,9 +4,8 @@ package standard
 object DoubleElimination
     extends StandardModel(
       id = "double-elimination",
-      version = 2,
+      version = 1,
       name = "Double Elimination",
-      displayOrder = 50,
       description = "Lose twice and you are out; the two brackets' winners meet in a final.",
       classification = "Elimination"
     ) {

@@ -4,9 +4,8 @@ package standard
 object Ncaa
     extends StandardModel(
       id = "ncaa",
-      version = 2,
+      version = 1,
       name = "NCAA Football Style",
-      displayOrder = 100,
       description = "Large round-robin conferences, then single elimination.",
       classification = "Pools, then elimination"
     ) {

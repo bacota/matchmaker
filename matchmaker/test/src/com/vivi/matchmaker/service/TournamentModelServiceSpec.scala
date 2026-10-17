@@ -88,11 +88,6 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         assert(all.forall(m => m.classification.isDefined && m.isActive), all)
     }
 
-    test("the models are listed by their display order, then by name") {
-        val all = run(fixture.flatMap((_, _, player) => models.listAll(player.externalId)))
-        assertEquals(all, all.sortBy(m => (m.displayOrder, m.name.toLowerCase)))
-    }
-
     test("a player who does not administer the game may not offer or withdraw a model, nor a game's admin sync them") {
         val outcome = run(for {
             f <- fixture

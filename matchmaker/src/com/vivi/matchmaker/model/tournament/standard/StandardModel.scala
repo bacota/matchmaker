@@ -13,14 +13,12 @@ package standard
   * The designs are built for a game of two players. Where a format's pool size follows the game, a stage leaves it
   * unset, to be the tournament's default pool size -- the game's R unless whoever creates it says otherwise -- and a
   * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `hasRoleChoice` is what a
-  * tournament made from it starts with: every match's seats choose their roles. `displayOrder` is where it is listed
-  * among the formats a game offers, lowest first.
+  * tournament made from it starts with: every match's seats choose their roles.
   */
 abstract class StandardModel(
     val id: String,
     val version: Int,
     val name: String,
-    val displayOrder: Int,
     val description: String,
     val classification: String,
     val poolSize: Option[Int] = None,
@@ -35,7 +33,6 @@ abstract class StandardModel(
           tournamentModelId = com.vivi.matchmaker.model.TournamentModelId(id),
           version = version,
           name = name,
-          displayOrder = displayOrder,
           description = description,
           classification = Some(classification),
           poolSize = poolSize,
