@@ -5,8 +5,9 @@ package standard
 object Heats
     extends StandardModel(
       id = "heats",
-      version = 1,
+      version = 2,
       name = "Heats with Single Elimination",
+      displayOrder = 70,
       description = "Round-robin heats seed a single elimination.",
       classification = "Pools, then elimination",
       poolSize = Some(4)

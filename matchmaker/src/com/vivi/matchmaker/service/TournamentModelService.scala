@@ -20,7 +20,7 @@ import com.vivi.matchmaker.persistence._
   */
 class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
-    /** The models the game offers -- those its admins chose that are still active -- by classification and then name.
+    /** The models the game offers -- those its admins chose that are still active -- by display order and then name.
       * Any registered player may look.
       */
     def list(gameId: GameId, callerExternalId: String): IO[List[TournamentModel]] =
@@ -28,7 +28,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listOffered(gameId)
         }
 
-    /** Every model a game could offer, by classification and then name. Any registered player may look. */
+    /** Every model a game could offer, by display order and then name. Any registered player may look. */
     def listAll(callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listActive

@@ -4,8 +4,9 @@ package standard
 object Ladder
     extends StandardModel(
       id = "ladder",
-      version = 1,
+      version = 2,
       name = "Ladder",
+      displayOrder = 110,
       description = "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
       classification = "Ladder"
     ) {

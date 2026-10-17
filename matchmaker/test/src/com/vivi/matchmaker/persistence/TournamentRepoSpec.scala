@@ -80,7 +80,8 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         }
         assertEquals(read.map(_.map(_.design)), written.map(m => Some(m.design)))
         assertEquals(read.map(_.map(_.poolSize)), written.map(m => Some(m.poolSize)))
-        assertEquals(read.map(_.map(_.version)), written.map(_ => Some(1)))
+        assertEquals(read.map(_.map(_.version)), written.map(m => Some(m.version)))
+        assertEquals(read.map(_.map(_.displayOrder)), written.map(m => Some(m.displayOrder)))
     }
 
     test("a game offers the models its admins chose, never an inner design, and stops when one is withdrawn") {
@@ -99,7 +100,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                 } yield (offered, withdrawn, inner)
             }
             .unsafeRunSync()
-        assertEquals(offered.map(_.tournamentModelId.value), List("ladder", "world-cup"))
+        assertEquals(offered.map(_.tournamentModelId.value), List("world-cup", "ladder"))
         assertEquals(withdrawn.map(_.tournamentModelId.value), List("world-cup"))
         assertEquals(inner.map(_.classification), Some(None))
     }

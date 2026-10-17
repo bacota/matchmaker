@@ -12,8 +12,9 @@ package standard
 object Challenge
     extends StandardModel(
       id = "challenge",
-      version = 1,
+      version = 2,
       name = "Challenge",
+      displayOrder = 10,
       description = "One match, of everyone who enters. The players choose their roles once it starts.",
       classification = "Challenge",
       hasRoleChoice = true

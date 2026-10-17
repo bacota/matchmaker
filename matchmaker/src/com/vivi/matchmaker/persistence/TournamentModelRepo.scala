@@ -26,13 +26,13 @@ class TournamentModelRepo(session: Session[IO]) {
     private val modelId = SkunkIdCodecs.tournamentModelId
 
     private type ModelRow =
-        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean, Boolean)
+        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean, Boolean, Int)
     private val modelRow: Decoder[ModelRow] =
-        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool
+        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool *: int4
 
     private val modelColumns =
         "tournament_model_id, version, name, description, classification, pool_size, has_late_entries, " +
-            "first_stage_model_id, is_active, has_role_choice"
+            "first_stage_model_id, is_active, has_role_choice, display_order"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -62,27 +62,28 @@ class TournamentModelRepo(session: Session[IO]) {
                       first = firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
                       inner = inner => designOf(TournamentModelId(inner), depth + 1)
                     )
-            models.map { case (id, version, name, description, classification, poolSize, late, _, active, choose) =>
-                TournamentModel(
-                  tournamentModelId = id,
-                  version = version,
-                  name = name,
-                  description = description,
-                  classification = classification,
-                  poolSize = poolSize,
-                  hasLateEntries = late,
-                  design = designOf(id, 0),
-                  isActive = active,
-                  hasRoleChoice = choose
-                )
+            models.map {
+                case (id, version, name, description, classification, poolSize, late, _, active, choose, order) =>
+                    TournamentModel(
+                      tournamentModelId = id,
+                      version = version,
+                      name = name,
+                      description = description,
+                      classification = classification,
+                      poolSize = poolSize,
+                      hasLateEntries = late,
+                      design = designOf(id, 0),
+                      isActive = active,
+                      hasRoleChoice = choose,
+                      displayOrder = order
+                    )
             }
         }
 
     private def listed(models: List[TournamentModel]): List[TournamentModel] =
-        models.filter(_.classification.isDefined).sortBy(m => (m.classification, m.name.toLowerCase))
+        models.filter(_.classification.isDefined).sortBy(m => (m.displayOrder, m.name.toLowerCase))
 
-    /** Every model a game could offer -- those with a classification that are active -- by classification and then
-      * name.
+    /** Every model a game could offer -- those with a classification that are active -- by display order and then name.
       */
     def listActive: IO[List[TournamentModel]] = all.map(ms => listed(ms.filter(_.isActive)))
 
@@ -144,20 +145,29 @@ class TournamentModelRepo(session: Session[IO]) {
 
     // ---- writing a model from the code ----
 
-    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean)
+    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Int)
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.hasLateEntries, m.hasRoleChoice)
+        (
+          m.version,
+          m.name,
+          m.description,
+          m.classification,
+          m.poolSize,
+          m.hasLateEntries,
+          m.hasRoleChoice,
+          m.displayOrder
+        )
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            has_late_entries, has_role_choice, first_stage_model_id)
-          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, '')""".command
+                                            has_late_entries, has_role_choice, display_order, first_stage_model_id)
+          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, $int4, '')""".command
 
     private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
                  classification = ${text.opt}, pool_size = ${int4.opt}, has_late_entries = $bool, has_role_choice = $bool,
-                 is_active = true
+                 display_order = $int4, is_active = true
           WHERE tournament_model_id = $modelId""".command
 
     private val setFirst: Command[(String, TournamentModelId)] =
@@ -235,7 +245,7 @@ class TournamentModelRepo(session: Session[IO]) {
                         val innerId = TournamentModelId(s"${model.value}/$stageId")
                         for {
                             _ <- session.execute(insertModel)(
-                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false)
+                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false, 0)
                             )
                             _ <- writeDesign(innerId, inner)
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))

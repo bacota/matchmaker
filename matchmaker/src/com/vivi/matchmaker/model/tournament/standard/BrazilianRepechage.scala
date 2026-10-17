@@ -4,8 +4,9 @@ package standard
 object BrazilianRepechage
     extends StandardModel(
       id = "brazilian-repechage",
-      version = 1,
+      version = 2,
       name = "Brazilian Repechage",
+      displayOrder = 60,
       description = "Single elimination down to eight, then modified double elimination.",
       classification = "Elimination"
     ) {

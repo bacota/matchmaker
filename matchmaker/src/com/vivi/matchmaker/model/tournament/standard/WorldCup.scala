@@ -4,8 +4,9 @@ package standard
 object WorldCup
     extends StandardModel(
       id = "world-cup",
-      version = 1,
+      version = 2,
       name = "Soccer World Cup",
+      displayOrder = 80,
       description = "Group round robins, then single elimination.",
       classification = "Pools, then elimination"
     ) {
