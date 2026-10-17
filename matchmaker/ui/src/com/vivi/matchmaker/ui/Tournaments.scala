@@ -953,12 +953,33 @@ object Tournaments {
         )
 
     /** The models offered for a game as a select's options, in their display order and then by name -- the order the
-      * server lists them in, kept here so the drop-down does not depend on it. Not grouped by classification for now.
+      * server lists them in, kept here so the drop-down does not depend on it. Each run of consecutive models of one
+      * classification is a group headed by it ([[classificationRuns]]); a model with none stands outside any group.
       */
-    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] =
+    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] = {
+        def optionOf(m: TournamentModel) = option(value := m.tournamentModelId.value.toString, m.name)
+        classificationRuns(models).flatMap {
+            case (Some(classification), inRun) => Seq(optGroup(labelAttr := classification, inRun.map(optionOf)))
+            case (None, inRun)                 => inRun.map(optionOf)
+        }
+    }
+
+    private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
+
+    /** The models in their display order and then by name, cut into runs of consecutive models of one classification,
+      * each with it. A classification whose models are not consecutive in that order heads a run of each part, so the
+      * display order is never given up to bring them together.
+      */
+    private[ui] def classificationRuns(models: Seq[TournamentModel]): Seq[(Option[String], Seq[TournamentModel])] =
         models
             .sortBy(m => (m.displayOrder, m.name.toLowerCase))
-            .map(m => option(value := m.tournamentModelId.value.toString, m.name))
+            .foldLeft(Vector.empty[(Option[String], Vector[TournamentModel])]) { (runs, m) =>
+                runs.lastOption match {
+                    case Some((classification, inRun)) if classification == m.classification =>
+                        runs.init :+ (classification -> (inRun :+ m))
+                    case _ => runs :+ (m.classification -> Vector(m))
+                }
+            }
 
     /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
       * tournament's model and default pool size are not offered for editing, since its stages cannot change.
