@@ -82,8 +82,8 @@ object StandardDesigns {
 
     def find(key: String): Option[StandardDesign] = all.find(_.key == key)
 
-    /** One match, and the loser drops a stratum: the building block of the elimination formats. It is played in a pool
-      * of two, so it may not be drawn ([[Ties]]).
+    /** One match, and the loser drops a stratum: the building block of the elimination formats. It is the only match of
+      * its pool, so it may not be drawn ([[Ties]]).
       */
     private val eliminationMatch: TournamentDesign =
         TournamentDesign(List(StageDesign(hasBrackets = false, isRotatingRoles = false, demote = Some(2))))

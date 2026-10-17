@@ -203,4 +203,39 @@ class SimulatorSpec extends ScalaCheckSuite {
         assertEquals(played.rounds.flatten.size, 4)
         assert(played.state.isFinished)
     }
+
+    // ---- whether a match may be drawn: by how many matches its pool plays ----
+
+    private def roundRobin(poolSize: Int) =
+        TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(poolSize), demote = None)))
+
+    test("a pool of two playing one match may not draw it, but a pool of four's round robin may") {
+        val two = play(design = roundRobin(2), n = 2, oracle = favourites).rounds.flatten
+        val four = play(design = roundRobin(4), n = 4, oracle = favourites).rounds.flatten
+        assertEquals(two.map(_.canTie), List(false))
+        assertEquals(four.size, 6)
+        assert(four.forall(_.canTie))
+    }
+
+    test("a pool of two that plays twice, the roles turned, may draw either match") {
+        val design = TournamentDesign(
+          List(StageDesign(hasBrackets = false, poolSize = Some(2), demote = None, isRotatingRoles = true))
+        )
+        val played = play(design = design, n = 2, oracle = favourites).rounds.flatten
+        assertEquals(played.size, 2)
+        assert(played.forall(_.canTie))
+    }
+
+    test("a game without roles that seats a whole pool in one match may not draw it, however many are in it") {
+        val played =
+            play(design = roundRobin(4), n = 4, oracle = favourites, g = roleless(most = Some(4))).rounds.flatten
+        assertEquals(played.map(m => (m.planned.seats.size, m.canTie)), List((4, false)))
+    }
+
+    test("a stage that allows draws lets its pool's only match be drawn, as a challenge's") {
+        val design = TournamentDesign(
+          List(StageDesign(hasBrackets = false, poolSize = Some(2), demote = None, canTie = Some(true)))
+        )
+        assertEquals(play(design = design, n = 2, oracle = favourites).rounds.flatten.map(_.canTie), List(true))
+    }
 }

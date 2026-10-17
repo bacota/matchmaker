@@ -45,15 +45,15 @@ case class TournamentDesign(stages: List[StageDesign])
   * `design` is the tournament each pool plays: set, the stage is a nesting stage; unset, an atomic one, whose pools
   * play a round robin: every `R`-member subset of the pool plays one match, `R` times over with the roles turned when
   * `isRotatingRoles` is set. A pool of `R` therefore plays a single match, which is all an *Elimination Match* is.
-  * Whether a match may end in a draw follows from its pool: not in a pool of two, which is an elimination match;
-  * otherwise yes.
+  * Whether a match may end in a draw follows from its pool unless the stage says ([[Ties]]): not in a pool that plays a
+  * single match, which must decide its pool; yes in one that plays more.
   *
   * `poolSize` is how many a pool holds, `None` for the tournament's default pool size. `maxStratum` and `minStratum`
   * are `None` for no bound. `demote` and `promote` are ranks: at or below `demote` a participant moves down a stratum,
   * at or above `promote` up one. `hasConcurrentRounds` lets a round-robin pool play all of its matches in one round,
   * rather than each member one match a round. `hasRubberMatch` breaks a tie on points with one more match, in a game of
-  * two roles; otherwise ties go to scores. `canTie` says whether a match of an atomic stage may be drawn, `None` for
-  * the rule by pool size ([[Ties]]).
+  * two roles; otherwise ties go to scores. `canTie` overrides whether a match of an atomic stage may be drawn, `None`
+  * for the rule by the pool's matches ([[Ties]]).
   */
 case class StageDesign(
     repeat: Repetition = Repetition.Fixed(1),
@@ -88,13 +88,14 @@ case class StageDesign(
     def concurrent: Int = if (hasConcurrentRounds) Int.MaxValue else 1
 }
 
-/** Whether a match in a pool of `members` may end in a draw: as its stage says, if it says (`stage`); otherwise not in
-  * a pool of two, which is an elimination match that must send one of them on, and yes in a bigger one. A rubber match
-  * never may, whatever its pool or stage: it exists to break a tie.
+/** Whether a match in a pool that plays `matches` matches may end in a draw: as its stage says, if it says (`stage`);
+  * otherwise not if it is the pool's only match, which has to decide the pool by itself -- an elimination match sending
+  * one of two on -- and yes in a pool that plays more, where the other matches can separate a draw's players. A rubber
+  * match never may, whatever its pool or stage: it exists to break a tie.
   */
 object Ties {
-    def isAllowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
-        !rubber && stage.getOrElse(members > 2)
+    def isAllowed(matches: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
+        !rubber && stage.getOrElse(matches > 1)
 }
 
 /** One of a game's roles, as a tournament needs to know it. */
