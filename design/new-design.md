@@ -262,9 +262,10 @@ Consolation*, is just a nested value. Nothing needs a table of designs.
 
 ### Standard designs
 
-`StandardDesigns(r: Int)` holds every format in the design document as a function of `R`: Round Robin, Elimination
-Match, Single Elimination, with Consolation, Modified Double, Double, Heats (pool size supplied by the creator),
-Ladder, Brazilian Repechage, World Cup, Fencing and NCAA. Zero Elimination is deferred (Q8). Each one is also a test case.
+The standard models in `standard/` (`StandardModels`) hold every format in the design document, each built for a game's
+`R`: Round Robin, Elimination Match, Single Elimination, with Consolation, Modified Double, Double, Heats (pool size
+supplied by the creator), Ladder, Brazilian Repechage, World Cup, Fencing and NCAA. Zero Elimination is deferred (Q8).
+`DesignSpec` checks that every model is valid.
 
 Transcribe them with `tournament_design: round_robin` read as unset (Q2). Heats takes its pool size as a parameter (Q9).
 

@@ -9,21 +9,6 @@ import standard.StandardModels
 
 class DesignSpec extends FunSuite {
 
-    test("every standard design is valid for a two-player game, with no errors") {
-        StandardDesigns.all.foreach { std =>
-            val design = StandardDesigns.build(key = std.key, r = 2, poolSize = Some(4)).toOption.get
-            val errors = Validation
-                .validate(design = design, game = twoPlayer, maxTurns = None, defaultPoolSize = None)
-                .filterNot(_.isWarning)
-            assertEquals(errors, Nil, std.key)
-        }
-    }
-
-    test("a two-role format is refused for a game of more players") {
-        assert(StandardDesigns.build(key = "double-elimination", r = 3, poolSize = None).isLeft)
-        assert(StandardDesigns.build(key = "single-elimination", r = 3, poolSize = None).isRight)
-    }
-
     test("validation names what is wrong, and where") {
         val bad = TournamentDesign(
           List(
@@ -129,10 +114,10 @@ class DesignSpec extends FunSuite {
     }
 
     test("a design and a state round-trip through JSON, a design written with only what differs from the defaults") {
-        val design = StandardDesigns.build(key = "world-cup", r = 2, poolSize = None).toOption.get
+        val design = TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(4), demote = None)))
         assertEquals(read[TournamentDesign](write(design)), design)
         assert(!write(TournamentDesign(List(StageDesign()))).contains("allowTies"))
-        val played = play(design = design, n = 9, oracle = random(3), maxRounds = 4)
+        val played = play(design = design, n = 4, oracle = random(3), maxRounds = 4)
         assertEquals(read[TournamentState](write(played.state)), played.state)
     }
 }

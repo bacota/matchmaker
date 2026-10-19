@@ -11,7 +11,7 @@ be rewritten in place rather than followed by a corrective migration.
 
 1. **Designs become rows.** `tournament_model` and `stage_model` hold the designs a player chooses from, and
    `classification` groups them in the create form's drop-down. Creating a tournament copies a model into
-   `tournament` and `stage`. Today a design is JSON in `tournament.design`, built from `StandardDesigns` by key.
+   `tournament` and `stage`. Today a design is JSON in `tournament.design`, built from the standard models in `standard/` by key.
 2. **Running state becomes rows.** `pool`, `pool_member`, `round` and the new columns on `match` and `participant`
    replace `tournament.state` (JSONB), `tournament_match` and `tournament_seat`.
 3. **A tournament match is a `match` from the moment its round starts.** Its row, and a `participant` row per seat,
