@@ -14,9 +14,9 @@ import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
   *
   * A model's design is its stages, chained from `first_stage_model_id` along each stage's `current_stage_model_id`. A
   * nesting stage's pools play another model, named by `nesting_stage_model.inner_tournament_model_id`: when a design is
-  * written, each inner design becomes a model of its own with no classification, which is what keeps it out of every
-  * list, named after its stage -- `world-cup/stage-2`. Rewriting, deactivating or deleting a model takes its inner
-  * models with it.
+  * written, each inner design becomes a model of its own that is not a root, which is what keeps it out of every list,
+  * named after its stage -- `world-cup/stage-2`. Rewriting, deactivating or deleting a model takes its inner models
+  * with it.
   *
   * Opens no transaction of its own; that is the calling service's job. Writing a model writes it and its stages before
   * each points at the other, which the deferred foreign keys between them allow within one transaction.
@@ -26,13 +26,25 @@ class TournamentModelRepo(session: Session[IO]) {
     private val modelId = SkunkIdCodecs.tournamentModelId
 
     private type ModelRow =
-        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean, Boolean)
+        (
+            TournamentModelId,
+            Int,
+            String,
+            String,
+            Option[String],
+            Option[Int],
+            Boolean,
+            String,
+            Boolean,
+            Boolean,
+            Boolean
+        )
     private val modelRow: Decoder[ModelRow] =
-        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool
+        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool *: bool
 
     private val modelColumns =
         "tournament_model_id, version, name, description, classification, pool_size, has_late_entries, " +
-            "first_stage_model_id, is_active, has_role_choice"
+            "first_stage_model_id, is_active, has_role_choice, is_root"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -62,32 +74,32 @@ class TournamentModelRepo(session: Session[IO]) {
                       first = firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
                       inner = inner => designOf(TournamentModelId(inner), depth + 1)
                     )
-            models.map { case (id, version, name, description, classification, poolSize, late, _, active, choose) =>
-                TournamentModel(
-                  tournamentModelId = id,
-                  version = version,
-                  name = name,
-                  description = description,
-                  classification = classification,
-                  poolSize = poolSize,
-                  hasLateEntries = late,
-                  design = designOf(id, 0),
-                  isActive = active,
-                  hasRoleChoice = choose
-                )
+            models.map {
+                case (id, version, name, description, classification, poolSize, late, _, active, choose, root) =>
+                    TournamentModel(
+                      tournamentModelId = id,
+                      version = version,
+                      name = name,
+                      description = description,
+                      classification = classification,
+                      poolSize = poolSize,
+                      hasLateEntries = late,
+                      design = designOf(id, 0),
+                      isActive = active,
+                      hasRoleChoice = choose,
+                      isRoot = root
+                    )
             }
         }
 
     private def listed(models: List[TournamentModel]): List[TournamentModel] =
-        models.filter(_.classification.isDefined).sortBy(m => (m.classification, m.name.toLowerCase))
+        models.filter(_.isRoot).sortBy(m => (m.classification, m.name.toLowerCase))
 
-    /** Every model a game could offer -- those with a classification that are active -- by classification and then
-      * name.
-      */
+    /** Every model a game could offer -- the roots that are active -- by classification and then name. */
     def listActive: IO[List[TournamentModel]] = all.map(ms => listed(ms.filter(_.isActive)))
 
-    /** Every model with a classification, deactivated or not: what a sync compares with the code. */
-    def listClassified: IO[List[TournamentModel]] = all.map(listed)
+    /** Every root model, deactivated or not: what a sync compares with the code. */
+    def listRoots: IO[List[TournamentModel]] = all.map(listed)
 
     private val selectOffered: Query[GameId, TournamentModelId] =
         sql"SELECT tournament_model_id FROM tournament_model_game WHERE game_id = $gameId".query(modelId)
@@ -144,20 +156,20 @@ class TournamentModelRepo(session: Session[IO]) {
 
     // ---- writing a model from the code ----
 
-    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean)
+    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Boolean)
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.hasLateEntries, m.hasRoleChoice)
+        (m.version, m.name, m.description, m.classification, m.poolSize, m.hasLateEntries, m.hasRoleChoice, m.isRoot)
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            has_late_entries, has_role_choice, first_stage_model_id)
-          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, '')""".command
+                                            has_late_entries, has_role_choice, is_root, first_stage_model_id)
+          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, $bool, '')""".command
 
     private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
                  classification = ${text.opt}, pool_size = ${int4.opt}, has_late_entries = $bool, has_role_choice = $bool,
-                 is_active = true
+                 is_root = $bool, is_active = true
           WHERE tournament_model_id = $modelId""".command
 
     private val setFirst: Command[(String, TournamentModelId)] =
@@ -224,7 +236,8 @@ class TournamentModelRepo(session: Session[IO]) {
             }
 
     /* The stages of `design` written last first, so that each names the one after it as it is written, and the first
-     * set as the model's own. An inner design becomes an unclassified model of its own, named after the stage. */
+     * set as the model's own. An inner design becomes a model of its own
+     * that is not a root, named after the stage. */
     private def writeDesign(model: TournamentModelId, design: TournamentDesign): IO[Unit] =
         design.stages
             .zip(stageIds(design))
@@ -235,7 +248,7 @@ class TournamentModelRepo(session: Session[IO]) {
                         val innerId = TournamentModelId(s"${model.value}/$stageId")
                         for {
                             _ <- session.execute(insertModel)(
-                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false)
+                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false, false)
                             )
                             _ <- writeDesign(innerId, inner)
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))

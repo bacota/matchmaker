@@ -400,8 +400,8 @@ object MatchTables {
       * `MatchSummary` does not carry it.
       *
       * The answers live in a `Var` outside the toggle, so closing and reopening the form shows what was being typed
-      * rather than re-fetching over the top of it. Only the "Saved." line is lost, which is a message about something
-      * that has already happened -- unless the save is still out, when what it says is shown in the reopened form.
+      * rather than re-fetching over the top of it. Only the "Saved." line is cleared, which is a message about
+      * something that has already happened.
       *
       * Outside the row, too ([[notificationDrafts]]): the row is rebuilt by every reload of its list -- the player's
       * own refresh, or the cross-refresh a Start or Accept elsewhere fires -- and state made with the row silently
@@ -414,7 +414,6 @@ object MatchTables {
             if (!saving.now()) said.set(None)
             shown.set(true)
         }
-
         div(
           button(
             tpe := "button",

@@ -7,7 +7,7 @@ object Ladder
       version = 1,
       name = "Ladder",
       description = "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
-      classification = "Ladder"
+      classification = Some("Ladder")
     ) {
     val design: TournamentDesign = TournamentDesign(
       List(

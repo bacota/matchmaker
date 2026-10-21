@@ -661,12 +661,14 @@ object Account {
               disabled <-- emailStage.signal.map(_ != EmailStage.Idle),
               controlled(value <-- email.signal, onInput.mapToValue --> email)
             ),
-            // Why the button below is inert. Only once something has been typed: a hint on an empty
-            // field is telling somebody off for not having started. Inside the label, like the hints
-            // on the notification questions, so it is read out as part of the field rather than as
-            // text that happens to be near it.
-            child <-- email.signal.map {
-                case typed if typed.trim.nonEmpty && !isPlausibleEmail(typed) =>
+            // Why the button below is inert. Only once something has been typed and the field left, as
+            // with `aria-invalid` above: a hint on an empty field is telling somebody off for not having
+            // started, and one at the first keystroke for not having finished. Moving to the button
+            // leaves the field, so whoever reaches for it is told. Inside the label, like the hints on
+            // the notification questions, so it is read out as part of the field rather than as text
+            // that happens to be near it.
+            child <-- email.signal.combineWithFn(hasLeftAddress.signal) {
+                case (typed, true) if typed.trim.nonEmpty && !isPlausibleEmail(typed) =>
                     span(cls := "detail hint", "That is not an email address yet.")
                 case _ => emptyNode
             }

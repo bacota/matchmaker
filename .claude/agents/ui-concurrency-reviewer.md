@@ -28,8 +28,7 @@ review what the checked-out branch has gained since your last review:
    holds the last commit reviewed on that branch, or on whatever it was branched from.
 2. Check it is in the branch's history: `git merge-base --is-ancestor <hash> HEAD`. After a PR merged with a merge
    commit, a commit recorded on the PR's branch is in `main`'s history too, and this holds.
-3. If it is, the scope is `git log <hash>..HEAD` and `git diff <hash>..HEAD`, kept to the UI and engine-page files. If there are no new
-   commits, say so and stop.
+3. If it is, the scope is the net diff, `git diff <hash>..HEAD`, kept to the UI and engine-page files. Review what that diff shows, not the commits in `git log <hash>..HEAD`: code added and reverted within the range is out of scope. If the diff is empty, say so and stop.
 4. If the file is missing, or the commit is gone or not in the branch's history — a squash or rebase merge, or
    rewritten history — don't guess at a range. Stop, and answer only that you have no usable review point and need a
    range — for example "the last 5 commits", "since <hash>", or a sweep.

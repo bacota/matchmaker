@@ -75,8 +75,13 @@ object Games {
                         MatchSections.dueSection(Some(game)),
                         MatchSections.myMatchesSection(Some(game)),
                         MatchSections.waitingSection(Some(game)),
-                        Challenges.gameChallenges(game),
-                        Tournaments.gameSection(game),
+                        // What could be joined, one heading over both kinds: the open challenges, and the game's
+                        // tournaments, which players are shown as competitions.
+                        sectionTag(
+                          cls := "refreshable",
+                          div(cls := "section-head", h2("Competitions")),
+                          div(cls := "section-body", Challenges.gameChallenges(game), Tournaments.gameSection(game))
+                        ),
                         Ratings.ratingsSection(game),
                         gameHistory(game)
                       )

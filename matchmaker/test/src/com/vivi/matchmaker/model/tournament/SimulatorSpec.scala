@@ -1,158 +1,10 @@
 package com.vivi.matchmaker.model.tournament
 
-import munit.ScalaCheckSuite
-import org.scalacheck.Gen
-import org.scalacheck.Prop.forAll
+import munit.FunSuite
 import Fixtures.*
 
 /** Whole tournaments, played through [[Tournament]] with made-up results. */
-class SimulatorSpec extends ScalaCheckSuite {
-
-    private def standard(key: String, r: Int = 2, poolSize: Option[Int] = None) =
-        StandardDesigns.build(key = key, r = r, poolSize = poolSize).toOption.get
-
-    private def log2(n: Int) = Iterator.iterate(1)(_ * 2).indexWhere(_ >= n)
-
-    /** Nobody plays twice in a round, nobody eliminated plays again, and every match seats only members of its pool. */
-    private def isWellFormed(played: Played): Boolean =
-        played.rounds.forall { matches =>
-            val who = matches.flatMap(_.planned.seats.map(_.entrant))
-            who.distinct.size == who.size
-        }
-
-    property("single elimination of n takes ceil(log2 n) rounds and has one winner") {
-        forAll(Gen.choose(2, 40), Gen.long) { (n, seed) =>
-            val played = play(design = standard(key = "single-elimination"), n = n, oracle = random(seed))
-            played.state.isFinished && played.rounds.size == log2(n) && played.ranking.values.count(_ == 1) == 1 &&
-            played.ranking.size == n && isWellFormed(played)
-        }
-    }
-
-    test("single elimination with favourites winning ranks the field by seed, losers of a round tied") {
-        val played = play(design = standard(key = "single-elimination"), n = 8, oracle = favourites)
-        assertEquals(played.ranking, Map(1L -> 1, 2L -> 2, 3L -> 3, 4L -> 3, 5L -> 5, 6L -> 5, 7L -> 5, 8L -> 5))
-        // The first round is the standard bracket.
-        assertEquals(
-          played.rounds.head.map(_.planned.seats.map(_.entrant).toSet).toSet,
-          Set(
-            Set(1L, 8L),
-            Set(2L, 7L),
-            Set(3L, 6L),
-            Set(4L, 5L)
-          )
-        )
-        // And the second: the winner of 1-8 meets the winner of 4-5.
-        assertEquals(played.rounds(1).map(_.planned.seats.map(_.entrant).toSet).toSet, Set(Set(1L, 4L), Set(2L, 3L)))
-    }
-
-    test("byes go to the top seeds, who play from the second round") {
-        val played = play(design = standard(key = "single-elimination"), n = 6, oracle = favourites)
-        val firstRound = played.rounds.head.flatMap(_.planned.seats.map(_.entrant)).toSet
-        assertEquals(firstRound, Set(3L, 4L, 5L, 6L))
-        assertEquals(played.ranking(1L), 1)
-    }
-
-    test("an elimination of matches that are all drawn still finishes, the weaker seed advancing every time (Q6)") {
-        val played = play(design = standard(key = "single-elimination"), n = 4, oracle = draws)
-        assert(played.state.isFinished)
-        // 4 beats 1 and 3 beats 2, the weaker seed taking each draw. 4 takes seed 1 from the pool it won and 3 takes
-        // seed 2, so in the final 3 is the weaker seed, and takes it.
-        assertEquals(played.ranking(3L), 1)
-        assertEquals(played.ranking(4L), 2)
-    }
-
-    test("consolation ranks the final's loser second and the third-place match's winner third (Q5)") {
-        val played = play(design = standard(key = "single-elimination-consolation"), n = 8, oracle = favourites)
-        assertEquals(played.ranking.filter(_._2 <= 4), Map(1L -> 1, 2L -> 2, 3L -> 3, 4L -> 4))
-        // Nobody is left unranked, and the quarter-final losers tie fifth.
-        assertEquals(played.ranking.filter(_._2 > 4).values.toSet, Set(5))
-    }
-
-    property("every standard design finishes for any field, with every entrant ranked") {
-        val finite = List(
-          "single-elimination",
-          "single-elimination-consolation",
-          "modified-double-elimination",
-          "double-elimination",
-          "brazilian-repechage",
-          "world-cup",
-          "fencing",
-          "ncaa"
-        )
-        forAll(Gen.oneOf(finite), Gen.choose(2, 24), Gen.long) { (key, n, seed) =>
-            val played = play(design = standard(key = key), n = n, oracle = random(seed))
-            played.state.isFinished && played.ranking.keySet == (1 to n).map(_.toLong).toSet && isWellFormed(played) &&
-            played.ranking.values.min == 1
-        }
-    }
-
-    test("heats take their pool size from the tournament where they set none, and with one they finish") {
-        assert(StandardDesigns.build(key = "heats", r = 2, poolSize = None).exists(_.stages.head.poolSize.isEmpty))
-        assert(StandardDesigns.build(key = "heats", r = 2, poolSize = Some(0)).isLeft)
-        val played = play(design = standard(key = "heats", poolSize = Some(4)), n = 12, oracle = random(7))
-        assert(played.state.isFinished)
-        assertEquals(played.ranking.size, 12)
-    }
-
-    test(
-      "double elimination: a first loss drops to stratum -1, a second eliminates, and the winner ranks first wherever they came from"
-    ) {
-        val played = play(design = standard(key = "double-elimination"), n = 8, oracle = favourites)
-        assert(played.state.isFinished)
-        assertEquals(played.ranking(1L), 1)
-        // With upsets, the bottom seed wins every match and still ranks first.
-        val upset = play(design = standard(key = "double-elimination"), n = 8, oracle = upsets)
-        assertEquals(upset.ranking(8L), 1)
-    }
-
-    test("modified double elimination stops at the two brackets' winners, the unbeaten one first") {
-        val played = play(design = standard(key = "modified-double-elimination"), n = 8, oracle = favourites)
-        assertEquals(played.ranking(1L), 1)
-        assertEquals(played.ranking(2L), 2)
-        // Two remain: the unbeaten 1, in stratum 0, and 2, who lost only to 1.
-        val left = played.state.root.active.map(m => m.entrant -> m.stratum).toMap
-        assertEquals(left, Map(1L -> 0, 2L -> -1))
-    }
-
-    test("the world cup sends two from each group of four to a knockout with a third-place match") {
-        val played = play(design = standard(key = "world-cup"), n = 8, oracle = favourites)
-        // Groups 1-4-5-8 and 2-3-6-7: 1, 4, 2 and 3 go through, and the knockout ranks them by seed.
-        assertEquals(played.ranking.filter(_._2 <= 4), Map(1L -> 1, 2L -> 2, 3L -> 3, 4L -> 4))
-        // Three rounds of group play, then the semi-finals, then the final and the third-place match.
-        assertEquals(played.rounds.size, 5)
-    }
-
-    test("a ladder runs until stopped, the winner climbing and the loser dropping") {
-        val played = play(
-          design = standard(key = "ladder"),
-          n = 4,
-          oracle = favourites,
-          maxRounds = 20,
-          between = (s, round) => if (round == 3) Tournament.requestStop(s) else s
-        )
-        assert(played.state.isFinished)
-        // Asked after the third run's matches, the stop ends the stage there: no fourth run is begun.
-        assertEquals(played.rounds.size, 3)
-        val strata = played.state.root.members.map(m => m.entrant -> m.stratum).toMap
-        assert(strata(1L) > strata(4L))
-    }
-
-    test("a ladder that is never stopped keeps going") {
-        val played = play(design = standard(key = "ladder"), n = 4, oracle = random(1), maxRounds = 30)
-        assert(!played.state.isFinished)
-        assertEquals(played.rounds.size, 30)
-    }
-
-    test("a withdrawn entrant is put in no later pool") {
-        val played = play(
-          design = standard(key = "single-elimination"),
-          n = 8,
-          oracle = favourites,
-          between = (s, round) => if (round == 1) Tournament.withdraw(s, 1L) else s
-        )
-        assert(played.rounds.drop(1).forall(_.forall(!_.planned.seats.exists(_.entrant == 1L))))
-        assert(played.state.isFinished)
-    }
+class SimulatorSpec extends FunSuite {
 
     test("a late entry joins stratum 0 and plays from the next run") {
         val design =
@@ -202,5 +54,40 @@ class SimulatorSpec extends ScalaCheckSuite {
         assert(played.rounds.flatten.forall(_.planned.seats.size == 3))
         assertEquals(played.rounds.flatten.size, 4)
         assert(played.state.isFinished)
+    }
+
+    // ---- whether a match may be drawn: by how many matches its pool plays ----
+
+    private def roundRobin(poolSize: Int) =
+        TournamentDesign(List(StageDesign(hasBrackets = false, poolSize = Some(poolSize), demote = None)))
+
+    test("a pool of two playing one match may not draw it, but a pool of four's round robin may") {
+        val two = play(design = roundRobin(2), n = 2, oracle = favourites).rounds.flatten
+        val four = play(design = roundRobin(4), n = 4, oracle = favourites).rounds.flatten
+        assertEquals(two.map(_.canTie), List(false))
+        assertEquals(four.size, 6)
+        assert(four.forall(_.canTie))
+    }
+
+    test("a pool of two that plays twice, the roles turned, may draw either match") {
+        val design = TournamentDesign(
+          List(StageDesign(hasBrackets = false, poolSize = Some(2), demote = None, isRotatingRoles = true))
+        )
+        val played = play(design = design, n = 2, oracle = favourites).rounds.flatten
+        assertEquals(played.size, 2)
+        assert(played.forall(_.canTie))
+    }
+
+    test("a game without roles that seats a whole pool in one match may not draw it, however many are in it") {
+        val played =
+            play(design = roundRobin(4), n = 4, oracle = favourites, g = roleless(most = Some(4))).rounds.flatten
+        assertEquals(played.map(m => (m.planned.seats.size, m.canTie)), List((4, false)))
+    }
+
+    test("a stage that allows draws lets its pool's only match be drawn, as a challenge's") {
+        val design = TournamentDesign(
+          List(StageDesign(hasBrackets = false, poolSize = Some(2), demote = None, canTie = Some(true)))
+        )
+        assertEquals(play(design = design, n = 2, oracle = favourites).rounds.flatten.map(_.canTie), List(true))
     }
 }

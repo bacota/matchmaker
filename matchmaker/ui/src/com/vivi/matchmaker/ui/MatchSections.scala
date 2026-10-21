@@ -162,7 +162,7 @@ object MatchSections {
         val declineBusy = heldBusy(s"decline invitation ${t.tournamentId}")
         def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit = {
             val signIn = Store.currentSignIn
-            Store.run(
+            Store.runSignedIn(
               action =
                   ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = character),
               busy = busy,
@@ -175,7 +175,7 @@ object MatchSections {
         }
         def declined(busy: Var[Boolean], decline: Future[Unit]): Unit = {
             val signIn = Store.currentSignIn
-            Store.run(action = decline, busy = busy, onFailure = invitationGone(t)) { _ =>
+            Store.runSignedIn(action = decline, busy = busy, onFailure = invitationGone(t)) { _ =>
                 Store.sayAboutInvitations(signIn, s"Invitation to ${invited.summary.gameName} declined.")
                 reloadChallengeSections(t.gameId)
             }

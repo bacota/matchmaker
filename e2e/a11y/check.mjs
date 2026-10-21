@@ -409,7 +409,7 @@ try {
         }],
         ["new tournament form", alice, async (page, settle) => {
             await game(page, settle);
-            await page.getByRole("button", { name: "New Tournament" }).click();
+            await page.getByRole("button", { name: "New Competition" }).click();
             await settle();
         }],
         ["add a game form", alice, menu("Add a Game")],

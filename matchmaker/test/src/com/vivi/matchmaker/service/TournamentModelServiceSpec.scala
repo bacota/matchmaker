@@ -10,7 +10,7 @@ import skunk.codec.all.int8
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign, TournamentGame, Validation}
-import com.vivi.matchmaker.model.tournament.standard.StandardModels
+import com.vivi.matchmaker.model.tournament.standard.{Challenge, StandardModels}
 import com.vivi.matchmaker.persistence.{
     EntrantRepo,
     GameAdminRepo,
@@ -85,7 +85,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
     test("every model a game could offer is listed for its admins to choose from") {
         val all = run(fixture.flatMap((_, _, player) => models.listAll(player.externalId)))
         assert(all.exists(_.tournamentModelId == worldCup), all.map(_.tournamentModelId))
-        assert(all.forall(m => m.classification.isDefined && m.isActive), all)
+        assert(all.forall(m => m.isRoot && m.isActive), all)
     }
 
     test("a player who does not administer the game may not offer or withdraw a model, nor a game's admin sync them") {
@@ -145,7 +145,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
     // ---- a sync removing a model the code no longer defines ----
 
-    /** A model the code does not define, with a classification, so that a sync takes it for one the code dropped. */
+    /** A root model the code does not define, so that a sync takes it for one the code dropped. */
     private def dropped: TournamentModel =
         TournamentModel(
           tournamentModelId = TournamentModelId(unique("test-dropped")),
@@ -155,7 +155,8 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
           classification = Some("Round robin"),
           poolSize = None,
           hasLateEntries = false,
-          TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
+          design = TournamentDesign(List(StageDesign(hasBrackets = false, demote = None))),
+          isRoot = true
         )
 
     /** `model` written and offered in `game`. */
@@ -279,7 +280,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         assertNotEquals(made.gameId, GameId.unassigned)
     }
 
-    test("a new game offers every standard model it can play") {
+    test("a new game offers every standard model it can play but the challenge") {
         val (offered, game) = run(for {
             admin <- siteAdmin
             _ <- models.sync(admin.externalId)
@@ -291,6 +292,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         } yield (offered, made))
         val standard = offered.map(_.tournamentModelId.value).filter(id => StandardModels.find(id).isDefined)
         val expected = StandardModels.all
+            .filter(_ != Challenge)
             .filter(m =>
                 Validation
                     .designProblems(design = m.design, game = TournamentGame.of(game), defaultPoolSize = m.poolSize)

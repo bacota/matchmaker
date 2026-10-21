@@ -8,7 +8,7 @@ object Heats
       version = 1,
       name = "Heats with Single Elimination",
       description = "Round-robin heats seed a single elimination.",
-      classification = "Pools, then elimination",
+      classification = Some("Pools, then elimination"),
       poolSize = Some(4)
     ) {
 

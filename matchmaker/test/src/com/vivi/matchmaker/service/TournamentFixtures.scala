@@ -15,9 +15,9 @@ object TournamentFixtures {
 
     /** The model of the standard format `key`, offered in `game`: added first if it is not stored yet, as a sync adds
       * it, under the sync's lock so that specs running at once do not both add it. A game that cannot play the format
-      * -- one of a single role, say -- is given a plain round robin instead, a model of its own with no classification,
-      * so that no spec's sync removes it. In one transaction, as the services write a model: it and its stages name
-      * each other.
+      * -- one of a single role, say -- is given a plain round robin instead, a model of its own that is not a root, so
+      * that no spec's sync removes it. In one transaction, as the services write a model: it and its stages name each
+      * other.
       */
     def model(session: Session[IO], game: Game, key: String): IO[TournamentModel] =
         session.transaction.use(_ => found(session = session, game = game, key = key))
