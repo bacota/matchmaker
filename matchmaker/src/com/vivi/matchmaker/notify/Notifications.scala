@@ -176,7 +176,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         owner: Player,
         room: Option[Int]
     ): ChallengeNews = {
-        val challenge = tournament.tournamentModelId == com.vivi.matchmaker.model.tournament.standard.Challenge.modelId
+        val challenge = tournament.tournamentModelId == com.vivi.matchmaker.model.tournament.standard.RoundRobin.modelId
         ChallengeNews(
           gameName = notice.name,
           what = if (challenge) "challenge" else "tournament",

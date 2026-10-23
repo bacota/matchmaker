@@ -48,17 +48,19 @@ object StandardModels {
 
     /** Every model the code defines: what the sync makes the stored models. A new model's object is added here. */
     val all: List[StandardModel] = List(
-      Challenge,
+      RoundRobin,
+      Ladder,
       SingleElimination,
       SingleEliminationConsolation,
-      ModifiedDoubleElimination,
       DoubleElimination,
+      ModifiedDoubleElimination,
       BrazilianRepechage,
       Heats,
       WorldCup,
-      Fencing,
-      Ncaa,
-      Ladder
+      Ncaa
+      // NBA/NHL
+      // Mlb
+      // PremierLeague
     )
 
     def find(id: String): Option[StandardModel] = all.find(_.id == id)

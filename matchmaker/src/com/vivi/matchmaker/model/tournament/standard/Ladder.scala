@@ -4,7 +4,7 @@ package standard
 object Ladder
     extends StandardModel(
       id = "ladder",
-      version = 1,
+      version = 2,
       name = "Ladder",
       description = "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
       classification = Some("Ladder")
@@ -16,7 +16,6 @@ object Ladder
           hasBrackets = false,
           maxStratum = None,
           minStratum = None,
-          poolSize = Some(2),
           promote = Some(1),
           demote = Some(2),
           hasStrictStrata = false,

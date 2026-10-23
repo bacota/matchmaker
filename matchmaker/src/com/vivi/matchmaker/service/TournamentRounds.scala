@@ -17,7 +17,7 @@ import com.vivi.matchmaker.model.tournament.{
     TournamentGame,
     TournamentState
 }
-import com.vivi.matchmaker.model.tournament.standard.Challenge
+import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.persistence._
 import com.vivi.matchmaker.persistence.TournamentStateRepo.Loaded
 
@@ -403,7 +403,7 @@ class TournamentRounds[T](
               id = tm.matchId,
               at = at,
               // A challenge is one match, which its tournament's name and round would only describe as such.
-              description = if (t.tournamentModelId == Challenge.modelId) "" else s"${t.name}, round ${tm.round}",
+              description = if (t.tournamentModelId == RoundRobin.modelId) "" else s"${t.name}, round ${tm.round}",
               limit = clock.map(_.limit),
               kind = clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),
               unit = TournamentRounds.unitFor(clock.map(_.limit)),

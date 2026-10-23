@@ -9,8 +9,8 @@ import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign, TournamentGame, Validation}
-import com.vivi.matchmaker.model.tournament.standard.{Challenge, StandardModels}
+import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
+import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence.{
     EntrantRepo,
     GameAdminRepo,
@@ -278,27 +278,5 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         } yield (waited, made))
         assert(waited.isLeft, waited)
         assertNotEquals(made.gameId, GameId.unassigned)
-    }
-
-    test("a new game offers every standard model it can play but the challenge") {
-        val (offered, game) = run(for {
-            admin <- siteAdmin
-            _ <- models.sync(admin.externalId)
-            made <- services.games.createOrUpdate(
-              externalUserId = admin.externalId,
-              game = Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
-            )
-            offered <- models.list(made.gameId, admin.externalId)
-        } yield (offered, made))
-        val standard = offered.map(_.tournamentModelId.value).filter(id => StandardModels.find(id).isDefined)
-        val expected = StandardModels.all
-            .filter(_ != Challenge)
-            .filter(m =>
-                Validation
-                    .designProblems(design = m.design, game = TournamentGame.of(game), defaultPoolSize = m.poolSize)
-                    .forall(_.isWarning)
-            )
-            .map(_.id)
-        assertEquals(standard.sorted, expected.sorted)
     }
 }

@@ -13,7 +13,7 @@ import com.vivi.matchmaker.model.tournament.{
     TournamentState,
     Validation
 }
-import com.vivi.matchmaker.model.tournament.standard.Challenge
+import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence._
 import com.vivi.matchmaker.util.ChallengeSettings
@@ -199,7 +199,7 @@ class TournamentService[T](
                     for {
                         caller <- requireCaller(session, callerExternalId)
                         game <- requireGame(session, gameId)
-                        model <- requireModel(session = session, gameId = gameId, id = Challenge.modelId)
+                        model <- requireModel(session = session, gameId = gameId, id = RoundRobin.modelId)
                         _ <- IO.raiseWhen(!request.isPlaying && !request.isAutoStarted)(
                           ValidationError(
                             "a challenge whose challenger will not play in it has to start when it is full"
@@ -1145,7 +1145,7 @@ object TournamentService {
         settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
 
     /** What a tournament is called in a refusal: a challenge, or a tournament. */
-    def noun(t: Tournament): String = if (t.tournamentModelId == Challenge.modelId) "challenge" else "tournament"
+    def noun(t: Tournament): String = if (t.tournamentModelId == RoundRobin.modelId) "challenge" else "tournament"
 
     /** A round's match as the tournament's page shows it. */
     def view(m: TournamentMatch): TournamentMatchView = {

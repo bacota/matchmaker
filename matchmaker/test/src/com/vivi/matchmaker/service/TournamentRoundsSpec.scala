@@ -14,6 +14,7 @@ import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.notify.RecordingNotifier
 import com.vivi.matchmaker.persistence.{
     GameRepo,
@@ -380,7 +381,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         val (request, sizes, d) = run(for {
             f <- started(
               n = 4,
-              design = "challenge",
+              design = RoundRobin.id,
               game = Some(Generators.genRolelessGame(least = 2, most = None)),
               poolSize = Some(4)
             )
@@ -734,7 +735,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         val (owedStatus, settled, startedStatus, created) = run(for {
             f <- started(
               n = 4,
-              design = "challenge",
+              design = RoundRobin.id,
               game = Some(Generators.genRolelessGame(least = 2, most = None)),
               poolSize = Some(4)
             )

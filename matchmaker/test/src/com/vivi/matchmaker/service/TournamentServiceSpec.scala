@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 import munit.FunSuite
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.standard.StandardModels
+import com.vivi.matchmaker.model.tournament.standard.{RoundRobin, StandardModels}
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     EloRatingRepo,
@@ -125,7 +125,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             tooSmall <- tournaments
                 .create(
                   gameId = f.game.gameId,
-                  request = request(f = f, standard = "challenge").copy(defaultPoolSize = Some(1)),
+                  request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(1)),
                   callerExternalId = f.owner.externalId
                 )
                 .attempt
@@ -522,7 +522,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                       gameId = f.game.gameId,
                       request = request(
                         f = f,
-                        standard = "challenge",
+                        standard = RoundRobin.id,
                         settings = TournamentSettings(isInvitational = false, playersPerMatch = playersPerMatch)
                       ).copy(defaultPoolSize = poolSize),
                       callerExternalId = f.owner.externalId
@@ -548,7 +548,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               f <- fixture(5, roleless = Some(Generators.genRolelessGame(least = 2, most = None)))
               t <- tournaments.create(
                 gameId = f.game.gameId,
-                request = request(f = f, standard = "challenge").copy(defaultPoolSize = Some(2)),
+                request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(2)),
                 callerExternalId = f.owner.externalId
               )
               _ <- tournaments.open(gameId = f.game.gameId, tournamentId = t.tournamentId, f.owner.externalId)
@@ -564,7 +564,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               _ <- tournaments.update(
                 gameId = f.game.gameId,
                 tournamentId = t.tournamentId,
-                request = request(f = f, standard = "challenge").copy(defaultPoolSize = Some(f.players.size)),
+                request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(f.players.size)),
                 callerExternalId = f.owner.externalId
               )
               _ <- tournaments.start(gameId = f.game.gameId, tournamentId = t.tournamentId, f.owner.externalId)

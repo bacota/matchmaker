@@ -7,7 +7,7 @@ import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{TournamentGame, Validation}
-import com.vivi.matchmaker.model.tournament.standard.{Challenge, StandardModel, StandardModels}
+import com.vivi.matchmaker.model.tournament.standard.{RoundRobin, StandardModel, StandardModels}
 import com.vivi.matchmaker.persistence._
 
 /** The models every game's tournaments are made from: the standard formats the code defines ([[StandardModels]]), which
@@ -198,7 +198,7 @@ object TournamentModelService {
                 if (tg.requiredSeats == 0) Nil
                 else
                     models
-                        .filter(_.tournamentModelId != Challenge.modelId)
+                        .filter(_.tournamentModelId != RoundRobin.modelId)
                         .filter(m =>
                             Validation
                                 .designProblems(design = m.design, game = tg, defaultPoolSize = m.poolSize)

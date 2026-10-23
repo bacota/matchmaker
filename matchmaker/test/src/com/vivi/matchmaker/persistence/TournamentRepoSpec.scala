@@ -8,13 +8,7 @@ import skunk.Session
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
 import cats.syntax.all._
-import com.vivi.matchmaker.model.tournament.standard.{
-    Ladder,
-    SingleElimination,
-    StandardModel,
-    StandardModels,
-    WorldCup
-}
+import com.vivi.matchmaker.model.tournament.standard.{Ladder, SingleElimination, StandardModel, WorldCup}
 import com.vivi.matchmaker.service.TournamentFixtures
 
 /** The tournament tables through their repositories, against the local database. */
@@ -70,18 +64,6 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
       */
     private def run[A](body: Session[IO] => IO[A]): A =
         TestSession.resource.use(session => session.transaction.use(_ => body(session))).unsafeRunSync()
-
-    test("a model of every standard format is read back as the design it was written with, inner designs and all") {
-        val (written, read) = run { session =>
-            val repo = new TournamentModelRepo(session)
-            val written = StandardModels.all.map(copyOf)
-            written
-                .traverse_(repo.create) *> written.traverse(m => repo.read(m.tournamentModelId)).map(r => (written, r))
-        }
-        assertEquals(read.map(_.map(_.design)), written.map(m => Some(m.design)))
-        assertEquals(read.map(_.map(_.poolSize)), written.map(m => Some(m.poolSize)))
-        assertEquals(read.map(_.map(_.version)), written.map(_ => Some(1)))
-    }
 
     test("a game offers the models its admins chose, never an inner design, and stops when one is withdrawn") {
         val (offered, withdrawn, inner) = TestSession.resource

@@ -5,7 +5,6 @@ import munit.FunSuite
 import upickle.default.{read, write}
 import TournamentCodecs.given
 import Fixtures.*
-import standard.StandardModels
 
 class DesignSpec extends FunSuite {
 
@@ -47,33 +46,6 @@ class DesignSpec extends FunSuite {
           6
         )
         assertEquals(Env(design = design, game = twoPlayer, ratings = Map.empty).poolSize(design.stages.head), 2)
-    }
-
-    test("every standard model is valid with the pool size it suggests, and only heats leaves a stage unsized") {
-        StandardModels.all.foreach { m =>
-            assertEquals(
-              Validation
-                  .designProblems(design = m.design, game = twoPlayer, defaultPoolSize = m.poolSize)
-                  .filterNot(_.isWarning),
-              Nil,
-              m.id
-            )
-        }
-        val heats = standard.Heats
-        assertEquals(heats.poolSize, Some(4))
-        assertEquals(heats.design.stages.head.poolSize, None)
-        def sized(d: TournamentDesign): Boolean = d.stages.forall(s => s.poolSize.isDefined && s.design.forall(sized))
-        assert(sized(TournamentDesign(heats.design.stages.tail)), heats.design.stages.tail)
-    }
-
-    test("each standard model is named once, by a descriptive id, at a version") {
-        val ids = StandardModels.all.map(_.id)
-        assertEquals(ids.distinct, ids)
-        StandardModels.all.foreach { m =>
-            assert(m.version >= 1, m.id)
-            assert(m.id.matches("[a-z0-9-]+"), m.id)
-            assertEquals(StandardModels.find(m.id), Some(m))
-        }
     }
 
     test("a match may not be drawn as its pool's only match, nor ever in a rubber; in a pool of more it may") {

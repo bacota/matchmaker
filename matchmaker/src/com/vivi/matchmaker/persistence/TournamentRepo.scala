@@ -304,7 +304,7 @@ class TournamentRepo(session: Session[IO]) {
     // out, so that they grow with the tournaments being played and not with every challenge ever played. Written
     // with literals, as the partial indexes `tournament_listed` and `tournament_open_challenge` are, so that the
     // planner can match them.
-    private val challenge = com.vivi.matchmaker.model.tournament.standard.Challenge.modelId.value
+    private val challenge = com.vivi.matchmaker.model.tournament.standard.RoundRobin.modelId.value
     private val isListed: Fragment[Void] =
         sql"(t.tournament_model_id <> '#$challenge' OR t.status IN ('draft', 'open', 'running'))"
     private val isOpenChallenge: Fragment[Void] =

@@ -5,7 +5,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.Duration
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.standard.Challenge
+import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.persistence.{GameAdminRepo, TestSession}
 
 /** Challenges for specs: one offered, entered and started as players would, through the services, up to its match being
@@ -17,7 +17,7 @@ object Challenges {
       * is not, and offered. A game made straight into its table, as specs make them, offers no format of its own.
       */
     def offeredIn(game: Game): IO[Unit] =
-        TestSession.resource.use(TournamentFixtures.model(_, game, Challenge.modelId.value)).void
+        TestSession.resource.use(TournamentFixtures.model(_, game, RoundRobin.modelId.value)).void
 
     /** A player in a challenge: who, the role they will choose, and the character they enter with in a character game.
       */
