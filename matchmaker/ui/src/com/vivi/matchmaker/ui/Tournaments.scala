@@ -1234,6 +1234,48 @@ object Tournaments {
                     )
             }))
 
+        /* The fields a check reads, with those choosing a format also fills in, as last accepted: a change whose check
+         * raises a warning they did not have is put back, and the warning said in the banner instead. */
+        type Fields =
+            (Boolean, String, Option[TournamentModel], Option[TournamentModelId], String, String, Boolean, Boolean)
+        def fields: Fields = (
+          wholePool.now(),
+          perMatch.now(),
+          chosen.now(),
+          modelId.now(),
+          maxTurns.now(),
+          poolSize.now(),
+          lateEntries.now(),
+          chooseRoles.now()
+        )
+        def warnings: Set[Problem] = problems.now().filter(_.isWarning).toSet
+        var accepted: Fields = fields
+        var acceptedWarnings: Set[Problem] = Set.empty
+        def accept(): Unit = {
+            accepted = fields
+            acceptedWarnings = warnings
+        }
+        def checkChange(): Unit = {
+            check()
+            val raised = warnings -- acceptedWarnings
+            if (raised.isEmpty) accept()
+            else {
+                val (pool, count, model, id, turns, size, late, roles) = accepted
+                Var.set(
+                  wholePool -> pool,
+                  perMatch -> count,
+                  chosen -> model,
+                  modelId -> id,
+                  maxTurns -> turns,
+                  poolSize -> size,
+                  lateEntries -> late,
+                  chooseRoles -> roles
+                )
+                check()
+                Store.reportProblem(s"That change was undone: ${raised.map(_.describe).mkString("; ")}")
+            }
+        }
+
         def checkbox(caption: String, v: Var[Boolean], tip: String, disabledWhen: Signal[Boolean] = Val(false)) = {
             val id = freshTipId(s"$key-tip")
             withTip(id = id, subject = caption, text = tip)(
@@ -1545,11 +1587,15 @@ object Tournaments {
           ),
           ul(
             aria.live := "polite",
-            // Checked again whenever a field it reads changes.
-            wholePool.signal
-                .combineWith(perMatch.signal, chosen.signal, modelId.signal, maxTurns.signal, poolSize.signal) --> (_ =>
+            // Checked again whenever a field it reads changes, once typing pauses so a number half typed is not judged.
+            onMountCallback { _ =>
                 check()
-            ),
+                accept()
+            },
+            wholePool.signal
+                .combineWith(perMatch.signal, chosen.signal, modelId.signal, maxTurns.signal, poolSize.signal)
+                .changes
+                .debounce(500) --> (_ => checkChange()),
             children <-- problems.signal.map(
               _.map(pr =>
                   li(
