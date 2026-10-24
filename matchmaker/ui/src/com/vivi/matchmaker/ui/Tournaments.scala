@@ -50,7 +50,8 @@ object Tournaments {
                       headingId = Some("new-competition-heading")
                     ),
                     labelledBy = "new-competition-heading",
-                    close = () => closeNewCompetition(game.gameId)
+                    close = () => closeNewCompetition(game.gameId),
+                    saving = savingBusy(game.gameId, None).signal
                   )
           ),
           Views.refreshableSection(

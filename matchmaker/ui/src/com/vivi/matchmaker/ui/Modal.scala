@@ -50,8 +50,17 @@ object Modal {
     /** `content` as a modal dialog: a scrim over the page, closed by Escape, by a click on the backdrop, or by its own
       * Close button, all of which call `close` -- which puts focus back where the dialog was opened from. Focus moves
       * into the dialog as it opens. `labelledBy` is the id of its heading.
+      *
+      * `saving` is whether the save it holds is out, while which `close` refuses: the dialog says so, in a status line
+      * of its own -- everything outside it is inert, the page's live region included -- and its Close is marked
+      * unavailable.
       */
-    def dialog(content: HtmlElement, labelledBy: String, close: () => Unit): HtmlElement =
+    def dialog(
+        content: HtmlElement,
+        labelledBy: String,
+        close: () => Unit,
+        saving: Signal[Boolean] = Val(false)
+    ): HtmlElement =
         div(
           cls := "modal-scrim",
           inertBehind,
@@ -68,7 +77,21 @@ object Modal {
                 close()
             },
             Views.errorBanner,
-            div(cls := "alternatives", button(tpe := "button", cls := "link", "Close", onClick --> (_ => close())))
+            p(
+              cls := "detail",
+              role := "status",
+              child.text <-- saving.map(if (_) "Saving… This closes once it is saved." else "")
+            ),
+            div(
+              cls := "alternatives",
+              button(
+                tpe := "button",
+                cls := "link",
+                aria.disabled <-- saving,
+                "Close",
+                onClick --> (_ => close())
+              )
+            )
           )
         )
 }

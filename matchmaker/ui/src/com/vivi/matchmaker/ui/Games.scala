@@ -153,7 +153,8 @@ object Games {
         Modal.dialog(
           content = GameForm.gameForm(existing = existing, heading = Some(headingId -> title), onSaved = onSaved),
           labelledBy = headingId,
-          close = close
+          close = close,
+          saving = GameForm.savingBusy(existing).signal
         )
 
     /** This player's finished matches in one game, most recently finished first.
