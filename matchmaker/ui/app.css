@@ -652,7 +652,8 @@ button[aria-disabled="true"] {
   border-radius: 3px;
 }
 
-/* A labelled field: the caption above its control, not beside it.
+/* A labelled field: on a narrow screen the caption above its control, not beside it (wider, see
+   the 48rem rule further down).
    `.card label` below lays a label and its control on one line, which is right for the checkbox
    it was written for and wrong here — a caption beside a full-width box wraps immediately. Same
    shape as `.sign-in label` and `.account-section label`, which solved this first. */
@@ -1271,32 +1272,29 @@ h3[tabindex="-1"]:focus-visible {
   padding-top: 0;
 }
 
-/* The notification questions, where there is room for a caption beside its dropdown rather than
-   above it. Eight questions three lines tall each is a column of mostly captions.
+/* Every captioned field, where there is room: the caption beside its control rather than above it.
 
-   Only at the width that widens the panel in the first place, and only for the dropdowns.
-   `label.field` stacks for a good reason -- a caption beside a full-width *text* box wraps
-   immediately -- and a phone, or a match row on a phone, still wants the stack.
+   Only from this width. `label.field` stacks below it for a good reason -- a caption beside a
+   full-width box on a phone leaves the box no room -- and a phone still wants the stack.
 
    A grid rather than a flex line, for the reason `.cascade` gives: the hint underneath is a second
    line, and a flex row would centre it halfway up the control. A fixed first column so the
-   dropdowns line up with each other instead of each with its own caption's length. */
+   controls line up with each other instead of each with its own caption's length. */
 @media (min-width: 48rem) {
-  .account-menu label.field:has(> select),
-  .modal label.field:has(> select) {
+  label.field {
     display: grid;
     grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
     align-items: center;
     gap: 0.15rem 0.6rem;
   }
 
-  .account-menu label.field:has(> select) > select,
-  .modal label.field:has(> select) > select {
+  label.field > input,
+  label.field > select,
+  label.field > .time-limit {
     margin-top: 0;
   }
 
-  .account-menu label.field:has(> select) > .hint,
-  .modal label.field:has(> select) > .hint {
+  label.field > .hint {
     grid-column: 2;
     margin-top: 0;
   }
@@ -1525,4 +1523,25 @@ h3[tabindex="-1"]:focus-visible {
 /* A character's record, beside its owner on its page. */
 .character-record {
   margin: 0;
+}
+
+/* The competition form's match time limit, its number and its unit on one line; and its
+   checkboxes close together -- the "?" keeps its 44px to tap but overlaps the rows around it rather
+   than spacing them out, as `.inline-tip` does. */
+.competition-form .time-limit {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.competition-form .time-limit > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.competition-form .with-tip:has(> label > input[type="checkbox"]) {
+  margin-bottom: 0.1rem;
+}
+
+.competition-form .with-tip:has(> label > input[type="checkbox"]) > .tip-toggle {
+  margin: -10px 0;
 }

@@ -43,3 +43,9 @@ game on the player page once sent about sixteen `GET /games/{id}/challenges` a s
 - Every `Store` fetch goes through `Coalescer`: one in flight per list, a trailing request for asks made meanwhile,
   starts spaced at least a second apart. A new fetch uses `load` or `reload` to get it, not a bare `ApiClient` call.
 - Prefer fetching on navigation (`Store.show`) to fetching on mount.
+
+## Captions sit beside their fields
+
+Wherever the screen is wide enough, a field's caption and its control share one line. `label.field` does this for
+every form from 48rem up (the rule in `app.css`) and stacks below that. Use `Views.field` or `Views.tipField` for a
+captioned control so it gets this, rather than a layout of its own.

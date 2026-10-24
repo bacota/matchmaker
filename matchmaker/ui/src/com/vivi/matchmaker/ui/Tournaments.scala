@@ -63,7 +63,7 @@ object Tournaments {
               tpe := "button",
               htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
               aria.expanded <-- Store.showTournamentForm.signal,
-              "New Competition",
+              "Issue Challenge or Create Tournament",
               onMountCallback(context => newCompetitionTrigger = Some(context.thisNode.ref)),
               onUnmountCallback(_ => newCompetitionTrigger = None),
               onClick --> (_ => Store.showTournamentForm.set(true))
@@ -1094,6 +1094,10 @@ object Tournaments {
                 .map((classification, inGroup) => optGroup(labelAttr := classification, options(inGroup)))
     }
 
+    /* The units a match time limit is given in, and how many minutes each is. */
+    private val timeUnits: Seq[(String, Long)] =
+        Seq("minutes" -> 1L, "hours" -> 60L, "days" -> 1440L, "weeks" -> 10080L)
+
     private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
 
     /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
@@ -1101,7 +1105,7 @@ object Tournaments {
       *
       * For a game without roles it also asks how many players a match has, and — for a tournament not yet started, with
       * `entered` entries so far — offers the pool size that puts everyone entered in one pool. `headingId` heads it
-      * "New Competition", under that id, for the dialog it is shown in.
+      * "Issue Challenge or Create Tournament", under that id, for the dialog it is shown in.
       */
     def form(
         game: Game,
@@ -1135,7 +1139,15 @@ object Tournaments {
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
-        val hours = Var(s0.roundDuration.fold("48")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0")))
+        // The match time limit as typed, in the unit chosen: the largest unit it is a whole number of.
+        val (limit0, unit0) = s0.roundDuration.fold(("48", "hours")) { d =>
+            val minutes = d.toMinutes
+            timeUnits.reverse
+                .collectFirst { case (unit, size) if minutes % size == 0 => ((minutes / size).toString, unit) }
+                .getOrElse((minutes.toString, "minutes"))
+        }
+        val timeLimit = Var(limit0)
+        val timeUnit = Var(unit0)
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
         val chooseRoles = Var(s0.hasRoleChoice)
         val live = Var(s0.isLive)
@@ -1169,6 +1181,12 @@ object Tournaments {
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
+        def isRoundRobin(id: Option[TournamentModelId]): Boolean = id.exists(_.value == "RR")
+        def duration: Option[java.time.Duration] =
+            timeLimit.now().trim.toDoubleOption.filter(_ > 0).map { n =>
+                val size = timeUnits.toMap.getOrElse(timeUnit.now(), 60L)
+                java.time.Duration.ofMinutes((n * size).round)
+            }
         def settings = TournamentSettings(
           hasAutomaticRounds = autoRounds.now(),
           isFriendly = friendly.now(),
@@ -1177,8 +1195,7 @@ object Tournaments {
           minRating = int(minRating),
           maxRating = int(maxRating),
           entriesPerPlayer = int(entries).getOrElse(1),
-          roundDuration =
-              hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
+          roundDuration = duration,
           maxTurns = int(maxTurns),
           hasConcurrentRounds = concurrentRounds.now(),
           isPublic = isPublic.now(),
@@ -1186,8 +1203,8 @@ object Tournaments {
           isLive = live.now(),
           start = GameSettingsFields.startOf(plannedStart.now()),
           hasRoleChoice = chooseRoles.now(),
-          maxEntrants = int(maxEntrants),
-          isAutoStarted = autoStart.now() && int(maxEntrants).isDefined,
+          maxEntrants = if (isRoundRobin(modelId.now())) None else int(maxEntrants),
+          isAutoStarted = autoStart.now() && !isRoundRobin(modelId.now()) && int(maxEntrants).isDefined,
           playersPerMatch = playersPerMatch
         )
         /* "A number of players" with no number is not "everyone in the pool", though both leave `playersPerMatch`
@@ -1276,9 +1293,9 @@ object Tournaments {
         }
 
         div(
-          cls := "card",
+          cls := "card competition-form",
           // Headed when it is a dialog of its own, which is named by its heading.
-          headingId.fold(emptyNode)(id => h3(idAttr := id, "New Competition")),
+          headingId.fold(emptyNode)(id => h3(idAttr := id, "Issue Challenge or Create Tournament")),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
           models --> { ms =>
               chosen.now() match {
@@ -1345,7 +1362,7 @@ object Tournaments {
                 },
                 if (game.isRoleless) playersControl else emptyNode,
                 number(
-                  caption = "Default pool size",
+                  caption = "Pool Size",
                   v = poolSize,
                   tip =
                       "How many play in a pool of any stage that does not set its own size. Filled in from the format."
@@ -1367,23 +1384,26 @@ object Tournaments {
             tip = "Only players you invite may enter. You may always enter your own competition."
           ),
           checkbox(
-            caption = "Automatic rounds",
+            caption = "Auto start",
             v = autoRounds,
             tip = "Each round begins as soon as the last one ends, rather than when you start it."
           ),
-          checkbox(
-            caption = "Friendly",
-            v = friendly,
-            tip = "Its matches change nobody's rating. Only an admin of the game may make a competition rated.",
-            // Left friendly by anybody else; one already rated stays theirs to edit, as the server allows.
-            disabledWhen =
-                if (!s0.isFriendly) Val(false)
-                else
-                    Store.currentPlayer.flatMapSwitch {
-                        case Some(player) => Store.administers(game.gameId, player).map(!_)
-                        case None         => Val(true)
-                    }
-          ),
+          // Only for an admin of the game, who alone may make a competition rated.
+          child <-- Store.currentPlayer.flatMapSwitch {
+              case Some(player) =>
+                  Store
+                      .administers(game.gameId, player)
+                      .map(isAdmin =>
+                          if (!isAdmin) emptyNode
+                          else
+                              checkbox(
+                                caption = "Friendly",
+                                v = friendly,
+                                tip = "Its matches change nobody's rating."
+                              )
+                      )
+              case None => Val(emptyNode)
+          },
           checkbox(
             caption = "Late entries",
             v = lateEntries,
@@ -1412,11 +1432,18 @@ object Tournaments {
                 "Its matches are played in real time: the game engine runs the turns and keeps the clock, so a round " +
                     "length is required."
           ),
-          number(caption = "Most entries", v = maxEntrants, tip = "Leave blank for no limit."),
-          checkbox(
-            caption = "Start when full",
-            v = autoStart,
-            tip = "It starts by itself as soon as it has its most entries."
+          // A round robin is one match of everyone who enters: no most to set, nor to start on.
+          child <-- modelId.signal.map(id =>
+              if (isRoundRobin(id)) emptyNode
+              else
+                  div(
+                    number(caption = "Max players (optional)", v = maxEntrants, tip = "Leave blank for no limit."),
+                    checkbox(
+                      caption = "Start when full",
+                      v = autoStart,
+                      tip = "It starts by itself as soon as it has its most players."
+                    )
+                  )
           ),
           Views.tipField(
             id = freshTipId(s"$key-tip"),
@@ -1432,21 +1459,31 @@ object Tournaments {
           ),
           // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
           GameSettingsFields.parameterFields(game, parameters),
-          number(caption = "Minimum rating", v = minRating, tip = "Leave blank for no minimum."),
-          number(caption = "Maximum rating", v = maxRating, tip = "Leave blank for no maximum."),
-          number(caption = "Entries per player", v = entries, tip = "How many times one player may enter."),
+          number(caption = "Min rating (optional)", v = minRating, tip = "Leave blank for no minimum."),
+          number(caption = "Max rating (optional)", v = maxRating, tip = "Leave blank for no maximum."),
+          number(caption = "Max entries per player", v = entries, tip = "How many times one player may enter."),
           Views.tipField(
             id = freshTipId(s"$key-tip"),
-            caption = "Round length (hours)",
+            caption = "Match time limit",
             text =
                 "How long a round lasts; you may give a round started by hand another. In a game of turns each player has " +
                     "a chess clock of an equal share of it."
           )(
-            input(
-              tpe := "number",
-              inputMode := "decimal",
-              minAttr := "0",
-              controlled(value <-- hours.signal, onInput.mapToValue --> hours)
+            span(
+              cls := "time-limit",
+              input(
+                tpe := "number",
+                inputMode := "decimal",
+                minAttr := "0",
+                required := true,
+                controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
+              ),
+              select(
+                aria.label := "Time unit",
+                value <-- timeUnit.signal,
+                onChange.mapToValue --> timeUnit,
+                timeUnits.map((unit, _) => option(value := unit, unit))
+              )
             )
           ),
           if (game.moveType == MoveType.Simultaneous && game.maxTurns.isEmpty)
@@ -1466,6 +1503,7 @@ object Tournaments {
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
+                else if (duration.isEmpty) Store.reportProblem("A competition needs a match time limit.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else
                     modelId.now().foreach { id =>
