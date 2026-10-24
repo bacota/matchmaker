@@ -371,6 +371,8 @@ locals {
     # Tournaments: the caller's own, a game's, and one tournament's page; creating and editing
     # one; its owner opening, starting and stopping it; invitations; and entering and withdrawing.
     "GET /me/tournaments",
+    # The caller's own tournaments that ended within a window (`?frame=`), kept apart from the list above.
+    "GET /me/tournaments/ended",
     "GET /me/tournament-standings",
     "GET /games/{gameId}/tournaments",
     "POST /games/{gameId}/tournaments",
