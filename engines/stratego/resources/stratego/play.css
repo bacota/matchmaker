@@ -1,0 +1,183 @@
+  /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
+     in dark mode, under the 4.5:1 normal text needs. */
+  /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. The insignia's
+     metals are drawn only on a piece, in either theme: --silver is 5.1:1 against --red and 5.2:1
+     against --blue, --gold 4.0:1 and 4.1:1 — over the 3:1 a graphic needs. --black (2.8:1 on --blue),
+     --brown (1.1:1 on --red), --green (1.2:1 on --red) and a flag in the other army's colour (1.0:1) are not, so each is drawn
+     inside a --halo outline, 5.8:1 against --red and 5.9:1 against --blue. */
+  :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
+          --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9;
+          --silver: #dfe3e8; --gold: #f3c34a; --black: #111; --brown: #7b4a1f; --green: #3d7a2a;
+          --halo: #f4f1ea; --accent: #6d28d9; --on-accent: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd;
+            --accent: #c4b5fd; --on-accent: #16181c; }
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
+         font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
+  main { text-align: center; padding: 1.5rem 16px; width: 100%; max-width: 40rem; box-sizing: border-box; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; }
+  #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.25rem; min-height: 2rem; }
+  #board { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; width: 100%; max-width: 36rem;
+           margin: 0 auto; padding: 2px; box-sizing: border-box; background: var(--line); border-radius: 6px; }
+  #board button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 3px; position: relative;
+                  background: var(--square); color: var(--ink); font: 700 clamp(.8rem, 3.6vw, 1.15rem)/1 ui-monospace, monospace; }
+  /* --flag: each army's flag is drawn in the other's colour. */
+  #board button.Red { background: var(--red); color: #fff; --flag: var(--blue); }
+  #board button.Blue { background: var(--blue); color: #fff; --flag: var(--red); }
+  #board button.lake { background: var(--water); }
+  /* A piece's icon, and its number tucked into the corner — the number is what decides a fight, so it stays. */
+  .icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #board .icon { position: absolute; left: 24%; top: 26%; width: 56%; height: 56%; pointer-events: none; }
+  #board .icon.alone { left: 18%; top: 18%; width: 64%; height: 64%; }
+  /* Four stars in a row, as a general wears them, given the whole width or they shrink to dots. */
+  #board .icon.wide { left: 5%; top: 42%; width: 90%; height: 32%; }
+  #board .number { position: absolute; top: 2px; left: 3px; font-size: clamp(.6rem, 2.4vw, .8rem); }
+  #board button[aria-disabled="false"] { cursor: pointer; }
+  /* A piece that can be picked up. Only these take the touch for themselves, so a swipe that starts
+     anywhere else on the board still scrolls the page. */
+  #board { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #board button.draggable { touch-action: none; cursor: grab; }
+  /* The piece being dragged stays on its square, faded, while a copy follows the finger. */
+  #board button.lifted { opacity: .35; }
+  /* The square the carried piece will land on: the piece sits in it, ringed. */
+  #board button.over { outline: 4px solid var(--mark); outline-offset: 0; z-index: 1; }
+  #board button.ghost { position: fixed; z-index: 10; pointer-events: none; transform: scale(1.15);
+                        box-shadow: 0 6px 16px rgba(0, 0, 0, .35); cursor: grabbing; }
+  /* Settled into the square it will land on, at that square's size, so there is no doubt which. */
+  #board button.ghost.snapped { transform: none; box-shadow: 0 0 0 4px var(--mark), 0 4px 10px rgba(0, 0, 0, .3); }
+  /* Under a finger, larger, so that it shows round the fingertip. */
+  #board button.ghost.touch { transform: scale(1.6); }
+  #board button.ghost.touch.snapped { transform: scale(1.5); }
+  #board button.last { box-shadow: inset 0 0 0 2px var(--mark); }
+  #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
+  #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
+  #board button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; z-index: 1; }
+  /* A piece seen to move but not yet revealed — either side's, and in a replay by the move shown — which tells its enemy
+     it is neither a mine nor the flag. */
+  #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
+                               border-radius: 50%; background: currentColor; opacity: .8; }
+  /* A piece whose rank its enemy has seen — in a replay, by the move shown. */
+  #board button.known::before { content: ""; position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px;
+                                background: currentColor; }
+  #news { min-height: 1.5rem; margin: .75rem 0 0; }
+  /* Stepping through the match: to the opening, back, where the board is, forward, and to the latest. */
+  #replay { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: center; margin-top: .75rem; }
+  #replay[hidden] { display: none; }
+  #replay button { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 .75rem;
+                   border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+                   cursor: pointer; }
+  #replay button[aria-disabled="true"] { opacity: .5; cursor: default; }
+  #replay button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #replay-at { min-width: 9rem; text-align: center; font-variant-numeric: tabular-nums; }
+  #replay .double { letter-spacing: -.2em; }
+  /* A past position, not the one being played: the board is ringed while it shows one. */
+  #board.replaying { outline: 3px dashed var(--mark); outline-offset: 3px; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: end; margin-top: 1rem; }
+  /* Without this the display above would override `hidden`, and both sets of controls would always show. */
+  .controls[hidden] { display: none; }
+  .controls label { display: flex; flex-direction: column; align-items: start; font-size: .875rem; gap: .25rem; }
+  .controls select, .controls button { font: inherit; font-size: 16px; min-height: 44px; }
+  .controls select { min-width: 9rem; padding: 0 .5rem; }
+  .controls button { padding: 0 1rem; border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
+                     color: var(--ink); cursor: pointer; }
+  .controls button.primary { background: var(--ink); color: var(--paper); }
+  .controls button:disabled { opacity: .5; cursor: default; }
+  .controls :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* Conceding: set apart from the turn's own controls, and asked twice, since it cannot be undone. */
+  #concede-bar { margin-top: 1.25rem; }
+  #concede-bar[hidden] { display: none; }
+  #concede, #concede-dialog button { font: inherit; font-size: 1rem; min-height: 44px; padding: 0 1rem; border-radius: 6px;
+                                     border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+                                     cursor: pointer; }
+  #concede { color: var(--error); border-color: currentColor; }
+  #concede-dialog { max-width: min(24rem, calc(100vw - 32px)); box-sizing: border-box; padding: 1.25rem;
+                    border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+  #concede-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+  #concede-dialog h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
+  #concede-dialog p { margin: 0 0 1rem; }
+  #concede-dialog .actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+  /* --paper on --error, not white: the dark theme's --error is light, and white on it is 2.3:1. */
+  #concede-dialog .give-up { background: var(--error); border-color: var(--error); color: var(--paper); }
+  #concede:focus-visible, #concede-dialog :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* What the other side still has, rank by rank: their army less what they have lost, every piece of
+     which was revealed in the battle that took it — so nothing here is anything a player could not
+     have counted for themselves. */
+  #remaining { margin: 1rem auto 0; max-width: 36rem; text-align: left; }
+  #remaining[hidden] { display: none; }
+  #remaining section + section { margin-top: .75rem; }
+  #remaining h2 { font-size: 1rem; font-weight: 600; margin: 0 0 .5rem; }
+  #remaining ul { list-style: none; margin: 0; padding: 0; display: grid;
+                  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr)); gap: .375rem; }
+  #remaining li { display: flex; flex-direction: column; align-items: center; gap: .125rem;
+                  font: 700 .9375rem/1.2 ui-monospace, monospace; }
+  /* A rank with none left, faded but kept in its place, so the row does not shift as pieces fall. */
+  #remaining li.gone { opacity: .4; }
+  #remaining .chip { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 3px;
+                     color: #fff; }
+  #remaining .chip.Red { background: var(--red); --flag: var(--blue); }
+  #remaining .chip.Blue { background: var(--blue); --flag: var(--red); }
+  #remaining .icon { width: 1.4rem; height: 1.4rem; }
+  #remaining .icon.wide { width: 1.8rem; height: .65rem; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  #lost { margin-top: 1rem; font-size: .875rem; }
+  #lost p { margin: .25rem 0; }
+  /* The key: a button beside the board that opens it over the page, so it is in reach mid-game. */
+  .board-bar { display: flex; justify-content: flex-end; gap: .5rem; max-width: 36rem; margin: 0 auto .5rem; }
+  .board-bar button, #key .close, #rules .close { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 1rem;
+                                   border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
+                                   color: var(--ink); cursor: pointer; }
+  .board-bar button:focus-visible, #key :focus-visible, #rules :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #key { width: min(28rem, calc(100vw - 32px)); max-height: 85vh; overflow: auto; box-sizing: border-box; padding: 1rem;
+         border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink);
+         text-align: left; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); }
+  #key::backdrop { background: rgba(0, 0, 0, .35); }
+  #key .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+  #key h2 { font-size: 1.125rem; margin: 0; }
+  #key .close { padding: 0; }
+  /* Filled, so that it is found at a glance — in the page's accent rather than the ink of Move and
+     Deploy, which are the turn's own actions. White on --accent is 7.1:1; in dark mode --accent is
+     light, and --paper on it is 9.6:1. */
+  .board-bar #key-button, .board-bar #rules-button { display: inline-flex; align-items: center; gap: .375rem;
+                           background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+                           font-weight: 600; }
+  .board-bar button svg { width: 1.125rem; height: 1.125rem; }
+  /* The rules: a modal, read start to finish, scrolling within itself on a phone. */
+  #rules { width: min(32rem, calc(100vw - 32px)); max-height: 85vh; overflow: auto; box-sizing: border-box;
+           padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+           color: var(--ink); text-align: left; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); }
+  #rules:not([open]) { display: none; }
+  #rules::backdrop { background: rgba(0, 0, 0, .35); }
+  #rules .head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem;
+                 margin: -1rem -1.25rem .5rem; padding: 1rem 1.25rem .5rem; background: var(--paper); }
+  #rules h2 { font-size: 1.125rem; margin: 0; }
+  #rules h3 { font-size: 1rem; margin: 1rem 0 .25rem; }
+  #rules p, #rules ul { margin: .25rem 0; }
+  #rules ul { padding-left: 1.25rem; }
+  #rules li { margin: .25rem 0; }
+  #rules .close { padding: 0; }
+  #key dl { display: grid; grid-template-columns: auto 1fr; gap: .5rem .75rem; margin: 0; }
+  #key dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; gap: .375rem; }
+  #key dd { margin: 0; align-self: center; }
+  #key dd strong { display: block; }
+  #key dd span { display: block; font-size: .875rem; opacity: .85; }
+  #key .rule { margin: 1rem 0 .75rem; font-weight: 600; }
+  /* Each icon on a piece of its own, since the metals are drawn for a piece and silver would vanish on the page. */
+  #key .chip { display: inline-grid; place-items: center; position: relative; width: 2rem; height: 2rem;
+               border-radius: 3px; background: var(--red); color: #fff; --flag: var(--blue); }
+  #key .chip.Blue { background: var(--blue); --flag: var(--red); }
+  #key .icon { width: 1.4rem; height: 1.4rem; }
+  #key .icon.wide { width: 1.8rem; height: .65rem; }
+  /* The marks a square can carry, drawn as the board draws them. */
+  #key .dot { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+  /* The name of the piece under a resting pointer, after a second. */
+  #tip { position: fixed; z-index: 20; padding: .375rem .625rem; border-radius: 6px; background: var(--ink);
+         color: var(--paper); font-size: .875rem; line-height: 1.3; white-space: nowrap;
+         box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+  #tip[hidden] { display: none; }
+  #key .bar { position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px; background: #fff; }
+  #players h2 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 .25rem; }
+  #seats { font-size: .875rem; opacity: .7; }
+  #seats div { margin: .125rem 0; }
+  #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }

@@ -9,8 +9,8 @@ and the engines' server code (`engines/common/src`, and each engine's `Engine`, 
 pass every test and look right in review, because each piece is reasonable on its own; the fault is in what can happen
 between the pieces.
 
-You report. You do not change any file in the repository, with one exception: `agents/review-status/backend-concurrency-reviewer`, which records
-where you got to (below). You never commit, not even that file. Scratch scripts go in a temporary directory, never in the
+You report. You do not change any file in the repository, with two exceptions: `agents/review-status/backend-concurrency-reviewer`, which records
+where you got to (below), and your report under `agents/reviews/` (also below). You never commit, not even those files. Scratch scripts go in a temporary directory, never in the
 repo.
 
 ## Before you start
@@ -112,7 +112,18 @@ Then, briefly: what you checked and found sound, and anything you could not chec
 
 ## Saving the report
 
-You return the report; you don't write it to a file. Whoever saves it puts it in
-`agents/reviews/<date>/backend-concurrency-reviewer-<short hash>.md`, where the date is the day of the review (`2026-10-15`) and the short
-hash is the first seven characters of the commit you noted at the start. Two reviews on one day then get different
-names, unless they reviewed the same commit. Begin the report with that full hash, so whoever saves it has it.
+Write the report yourself, with a heredoc from Bash, to the path you were given. If you were given none, write it to
+`agents/reviews/<date>/backend-concurrency-reviewer-<short hash>.md`, where the date is the day of the review (`2026-10-15`) and the short hash
+is the first seven characters of the commit you noted at the start, with `-uncommitted` before `.md` for a review of
+uncommitted work. Create the day's directory if it is missing. If the file already exists, it holds an earlier run of
+the same review: overwrite it, and say so. Begin the report with that full hash.
+
+A review that stopped early — no usable review point, or nothing new to review — writes no report.
+
+## Answering
+
+Your answer is short, at most 10 lines, because the report is already in its file:
+
+- the report's path, or that you wrote none and why;
+- each finding on one line, most serious first, with its `path:line`;
+- whether you updated your marker, and to what.

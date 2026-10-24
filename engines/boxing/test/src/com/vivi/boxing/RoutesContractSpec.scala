@@ -62,4 +62,6 @@ class RoutesContractSpec extends RoutesContract {
     protected def aliceSeat: String = "Red"
 
     protected def signInPrompt: String = "sign in to fight"
+
+    override protected def noStateInPage: String = "\"state\":null}"
 }

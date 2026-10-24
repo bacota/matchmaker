@@ -1,0 +1,9 @@
+  .rules p, .rules li { margin: .5rem 0; }
+  .rules .lead { opacity: .8; }
+  /* Its own scroll, so a narrow phone scrolls a table sideways rather than the page. */
+  .rules .table { overflow-x: auto; margin: .75rem 0; }
+  .rules table { border-collapse: collapse; width: 100%; }
+  .rules caption { text-align: left; font-weight: 600; padding-bottom: .25rem; }
+  .rules th, .rules td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .rules thead th { border-bottom-width: 2px; }
+  .rules h2, .rules h3 { font-size: 1.15rem; margin: 1.5rem 0 .5rem; }

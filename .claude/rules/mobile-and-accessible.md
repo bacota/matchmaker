@@ -2,6 +2,8 @@
 paths:
   - "matchmaker/ui/**"
   - "engines/*/src/**/Html.scala"
+  - "engines/*/resources/**/*.js"
+  - "engines/*/resources/**/*.css"
   - "engines/common/src/**/SignIn.scala"
   - "engines/common/src/**/PlayLive.scala"
   - "engines/common/src/**/Finale.scala"

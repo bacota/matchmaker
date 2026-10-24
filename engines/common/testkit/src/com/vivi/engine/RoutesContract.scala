@@ -60,6 +60,11 @@ abstract class RoutesContract extends FunSuite {
     /** What a stranger's play page asks them to do, in this game's words. */
     protected def signInPrompt: String
 
+    /** The text that shows a play page carries no state: the inlined `let state = null`, or for a page whose script
+      * reads its values from a `page-data` block, that block's `"state":null`.
+      */
+    protected def noStateInPage: String = "let state = null"
+
     private val login = LoginConfig(
       hostedLoginUrl = "https://login.test",
       clientId = "client-1",
@@ -153,7 +158,7 @@ abstract class RoutesContract extends FunSuite {
 
         val page = get(routes = routes, path = "/matches/m-9/play")
         assertEquals(page.status, 200)
-        assert(page.body.contains("let state = null"), "a stranger's page must not carry the match")
+        assert(page.body.contains(noStateInPage), "a stranger's page must not carry the match")
         assert(page.body.contains(signInPrompt))
         assert(page.body.contains("client-1"), "the page needs the app client to start a sign-in")
     }

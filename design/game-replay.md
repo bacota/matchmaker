@@ -34,5 +34,5 @@ These decisions apply to any engine that gets a replay.
 - The matchmaker UI link for a finished match reads "Review game".
 
 ## Names on the page
-- Renaming a piece only changes the page's display map (`NAME` in Stratego's `Html.scala`). The engine's names stay, because the API and stored JSON use them.
+- Renaming a piece only changes the page's display map (`NAME` in Stratego's `play.js`). The engine's names stay, because the API and stored JSON use them.
 

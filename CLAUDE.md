@@ -4,7 +4,13 @@ Conventions that are not visible from the code alone.
 
 ## Build and test
 
-Always pass both flags: `mill -j 4 --ticker false <target>`. The ticker's progress redraws make
+Run tests with `./test.sh`: `./test.sh matchmaker.test engines.boxing.test`, or
+`./test.sh matchmaker.test.testOnly com.vivi.matchmaker.service.TournamentServiceSpec`. It points `FLYWAY_URL` at
+local Postgres, runs without the daemon, joins the targets with `+`, and prints a count per module, each failure, any
+stray trace, and compile errors. It fails a run that ran no tests or left a stray trace. The full log is in
+`out/test-logs/`, its path printed last; read it only when the summary is not enough.
+
+For anything else, always pass both flags: `mill -j 4 --ticker false <target>`. The ticker's progress redraws make
 the output unreadable when it is being piped or read back.
 
 Several targets are joined with `+`: `mill -j 4 --ticker false matchmaker.test + engines.boxing.test`.
@@ -17,13 +23,14 @@ to connect means the local server is not up, not that the code is wrong.
 
 `flyway-dev.sh` runs mill with `FLYWAY_URL` pointing at the deployed RDS database, and a mill daemon keeps that
 environment. `matchmaker.test`'s `migrated` task runs `Migrate` with the daemon's environment, so a plain test run
-afterwards can try to migrate RDS instead of local Postgres. Run the DB tests as
-`FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker mill --no-daemon -j 4 --ticker false …`, and if in doubt
-check the log for `rds.amazonaws`.
+afterwards can try to migrate RDS instead of local Postgres. `./test.sh` avoids this; a plain mill run of the DB
+tests is written `FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker mill --no-daemon -j 4 --ticker false …`, and
+if in doubt check the log for `rds.amazonaws`.
 
 A test that fails something on purpose mixes in `QuietTests` and is written `test("...".tag(Quiet))`. There are two
 copies of the trait: `com.vivi.engine.QuietTests` in `engines/common/testkit`, and `com.vivi.matchmaker.QuietTests`
-for matchmaker. Before calling a run green, grep its output for lines starting `at ` and for `ERROR handling`.
+for matchmaker. Before calling a run green, its output must have no lines starting `at ` and no `ERROR handling`
+outside a failure. `./test.sh` checks this and lists any it finds; after a plain mill run, grep for them.
 
 To reproduce a UI or engine bug in a browser — the local stack, the mill lock, Playwright — see
 `.claude/local-browser-testing.md`.

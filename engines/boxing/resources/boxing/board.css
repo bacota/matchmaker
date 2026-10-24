@@ -1,0 +1,48 @@
+  /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
+     in dark mode, under the 4.5:1 normal text needs. */
+  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --red: #b3261e; --blue: #1f5fae; --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --red: #ff8a80; --blue: #8ab4f8; --error: #ff8a80; } }
+  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+         font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
+  main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 .25rem; text-align: center; }
+  h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
+  #status { font-size: 1.5rem; font-weight: 700; margin: 0; min-height: 2rem; text-align: center; }
+  #round { margin: 0 0 1.25rem; text-align: center; opacity: .8; min-height: 1.5rem; }
+  section { margin: 0 0 1.5rem; }
+  section[hidden] { display: none; }
+  form .field { display: grid; grid-template-columns: 1fr 6.5rem; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+  form .field label { font-weight: 600; }
+  form .field .hint { grid-column: 1 / -1; font-size: .875rem; opacity: .75; margin-top: -.375rem; }
+  /* 16px on the fields, or iOS zooms the page the moment one takes focus; 44px on everything that
+     can be tapped. */
+  input[type="number"] { font: inherit; font-size: 16px; min-height: 44px; width: 100%; box-sizing: border-box;
+                         padding: .5rem .625rem; border-radius: 6px; border: 1px solid var(--line);
+                         background: var(--paper); color: var(--ink); }
+  button.primary { font: inherit; font-weight: 600; width: 100%; min-height: 44px; margin-top: .5rem; border-radius: 6px;
+                   border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 80%, var(--ink));
+                   color: var(--ink); cursor: pointer; }
+  button.primary:disabled, button.primary[aria-disabled="true"] { opacity: .45; cursor: default; }
+  .left { margin: .5rem 0 0; font-weight: 600; }
+  .left.off { color: var(--error); }
+  .preview { font-size: .875rem; opacity: .85; margin: .25rem 0 0; }
+  :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
+  #corners { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .corner { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; border-top-width: 4px; }
+  .corner.Red { border-top-color: var(--red); }
+  .corner.Blue { border-top-color: var(--blue); }
+  .corner h3 { font-size: 1rem; margin: 0 0 .25rem; }
+  .corner dl { display: grid; grid-template-columns: auto auto; gap: 0 .5rem; margin: .25rem 0; font-size: .875rem; }
+  .corner dt { opacity: .75; }
+  .corner dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .corner .who { font-size: .75rem; opacity: .7; overflow-wrap: anywhere; }
+  .corner .fighter-name { font-size: 1.1rem; font-weight: 600; margin: .25rem 0; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; }
+  caption { text-align: left; font-weight: 600; font-size: 1.125rem; margin-bottom: .5rem; }
+  th, td { padding: .375rem .25rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  td.num, th.num { text-align: right; }
+  td .plans { display: block; opacity: .7; font-size: .75rem; }
+  td .tactics { opacity: 1; font-weight: 600; }
+  td .pair { white-space: nowrap; }
+  tfoot td, tfoot th { font-weight: 700; border-bottom: 0; }
+  #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
