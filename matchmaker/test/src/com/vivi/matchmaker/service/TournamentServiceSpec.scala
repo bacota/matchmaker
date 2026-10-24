@@ -12,6 +12,7 @@ import com.vivi.matchmaker.model.tournament.standard.{RoundRobin, StandardModels
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     EloRatingRepo,
+    GameAdminRepo,
     GameRepo,
     Generators,
     TestSession,
@@ -118,8 +119,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(empty.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("pool")), empty)
     }
 
-    test("no pool may be smaller than the game's required roles; a challenge's may be larger than all its roles") {
-        val (tooSmall, tooSmallChallenge, larger) = run(for {
+    test("no pool may be smaller than the game's required roles; a round robin's may be larger than all its roles") {
+        val (tooSmall, larger) = run(for {
             // A generated game has two roles, both required.
             f <- fixture(0)
             tooSmall <- tournaments
@@ -129,24 +130,47 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   callerExternalId = f.owner.externalId
                 )
                 .attempt
-            tooSmallChallenge <- tournaments
-                .createChallenge(
+            // More than the game has roles: a round robin rather than one match.
+            larger <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(3)),
+              callerExternalId = f.owner.externalId
+            )
+        } yield (tooSmall, larger))
+        assert(tooSmall.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("required roles")))
+        assertEquals(larger.defaultPoolSize, 3)
+    }
+
+    test("only an admin of the game may make a competition rated, whether creating one or editing a friendly one") {
+        val (asPlayer, editedAsPlayer, asAdmin) = run(for {
+            f <- fixture(1)
+            rated = request(f = f).copy(settings = request(f = f).settings.copy(isFriendly = false))
+            asPlayer <- tournaments
+                .create(gameId = f.game.gameId, request = rated, callerExternalId = f.owner.externalId)
+                .attempt
+            friendly <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = f.owner.externalId
+            )
+            editedAsPlayer <- tournaments
+                .update(
                   gameId = f.game.gameId,
-                  request = ChallengeRequest(poolSize = Some(1)),
+                  tournamentId = friendly.tournamentId,
+                  request = rated,
                   callerExternalId = f.owner.externalId
                 )
                 .attempt
-            // More than the game has roles: a round robin rather than one match, and it takes as many entries.
-            larger <- tournaments.createChallenge(
-              gameId = f.game.gameId,
-              request = ChallengeRequest(poolSize = Some(3)),
-              callerExternalId = f.owner.externalId
+            admin = f.players.head
+            _ <- TestSession.resource.use(session =>
+                new GameAdminRepo(session)
+                    .grant(player = admin.playerId, game = f.game.gameId, grantedBy = admin.playerId)
             )
-        } yield (tooSmall, tooSmallChallenge, larger))
-        assert(tooSmall.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("required roles")))
-        assert(tooSmallChallenge.left.exists(_.isInstanceOf[ValidationError]), tooSmallChallenge)
-        assertEquals(larger.defaultPoolSize, 3)
-        assertEquals(larger.settings.maxEntrants, Some(3))
+            asAdmin <- tournaments.create(gameId = f.game.gameId, request = rated, callerExternalId = admin.externalId)
+        } yield (asPlayer, editedAsPlayer, asAdmin))
+        assert(asPlayer.left.exists(_.isInstanceOf[UnauthorizedError]), asPlayer)
+        assert(editedAsPlayer.left.exists(_.isInstanceOf[UnauthorizedError]), editedAsPlayer)
+        assert(!asAdmin.settings.isFriendly, asAdmin)
     }
 
     test("only the owner may edit, open, start or stop a tournament") {
@@ -393,39 +417,6 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
         assert(declined.isRight && revoked.isRight)
         assertEquals(afterDecline.size, 1)
-    }
-
-    test("a closed challenge of a character game invites characters, and its invitee sees it as theirs to answer") {
-        val (asPlayer, mine, theirs) = run(for {
-            f <- fixture(2, GameType.Character)
-            own <- characterOf(f, f.owner)
-            invited <- characterOf(f, f.players.head)
-            asPlayer <- tournaments
-                .createChallenge(
-                  gameId = f.game.gameId,
-                  request = ChallengeRequest(
-                    characterId = Some(own.characterId),
-                    isOpen = false,
-                    invitations = List(f.players.head.playerId)
-                  ),
-                  callerExternalId = f.owner.externalId
-                )
-                .attempt
-            made <- tournaments.createChallenge(
-              gameId = f.game.gameId,
-              request = ChallengeRequest(
-                characterId = Some(own.characterId),
-                isOpen = false,
-                characterInvitations = List(invited.characterId)
-              ),
-              callerExternalId = f.owner.externalId
-            )
-            mine <- tournaments.challengesFor(f.players.head.externalId)
-            theirs <- tournaments.challengesFor(f.players(1).externalId)
-        } yield (asPlayer, mine.find(_.summary.tournament.tournamentId == made.tournamentId), theirs))
-        assert(asPlayer.left.exists(_.isInstanceOf[ValidationError]), asPlayer)
-        assert(mine.exists(c => c.summary.isInvited && c.invitedCharacters.nonEmpty), mine)
-        assert(theirs.isEmpty, theirs)
     }
 
     test("a rating outside the tournament's limits is refused") {
@@ -835,61 +826,41 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(theirs.exists(s => s.isInvited && !s.isOwner))
     }
 
-    test("a challenge that is over leaves every tournament and challenge list; a tournament that is over stays") {
+    test(
+      "a challenge that is over leaves a player's lists, and a tournament that is over stays; a game lists neither"
+    ) {
         // A challenge's status as a finished or cancelled one's: the lists read nothing else of how it ended.
         def ended(t: Tournament, status: TournamentStatus): IO[Unit] =
             TestSession.resource.use { session =>
                 val repo = new TournamentRepo(session)
                 repo.read(t.gameId, t.tournamentId).flatMap(found => repo.update(found.get.copy(status = status)))
             }
-        case class Listed(
-            mine: Set[TournamentId],
-            standings: Set[TournamentId],
-            game: Set[TournamentId],
-            challenges: Set[TournamentId],
-            gameChallenges: Set[TournamentId]
-        )
+        case class Listed(mine: Set[TournamentId], standings: Set[TournamentId], game: Set[TournamentId])
         def listed(f: Fixture, p: Player): IO[Listed] =
             (
               tournaments.mine(p.externalId).map(_.map(_.tournament.tournamentId)),
               tournaments.standings(p.externalId).map(_.map(_.tournamentId)),
-              tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId)),
-              tournaments.challengesFor(p.externalId).map(_.map(_.summary.tournament.tournamentId)),
-              tournaments.challengesForGame(f.game.gameId, p.externalId).map(_.map(_.summary.tournament.tournamentId))
-            ).mapN((a, b, c, d, e) =>
-                Listed(
-                  mine = a.toSet,
-                  standings = b.toSet,
-                  game = c.toSet,
-                  challenges = d.toSet,
-                  gameChallenges = e.toSet
-                )
-            )
+              tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId))
+            ).mapN((a, b, c) => Listed(mine = a.toSet, standings = b.toSet, game = c.toSet))
         val (ids, open, over) = run(for {
             f <- fixture(2)
             entrant = f.players.head
             // Each reaches the player by a different road: entered, invited to, and the player's own.
-            entered <- tournaments.createChallenge(
-              gameId = f.game.gameId,
-              request = ChallengeRequest(poolSize = Some(3)),
-              callerExternalId = f.owner.externalId
-            )
+            entered <- Challenges.create(tournaments = tournaments, game = f.game, owner = f.owner, poolSize = Some(3))
             _ <- tournaments.enter(
               gameId = f.game.gameId,
               tournamentId = entered.tournamentId,
               characterId = None,
               callerExternalId = entrant.externalId
             )
-            invited <- tournaments.createChallenge(
-              gameId = f.game.gameId,
-              request = ChallengeRequest(isOpen = false, invitations = List(entrant.playerId)),
-              callerExternalId = f.owner.externalId
+            invited <- Challenges.create(
+              tournaments = tournaments,
+              game = f.game,
+              owner = f.owner,
+              invitations = List(entrant.playerId)
             )
-            owned <- tournaments.createChallenge(
-              gameId = f.game.gameId,
-              request = ChallengeRequest(),
-              callerExternalId = entrant.externalId
-            )
+            owned <- Challenges.create(tournaments = tournaments, game = f.game, owner = entrant)
+            // A draft, which only its owner sees listed in the game.
             tournament <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
@@ -907,18 +878,34 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(open.mine, challenges + tournament)
         assertEquals(open.standings, Set(entered, owned))
         assertEquals(open.game, challenges + tournament)
-        assertEquals(open.challenges, challenges)
-        assertEquals(open.gameChallenges, challenges)
-        assertEquals(
-          over,
-          Listed(
-            mine = Set(tournament),
-            standings = Set.empty,
-            game = Set(tournament),
-            challenges = Set.empty,
-            gameChallenges = Set.empty
-          )
-        )
+        assertEquals(over, Listed(mine = Set(tournament), standings = Set.empty, game = Set.empty))
+    }
+
+    test("a game lists its caller's own competitions not yet started first, then the open ones they could enter") {
+        val (listed, ids) = run(for {
+            f <- fixture(2)
+            viewer = f.players.head
+            _ <- Challenges.create(
+              tournaments = tournaments,
+              game = f.game,
+              owner = f.owner,
+              invitations = List(f.players(1).playerId)
+            )
+            anyone <- Challenges.create(tournaments = tournaments, game = f.game, owner = f.owner)
+            _ <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = f.owner.externalId
+            )
+            ownDraft <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = viewer.externalId
+            )
+            listed <- tournaments.listForGame(f.game.gameId, viewer.externalId)
+        } yield (listed.map(_.tournament.tournamentId), List(ownDraft, anyone).map(_.tournamentId)))
+        // Neither the invitational one the viewer is not invited to, nor somebody else's draft.
+        assertEquals(listed, ids)
     }
 
     test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {

@@ -353,7 +353,6 @@ object Views {
                 case Store.Page.OnePlayer(player)   => Players.playerPage(player)
                 case Store.Page.OneCharacter(c)     => Players.characterPage(c)
                 case Store.Page.OneTournament(g, t) => Tournaments.page(g, t)
-                case Store.Page.NewTournament(g)    => Tournaments.newPage(g)
             },
             inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
@@ -436,7 +435,6 @@ object Views {
         Store.show(Store.Page.OneGame(gameId))
         refresh(MatchSections.refreshingDue, () => Store.reloadDue())
         refresh(MatchSections.refreshingActive, () => Store.reloadActive())
-        refresh(MatchSections.refreshingChallenges, () => Store.reloadMyChallenges())
         refresh(MatchSections.refreshingCompleted, () => Store.reloadCompleted())
     }
 
@@ -460,11 +458,8 @@ object Views {
       */
     private def mainPage: HtmlElement =
         div(
-          MatchSections.invitationsSection,
-          MatchSections.readyToStartSection(),
           MatchSections.dueSection(),
           MatchSections.myMatchesSection(),
-          MatchSections.waitingSection(),
           Tournaments.mainSections,
           MatchSections.recentlyCompletedSection
         )

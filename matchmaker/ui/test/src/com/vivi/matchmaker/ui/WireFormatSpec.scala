@@ -157,66 +157,6 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.due, summary.due)
         assertEquals(decoded.completedAt, summary.completedAt)
     }
-
-    // The browser's half of the invitations contract. `isOpen` and `invitations` both have defaults, and
-    // The body the challenge form sends, and what the game screen and the home screen decode: written by the
-    // browser's upickle and read by the server's, so the two have to agree about every Option and default.
-    test("a challenge request round-trips, its absent optionals staying absent") {
-        val request = ChallengeRequest(
-          characterId = Some(CharacterId(1)),
-          poolSize = Some(2),
-          roundDuration = Some(Duration.ofMinutes(30)),
-          gameSettings = """{"rounds":"5"}""",
-          start = Some(Instant.parse("2030-01-01T10:00:00Z")),
-          isOpen = false,
-          invitations = List(PlayerId(4))
-        )
-        assertEquals(read[ChallengeRequest](write(request)), request)
-        val bare = ChallengeRequest()
-        assertEquals(ujson.read(write(bare)).obj.get("start"), None)
-        assertEquals(read[ChallengeRequest](write(bare)), bare)
-    }
-
-    test("a challenge summary round-trips its tournament, entries and invitations") {
-        val summary = ChallengeSummary(
-          summary = TournamentSummary(
-            tournament = Tournament(
-              gameId = GameId(1),
-              tournamentId = TournamentId(2),
-              name = "ada's challenge",
-              description = "",
-              owner = PlayerId(3),
-              tournamentModelId = TournamentModelId("challenge"),
-              defaultPoolSize = 2,
-              settings = TournamentSettings(
-                roundDuration = Some(Duration.ofHours(1)),
-                maxEntrants = Some(2),
-                hasRoleChoice = true
-              ),
-              status = TournamentStatus.Open
-            ),
-            gameName = "Chess",
-            ownerNickname = "ada",
-            entrants = 1,
-            isOwner = true,
-            isEntered = true,
-            isInvited = false
-          ),
-          entries = List(
-            Entrant(
-              gameId = GameId(1),
-              tournamentId = TournamentId(2),
-              entrantId = EntrantId(4),
-              playerId = Some(PlayerId(3)),
-              characterId = None,
-              ratingAtEntry = 1500,
-              enteredAt = Instant.ofEpochSecond(100)
-            )
-          ),
-          invited = List(PlayerName(PlayerId(5), "grace"))
-        )
-        assertEquals(read[Seq[ChallengeSummary]](write(Seq(summary))), Seq(summary))
-    }
 }
 
 class FormatSpec extends FunSuite {

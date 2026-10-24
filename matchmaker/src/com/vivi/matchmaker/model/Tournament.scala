@@ -30,6 +30,7 @@ object TournamentStatus {
 
 /** A tournament's settings (`tournament-design.md`, "Other Tournament Properties"), with its defaults.
   *
+  * `isFriendly` false makes its matches rated, which only an admin of its game may ask for: friendly unless said.
   * `roundDuration` is how long a round lasts, which its owner may change for a round started by hand, and which is also
   * every match's time limit (`Clock.forMatch`); `maxTurns` is for a game whose players move at once and that has no
   * maximum of its own. `hasConcurrentRounds` lets every round-robin pool play all of its matches in one round.
@@ -44,7 +45,7 @@ object TournamentStatus {
   */
 case class TournamentSettings(
     hasAutomaticRounds: Boolean = false,
-    isFriendly: Boolean = false,
+    isFriendly: Boolean = true,
     isInvitational: Boolean = true,
     hasLateEntries: Boolean = false,
     minRating: Option[Int] = None,
@@ -287,37 +288,3 @@ case class TournamentChoice(
 
 /** A rank the owner gives one seat of a match they decide by hand. */
 case class EntrantRank(entrantId: EntrantId, rank: Int)
-
-/** What a challenge is offered with: a tournament of the challenge model, made, opened and entered in one go.
-  *
-  * `characterId` is the challenger's character in a character game, and `isPlaying` false a game's admin offering a
-  * match they will not play in, who enters nothing. `poolSize` is how many it seats, between the game's required roles
-  * and all its roles, the game's R if not given, and also the most entries it takes. `roundDuration` is the match's
-  * time limit (`Clock.forMatch`). `isOpen` false makes it invitational: only those invited may enter -- `invitations`,
-  * players, in a plain game, and `characterInvitations`, characters, in a character game.
-  */
-case class ChallengeRequest(
-    characterId: Option[CharacterId] = None,
-    isPlaying: Boolean = true,
-    poolSize: Option[Int] = None,
-    roundDuration: Option[Duration] = None,
-    gameSettings: String = "{}",
-    isLive: Boolean = false,
-    isFriendly: Boolean = true,
-    isPublic: Boolean = false,
-    start: Option[Instant] = None,
-    isAutoStarted: Boolean = false,
-    isOpen: Boolean = true,
-    invitations: List[PlayerId] = Nil,
-    characterInvitations: List[CharacterId] = Nil
-)
-
-/** A challenge as its screens list it: the tournament as a list shows it, who has entered, and who is invited --
-  * players in a plain game, characters in a character game.
-  */
-case class ChallengeSummary(
-    summary: TournamentSummary,
-    entries: List[Entrant],
-    invited: List[PlayerName],
-    invitedCharacters: List[InvitedCharacter] = Nil
-)

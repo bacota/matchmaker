@@ -21,10 +21,6 @@ import com.vivi.matchmaker.util.ChallengeSettings
 /** Tournaments, from their creation to their start (`tournament-design.md`, new-design.md Phase 4): designing one,
   * inviting and entering players, and starting it. Playing its rounds is [[TournamentRounds]]'.
   *
-  * A challenge is a tournament too, of the challenge model ([[Challenge]]): one match of everyone who enters. Its
-  * screens make one with [[createChallenge]], which opens and enters it in one go, and list them with
-  * [[challengesForGame]] and [[challengesFor]]; everything after that is the same calls as any tournament's.
-  *
   * What happens to entries and invitations is mailed, after the commit, by [[Notifications]].
   *
   * Every call that changes a tournament is one transaction, and reads the tournament `FOR UPDATE` first: who owns it,
@@ -42,11 +38,20 @@ class TournamentService[T](
 
     // ---- reading ---------------------------------------------------------------------------
 
-    /** A game's tournaments, as the caller sees them in a list, bar the challenges that are over. */
+    /** A game's open competitions as the caller may see them: their own not yet started, then those taking entries that
+      * they could enter -- any that anybody may enter, and an invitational one they are invited to or have entered.
+      * Newest first within each.
+      */
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
-                new TournamentRepo(session).summariesForGame(gameId, p.playerId)
+                new TournamentRepo(session).notStartedForGame(gameId, p.playerId).map { all =>
+                    val (mine, others) = all.partition(_.isOwner)
+                    mine ++ others.filter(s =>
+                        s.tournament.status == TournamentStatus.Open &&
+                            (!s.tournament.settings.isInvitational || s.isInvited || s.isEntered)
+                    )
+                }
             )
         }
 
@@ -128,171 +133,10 @@ class TournamentService[T](
             )
         }
 
-    // ---- challenges ------------------------------------------------------------------------
-
-    /** A game's open challenges as the caller may see them: every one that anybody may enter, and an invitational one
-      * only if the caller owns it, has entered it or is invited to it. Newest first.
-      */
-    def challengesForGame(gameId: GameId, callerExternalId: String): IO[List[ChallengeSummary]] =
-        sessionPool.use { session =>
-            for {
-                caller <- requireCaller(session, callerExternalId)
-                open <- new TournamentRepo(session).openChallengesForGame(gameId, caller.playerId)
-                visible = open.filter(s =>
-                    !s.tournament.settings.isInvitational || s.isOwner || s.isEntered || s.isInvited
-                )
-                summaries <- withEntries(session, visible)
-            } yield summaries
-        }
-
-    /** The open challenges the caller owns, has entered or is invited to, in every game, newest first: what the home
-      * page lists as invitations, challenges waiting on the caller to start them, and challenges they are waiting on.
-      */
-    def challengesFor(callerExternalId: String): IO[List[ChallengeSummary]] =
-        sessionPool.use { session =>
-            for {
-                caller <- requireCaller(session, callerExternalId)
-                mine <- new TournamentRepo(session).openChallengesForPlayer(caller.playerId)
-                summaries <- withEntries(session, mine)
-            } yield summaries
-        }
-
-    /* Each challenge with who has entered it and who is invited: three queries for the whole list, not three a
-     * challenge. */
-    private def withEntries(
-        session: skunk.Session[IO],
-        summaries: List[TournamentSummary]
-    ): IO[List[ChallengeSummary]] = {
-        val keys = summaries.map(s => TournamentKey(s.tournament.gameId, s.tournament.tournamentId))
-        (
-          new EntrantRepo(session).listFor(keys),
-          new InvitationRepo(session).listFor(keys),
-          new CharacterInvitationRepo(session).listFor(keys)
-        ).mapN { (entries, invited, characters) =>
-            summaries.zip(keys).map { (s, key) =>
-                ChallengeSummary(
-                  summary = s,
-                  entries = entries.getOrElse(key, Nil).filterNot(_.isWithdrawn),
-                  invited = invited.getOrElse(key, Nil).map((id, name) => PlayerName(id, name)),
-                  invitedCharacters = characters.getOrElse(key, Nil)
-                )
-            }
-        }
-    }
-
-    /** A new challenge: a tournament of the challenge model, opened at once, with the caller's entry in it — unless a
-      * game's admin is offering a match they will not play in — and its invitations, all in one transaction, because
-      * they are one act. A challenge that is not open must invite somebody, or nobody could ever enter it: players in a
-      * plain game, characters in a character game, whoever owns them when they answer.
-      *
-      * Its pool size is how many it seats and the most entries it takes; it starts itself when they are reached if
-      * `isAutoStarted`, and is otherwise started by its owner like any tournament. Its rounds are automatic, so
-      * starting it begins its one round, and its players then choose their roles.
-      *
-      * Offering a match one will not play in, or one that is rated, is a game's admin's to do; and one whose owner does
-      * not play has to start by itself, since nobody would be watching for it to fill.
-      */
-    def createChallenge(gameId: GameId, request: ChallengeRequest, callerExternalId: String): IO[Tournament] =
-        sessionPool.use { session =>
-            session.transaction
-                .use { _ =>
-                    for {
-                        caller <- requireCaller(session, callerExternalId)
-                        game <- requireGame(session, gameId)
-                        model <- requireModel(session = session, gameId = gameId, id = RoundRobin.modelId)
-                        _ <- IO.raiseWhen(!request.isPlaying && !request.isAutoStarted)(
-                          ValidationError(
-                            "a challenge whose challenger will not play in it has to start when it is full"
-                          )
-                        )
-                        _ <- IO.whenA(!request.isPlaying || !request.isFriendly)(
-                          requireGameAdmin(session = session, player = caller, game = game)
-                        )
-                        invited = request.invitations.distinct
-                        invitedCharacters = request.characterInvitations.distinct
-                        _ <- requireInvitationKind(
-                          game = game,
-                          players = invited.size,
-                          characters = invitedCharacters.size
-                        )
-                        _ <- IO.raiseWhen(!request.isOpen && invited.isEmpty && invitedCharacters.isEmpty)(
-                          ValidationError(
-                            s"a challenge that is not open must invite at least one ${inviteeNoun(game)}"
-                          )
-                        )
-                        _ <- IO.raiseWhen(request.isPlaying && invited.contains(caller.playerId))(
-                          ValidationError("a challenger cannot be invited to their own challenge")
-                        )
-                        invitees <- invited.traverse(id =>
-                            new PlayerRepo(session).readForShare(id).flatMap {
-                                case Some(p) => IO.pure(p)
-                                case None    => IO.raiseError(NotFoundError(s"no player $id"))
-                            }
-                        )
-                        owners <- invitedCharacters.traverse(id =>
-                            invitableOwner(session = session, game = game, characterId = id)
-                        )
-                        _ <- IO.raiseWhen(request.isPlaying && owners.exists(_.playerId == caller.playerId))(
-                          ValidationError("a challenger cannot invite their own characters to their own challenge")
-                        )
-                        poolSize = request.poolSize.getOrElse(game.poolSeats)
-                        made <- createIn(
-                          session = session,
-                          caller = caller,
-                          game = game,
-                          model = model,
-                          request = TournamentRequest(
-                            name = s"${caller.nickname}'s challenge",
-                            tournamentModelId = model.tournamentModelId,
-                            defaultPoolSize = Some(poolSize),
-                            settings = TournamentSettings(
-                              hasAutomaticRounds = true,
-                              isFriendly = request.isFriendly,
-                              isInvitational = !request.isOpen,
-                              roundDuration = request.roundDuration,
-                              isPublic = request.isPublic,
-                              gameSettings = request.gameSettings,
-                              isLive = request.isLive,
-                              start = request.start,
-                              isAutoStarted = request.isAutoStarted,
-                              // One match of everyone, so as many entries as its pool seats: what lets it start by
-                              // itself once full. The owner may change it afterwards, as any tournament's.
-                              maxEntrants = Some(poolSize)
-                            )
-                          ),
-                          status = TournamentStatus.Open
-                        )
-                        _ <- invitees.traverse_(p =>
-                            new InvitationRepo(session)
-                                .invite(game = gameId, tournament = made.tournamentId, player = p.playerId)
-                        )
-                        _ <- invitedCharacters.traverse_(c =>
-                            new CharacterInvitationRepo(session)
-                                .invite(game = gameId, tournament = made.tournamentId, character = c)
-                        )
-                        entered <-
-                            if (request.isPlaying)
-                                enterIn(
-                                  session = session,
-                                  t = made,
-                                  game = game,
-                                  caller = caller,
-                                  characterId = request.characterId
-                                ).map(_._2)
-                            else IO.pure(None)
-                    } yield (entered.getOrElse(made), invitees ++ owners)
-                }
-                .flatMap { (made, invitees) =>
-                    invitees.traverse_(notifications.invitationMade(session, made, _)) *>
-                        IO.whenA(made.status == TournamentStatus.Running)(started(made.gameId, made.tournamentId))
-                            .as(made)
-                }
-        }
-
     // ---- designing -------------------------------------------------------------------------
 
     /** A new tournament, in draft, owned by the caller: made from one of the game's models, whose stages are copied
-      * into it, with its root pool.
+      * into it, with its root pool. Only an admin of the game may make a rated one.
       */
     def create(gameId: GameId, request: TournamentRequest, callerExternalId: String): IO[Tournament] =
         sessionPool.use { session =>
@@ -300,6 +144,9 @@ class TournamentService[T](
                 for {
                     caller <- requireCaller(session, callerExternalId)
                     game <- requireGame(session, gameId)
+                    _ <- IO.whenA(!request.settings.isFriendly)(
+                      requireGameAdmin(session = session, player = caller, game = game)
+                    )
                     model <- requireModel(session = session, gameId = gameId, id = request.tournamentModelId)
                     made <- createIn(
                       session = session,
@@ -344,8 +191,9 @@ class TournamentService[T](
         } yield made
     }
 
-    /** The owner's edit of a tournament. Before it starts, anything; once it is running, its name and description, its
-      * owner, and the settings that apply to rounds still to come. Never once it is over.
+    /** The owner's edit of a tournament. Before it starts, anything -- but only an admin of the game may make a
+      * friendly one rated; once it is running, its name and description, its owner, and the settings that apply to
+      * rounds still to come. Never once it is over.
       */
     def update(
         gameId: GameId,
@@ -389,6 +237,9 @@ class TournamentService[T](
                                 )
                                 poolSize = defaultPoolSize(game = game, model = model, request = request)
                                 settings = TournamentService.settingsFor(model, request.settings)
+                                _ <- IO.whenA(t.settings.isFriendly && !settings.isFriendly)(
+                                  requireGameAdmin(session = session, player = caller, game = game)
+                                )
                                 _ <- checkSettings(
                                   game = game,
                                   model = model,
@@ -1032,8 +883,6 @@ class TournamentService[T](
                 )
         }
 
-    private def inviteeNoun(game: Game): String = if (game.gameType == GameType.Character) "character" else "player"
-
     /* The owner a character to be invited has now: a character of this game, held FOR SHARE so that it cannot go
      * before the invitation naming it is written, and owned by somebody, since nobody could answer for it otherwise. */
     private def invitableOwner(session: skunk.Session[IO], game: Game, characterId: CharacterId): IO[Player] =
@@ -1063,9 +912,7 @@ class TournamentService[T](
                 if (player.isAdmin) IO.pure(true)
                 else new GameAdminRepo(session).isAdminForShare(player.playerId, game.gameId)
             _ <- IO.raiseUnless(allowed)(
-              UnauthorizedError(
-                s"only an admin of ${game.displayName} may offer a match they will not play in, or a rated one"
-              )
+              UnauthorizedError(s"only an admin of ${game.displayName} may make a rated competition")
             )
         } yield ()
 

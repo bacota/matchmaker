@@ -134,16 +134,23 @@ try:
     psql(f"UPDATE player SET is_admin = true WHERE player_id = {alice_id}")
     status, synced = call("POST", MM + "/tournament-models/sync", {}, as_player(alice))
     assert status == 200, (status, synced)
-    status, offered = call("PUT", f"{MM}/games/{game_id}/tournament-models/challenge", {}, as_player(alice))
+    status, offered = call("PUT", f"{MM}/games/{game_id}/tournament-models/RR", {}, as_player(alice))
     assert status == 200, (status, offered)
 
     def new_match():
-        # A challenge for the two of them: alice offers it, closed to all but bob, and it starts as bob enters.
-        status, made = call("POST", f"{MM}/games/{game_id}/challenges",
-                            {"poolSize": 2, "isAutoStarted": True, "isOpen": False, "invitations": [bob_id]},
+        # A one-match competition for the two of them: alice makes it, closed to all but bob, opens and enters it,
+        # and it starts as bob enters.
+        status, made = call("POST", f"{MM}/games/{game_id}/tournaments",
+                            {"name": "A challenge", "tournamentModelId": "RR", "defaultPoolSize": 2,
+                             "settings": {"hasAutomaticRounds": True, "isInvitational": True, "isAutoStarted": True,
+                                          "maxEntrants": 2}},
                             as_player(alice))
         assert status in (200, 201), (status, made)
         tournament = made["tournamentId"]
+        for path, body in (("invitations", {"playerId": bob_id}), ("open", {}), ("entries", {})):
+            status, answer = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/{path}", body,
+                                  as_player(alice))
+            assert status in (200, 201, 204), (path, status, answer)
         status, entered = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/entries", {}, as_player(bob))
         assert status in (200, 201), (status, entered)
         # Starting is done after the entry has answered, so its round is waited for.

@@ -137,11 +137,6 @@ object Router {
                     }
                 }
 
-            // The open challenges the caller owns, has entered or is invited to, in every game: what the home
-            // page lists as invitations, challenges to start, and challenges waiting on somebody else.
-            case ("GET", "me" :: "challenges" :: Nil) =>
-                ok(services.tournaments.challengesFor(caller))
-
             case ("GET", "me" :: "matches" :: Nil) =>
                 ok(services.matches.active(caller))
 
@@ -265,22 +260,6 @@ object Router {
                               services.ratings
                                   .set(gameId = gid, playerId = pid, rating = r.rating, callerExternalId = caller)
                             )
-                        )
-                    )
-                )
-
-            case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
-                withGameId(gameId)(id => ok(services.tournaments.challengesForGame(id, caller)))
-
-            /* Making a challenge: a tournament of the challenge model, opened and entered, and its invitations
-             * sent, in one call -- a challenge that is not open with nobody invited yet is one nobody could enter.
-             * Everything after this is the tournament routes': entering, withdrawing, starting, stopping
-             * (which is cancelling one not yet started), inviting and choosing a role. */
-            case ("POST", "games" :: gameId :: "challenges" :: Nil) =>
-                withGameId(gameId)(id =>
-                    body[ChallengeRequest](request).flatMap(r =>
-                        created(
-                          services.tournaments.createChallenge(gameId = id, request = r, callerExternalId = caller)
                         )
                     )
                 )

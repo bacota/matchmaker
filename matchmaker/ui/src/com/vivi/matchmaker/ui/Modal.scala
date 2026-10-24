@@ -46,4 +46,29 @@ object Modal {
           }
         )
     }
+
+    /** `content` as a modal dialog: a scrim over the page, closed by Escape, by a click on the backdrop, or by its own
+      * Close button, all of which call `close` -- which puts focus back where the dialog was opened from. Focus moves
+      * into the dialog as it opens. `labelledBy` is the id of its heading.
+      */
+    def dialog(content: HtmlElement, labelledBy: String, close: () => Unit): HtmlElement =
+        div(
+          cls := "modal-scrim",
+          inertBehind,
+          onClick --> (event => if (event.target == event.currentTarget) close()),
+          content.amend(
+            cls := "modal",
+            role := "dialog",
+            htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
+            aria.labelledBy := labelledBy,
+            tabIndex := -1,
+            inContext(node => onMountCallback(_ => node.ref.focus())),
+            onKeyDown.filter(_.key == "Escape") --> { event =>
+                event.stopPropagation()
+                close()
+            },
+            Views.errorBanner,
+            div(cls := "alternatives", button(tpe := "button", cls := "link", "Close", onClick --> (_ => close())))
+          )
+        )
 }

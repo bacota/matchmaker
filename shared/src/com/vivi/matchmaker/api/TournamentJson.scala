@@ -32,8 +32,6 @@ object TournamentJson {
     given ReadWriter[TournamentStanding] = macroRW
 
     /** A challenge as it is offered, and as its screens list it. */
-    given ReadWriter[ChallengeRequest] = macroRW
-    given ReadWriter[ChallengeSummary] = macroRW
 
     /** Entering a tournament: with which character, in a character game. */
     case class EnterRequest(characterId: Option[CharacterId] = None)

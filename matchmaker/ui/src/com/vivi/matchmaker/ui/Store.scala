@@ -11,7 +11,7 @@ import com.vivi.matchmaker.api.Json
 /** What the UI knows, and how it reloads it.
   *
   * One `Var` per list the API serves, each reloaded by re-fetching rather than by patching the copy held here. The
-  * lists are short and an action often changes more than the list it was taken from — accepting a challenge can create
+  * lists are short and an action often changes more than the list it was taken from — entering a competition can create
   * a match, which changes three of them at once — so re-fetching is both simpler and less likely to show something that
   * is no longer true.
   */
@@ -100,10 +100,8 @@ object Store {
         unlistedGames.set(Map.empty)
         lookingForGames.set(Set.empty)
         disabledGames.set(None)
-        challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         gameAdminsByGame.set(Map.empty)
-        myChallenges.set(Seq.empty)
         myTournaments.set(Seq.empty)
         tournamentChoices.set(Seq.empty)
         tournamentStandings.set(Seq.empty)
@@ -111,18 +109,11 @@ object Store {
         tournamentModelsByGame.set(Map.empty)
         allTournamentModels.set(Seq.empty)
         tournament.set(None)
-        // And what was last said about one. The stamp above would keep it from being read anyway;
-        // this is so that nothing is held about a player who has gone, which is what the rest of
-        // this method is for.
-        invitationStatus.set(None)
         // Whoever was about to be invited was being invited by the player who has just gone.
         invitee.set(None)
         // Somebody else's page, and the search that found them: both are answers to questions the
         // previous session asked, and the next player starts from an empty box.
         playerSearch.set("")
-        // One player's idea of who is who, learned from their searches: dropped with the rest, so the
-        // next player is shown ids rather than names the session before them looked up.
-        nicknames.set(Map.empty)
         playerResults.set(None)
         publicActive.set(Seq.empty)
         publicMatchesLoading.set(false)
@@ -137,7 +128,7 @@ object Store {
         outcomes.set(Map.empty)
         latestAsk.clear()
         page.set(Page.Home)
-        showChallengeForm.set(false)
+        showTournamentForm.set(false)
         editingGame.set(None)
         // Closed and emptied with the rest: it holds a half-typed address and a password field, and
         // neither belongs to whoever signs in next. `forget` rather than `close`, which deliberately
@@ -158,8 +149,7 @@ object Store {
       * be tellable from the other. See `latestAsk`.
       */
     enum Fetch {
-        case Due, Active, Completed, Results, Games, MyChallenges
-        case Challenges(gameId: GameId)
+        case Due, Active, Completed, Results, Games
         case Characters(gameId: GameId)
         case Game(gameId: GameId)
         // The games an admin has disabled, for the page that lists them.
@@ -226,10 +216,10 @@ object Store {
       *
       * Every fetch that writes into this store names one, which is what makes this worth asking. A request about a
       * single game or a single search is not made safe by being keyed: the key keeps it from overwriting an answer
-      * about something *else*, and says nothing about the previous answer to the same question. A game's challenges are
-      * re-read by a refresh button and by every callback that changes them — creating, inviting, revoking, removing an
-      * acceptance — so two answers about one game overlap readily, and the older landing last puts back the invitation
-      * that was just withdrawn. Hence [[Fetch.Challenges]] and its neighbours carrying their key.
+      * about something *else*, and says nothing about the previous answer to the same question. A game's competitions
+      * are re-read by a refresh button and by every callback that changes them, so two answers about one game overlap
+      * readily, and the older landing last puts back the one that was just withdrawn. Hence [[Fetch.Tournaments]] and
+      * its neighbours carrying their key.
       *
       * Every fetch in this store goes through it, so there is nothing left for which this is vacuously true. Two
       * requests that answer one question share a stamp rather than taking one each — see `reloadAs`.
@@ -356,13 +346,8 @@ object Store {
     /** Whether the game this screen is about is still being looked for. */
     def lookingForGame(gameId: GameId): Signal[Boolean] = lookingForGames.signal.map(_.contains(gameId))
 
-    /** Open challenges per game, filled in only for games the user has expanded — there is one request per expansion,
-      * and games nobody opens cost nothing.
-      */
-    val challengesByGame: Var[Map[GameId, Seq[ChallengeSummary]]] = Var(Map.empty)
-
-    /** The caller's characters per game, loaded alongside the challenges when a game is expanded. Both offering and
-      * accepting a challenge need one.
+    /** The caller's characters per game, loaded when a game is shown: entering a competition of a character game needs
+      * one.
       */
     val charactersByGame: Var[Map[GameId, Seq[Character[String]]]] = Var(Map.empty)
 
@@ -381,79 +366,14 @@ object Store {
             .map(byGame => player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId)))
             .distinct
 
-    /** The open challenges the caller owns, has entered or is invited to, newest first and across every game: what the
-      * home screen's invitations, ready-to-start and waiting sections are each drawn from, by which of the three the
-      * caller is to it. Each carries its game's name and its owner's nickname, because those sections span every game
-      * and have nothing to look either up from.
-      */
-    val myChallenges: Var[Seq[ChallengeSummary]] = Var(Seq.empty)
-
-    /** The player a challenge is about to be offered to, carried from their page to a game's.
+    /** The player a new competition is to invite, carried from their page to the competition's.
       *
-      * Set by the invite button on somebody's page, which then shows the game screen with the challenge form open: the
-      * form is where a challenge is composed, and who it is for is the one thing that screen cannot ask, since it has
-      * no search box on it. Cleared when the form closes or the challenge is made, so the next challenge offered from
-      * that screen is not quietly addressed to whoever was looked at last -- which is the bug this shape invites, and
-      * the reason it is one slot rather than a list.
+      * Set by the invite button on somebody's page, which then shows the game screen with the New Competition dialog
+      * open; once the competition is made, its invitations section starts with this player found, ready to invite, and
+      * clears it. Cleared too on any other change of screen, so the next competition is not quietly addressed to
+      * whoever was looked at last -- the reason it is one slot rather than a list.
       */
     val invitee: Var[Option[PublicPlayer]] = Var(None)
-
-    /** Nicknames for player ids this session has been told, so a row holding an id can say who it means.
-      *
-      * A challenge's invitations name their players by id and nothing else — `Invitation` is permission, not a player —
-      * and the challenger looking at their own challenge needs the name. Filled from the searches that found them,
-      * which is where every invitation on that screen is made from, so the player just invited is in here by the time
-      * the row is redrawn.
-      *
-      * Best-effort by design: a miss is an id shown plainly, not a request. An invitation made in another session, or
-      * in this one before a reload, is a name nobody here has heard — and one fetch per row to learn it would be a
-      * request per invitation on a screen that already has what it needs for everything else.
-      */
-    val nicknames: Var[Map[PlayerId, String]] = Var(Map.empty)
-
-    /** Remembers who a search or a page has just named.
-      *
-      * Deliberately not ordered against anything, unlike every other write here that a fetch feeds. This accumulates
-      * rather than replaces: each merge adds the names one answer happened to carry and takes nothing away, so two
-      * merges commute and an older one is not a stale version of a newer one — it is a different, equally true, part of
-      * the same map. A stamp could only drop names that were correct, and a miss here is an id shown plainly.
-      *
-      * So this is not an oversight to be tidied up by applying the guard uniformly. Reach for one only if this ever
-      * starts overwriting the map instead of adding to it.
-      */
-    def remember(players: Seq[PublicPlayer]): Unit =
-        nicknames.update(_ ++ players.map(player => player.playerId -> player.nickname))
-
-    /* What the last answer to an invitation was, and which session answered it.
-     *
-     * Here rather than in the view for the reason every other per-player value is: this one names a
-     * game the *previous* player was invited to, and a view-local slot outlives the session that
-     * filled it -- `sessionExpired` cannot reach into the screen to clear it. Which made it one
-     * player's data sitting in the next player's page, announced or not.
-     *
-     * Stamped with the sign-in it belongs to rather than merely cleared, because clearing alone
-     * leaves the other half: `Store.run` drops nothing, so an accept that answers after a sign-out
-     * still reports itself, and it would report itself into the session that had just started. The
-     * stamp makes such a write unreadable instead of racing it.
-     *
-     * The stamp is the one taken when the answer was asked for, not when it came back: `signIns` moves
-     * only at a sign-out, so a number read at answer time is already the next session's. */
-    private val invitationStatus: Var[Option[(Int, String)]] = Var(None)
-
-    /** Says what has just been done with an invitation, for the status line in that section to announce. `signIn` is
-      * `currentSignIn` as it was before the request was made.
-      */
-    def sayAboutInvitations(signIn: Int, said: String): Unit = invitationStatus.set(Some((signIn, said)))
-
-    /** What to announce, which is nothing at all unless this session is the one that said it.
-      *
-      * Empty rather than absent, because a live region has to be in the page before the text arrives in it: the element
-      * stands there always and it is the words that come and go.
-      */
-    val invitationsSaid: Signal[String] = invitationStatus.signal.map {
-        case Some((signIn, said)) if isStillSignedInAs(signIn) => said
-        case _                                                 => ""
-    }
 
     /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
       * player's page and coming back does not clear it -- the usual reason to come back is to try the next result.
@@ -497,7 +417,7 @@ object Store {
      *   - One player, twice. An initial load and a refresh, or two impatient refreshes, can land in
      *     either order; without this the older answer wins whenever it arrives second.
      *
-     * Unkeyed, unlike `Challenges` and its neighbours, because one player's page is on screen at a
+     * Unkeyed, unlike `Tournaments` and its neighbours, because one player's page is on screen at a
      * time: what is wanted is not "the answer for this player" but "the answer to the question the
      * page is currently asking", and anything else is by definition not it. Keying it by player would
      * let A's answer commit while B's page is up, which is the first race above. */
@@ -523,7 +443,6 @@ object Store {
         } else
             reload(ApiClient.searchPlayers(prefix), Fetch.PlayerSearch) { result =>
                 playerResults.set(Some(result))
-                remember(result.players)
             }
     }
 
@@ -652,20 +571,18 @@ object Store {
         /** A tournament's page. */
         case OneTournament(gameId: GameId, tournamentId: TournamentId)
 
-        /** The form that creates a tournament in a game. */
-        case NewTournament(gameId: GameId)
     }
 
     val page: Var[Page] = Var(Page.Home)
 
     /** Goes to a screen, loading what it needs on the way.
       *
-      * A game's challenges and characters are fetched on arrival rather than held for every game at once: there is one
-      * request per game opened, and a game nobody looks at costs nothing. Re-selecting the game already shown reloads
-      * it, which is the only refresh this screen has.
+      * A game's competitions and characters are fetched on arrival rather than held for every game at once: there is
+      * one request per game opened, and a game nobody looks at costs nothing. Re-selecting the game already shown
+      * reloads it, which is the only refresh this screen has.
       */
     def show(next: Page): Unit = {
-        /* Leaving a screen closes the challenge form and forgets who it was being addressed to.
+        /* Leaving a screen closes the New Competition dialog and forgets who it was to invite.
          *
          * Both are one slot for the whole session -- there is one form open at a time and one player
          * being asked -- and neither means anything on the screen after this one. Left standing, the
@@ -673,11 +590,11 @@ object Store {
          * different game: it does say whose name it carries, but nobody asked it to carry one here.
          *
          * Only on an actual change of screen. Re-selecting the game already shown is this screen's
-         * only refresh, and closing a half-typed challenge would be a strange thing for a refresh to
+         * only refresh, and closing a half-typed competition would be a strange thing for a refresh to
          * do. `showGameToInvite` below is the one caller that wants them set, which is why it sets
          * them after this rather than before. */
         if (next != page.now()) {
-            showChallengeForm.set(false)
+            showTournamentForm.set(false)
             invitee.set(None)
         }
 
@@ -694,7 +611,6 @@ object Store {
                 reloadTournamentModels(gameId)
                 // For its admins' choice of the models it offers; small, and anyone may read it.
                 reloadAllTournamentModels()
-                refreshChallenges(gameId)
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
                 ensureGame(gameId)
@@ -710,23 +626,20 @@ object Store {
                 characterProfile.set(None)
                 publicActive.set(Seq.empty)
                 reloadCharacterMatches(character)
-            // The form chooses one of the game's models, so they are asked for as it opens.
-            case Page.NewTournament(gameId) =>
-                reloadTournamentModels(gameId)
             case _ => ()
         }
     }
 
-    /** Goes to a game's screen with the challenge form open and addressed to one player.
+    /** Goes to a game's screen with the New Competition dialog open, the competition to invite one player.
       *
-      * The invite button on somebody's page: composing a challenge needs the form, and who it is for is the one thing
-      * that screen cannot ask. Setting the two after the navigation rather than before it, because `show` clears them —
-      * which is what keeps every *other* way of arriving at a game from inheriting them.
+      * The invite button on somebody's page: who to invite is the one thing the game's screen cannot ask. Setting the
+      * two after the navigation rather than before it, because `show` clears them — which is what keeps every *other*
+      * way of arriving at a game from inheriting them.
       */
     def showGameToInvite(gameId: GameId, asked: PublicPlayer): Unit = {
         show(Page.OneGame(gameId))
         invitee.set(Some(asked))
-        showChallengeForm.set(true)
+        showTournamentForm.set(true)
     }
 
     /** The game whose admin edit form is open, if any. One slot rather than a set: editing two games at once is not a
@@ -734,10 +647,8 @@ object Store {
       */
     val editingGame: Var[Option[GameId]] = Var(None)
 
-    /** Whether the game screen's challenge form is open. Closed by default — the wire-frame asks for a "Create
-      * Challenge" button, and a form standing open is not a button.
-      */
-    val showChallengeForm: Var[Boolean] = Var(false)
+    /** Whether the game screen's New Competition dialog is open. */
+    val showTournamentForm: Var[Boolean] = Var(false)
 
     /** How many finished matches the home screen shows at once. The whole history belongs to the game it was played in;
       * the home screen shows it a page of this size at a time, most recent first.
@@ -810,7 +721,7 @@ object Store {
 
     /** Whether an outcome belonging to `owner` may clear the banner that is up.
       *
-      * An untagged fetch — one that speaks for no `Fetch` at all, like `reloadChallenges` — carries the empty set,
+      * An untagged fetch — one that speaks for no `Fetch` at all, like `reloadTournament` — carries the empty set,
       * which is a subset of every other, so it may clear another untagged fetch's banner and nothing else's.
       */
     private def canClear(owner: Banner): Boolean = (owner, bannerOwner) match {
@@ -1072,7 +983,6 @@ object Store {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         completedFor(page.now()).foreach(showCompleted(_))
-        load(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
         load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
         load(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
@@ -1166,8 +1076,6 @@ object Store {
 
     def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
 
-    def reloadMyChallenges(): Future[Unit] = reload(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
-
     /** The finished matches and their results together: `showCompleted` brings a window's result tables with it. */
     def reloadCompleted(): Future[Unit] =
         completedView.now() match {
@@ -1239,11 +1147,6 @@ object Store {
             }
         }
     }
-
-    def reloadChallenges(gameId: GameId): Future[Unit] =
-        reload(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
-            challengesByGame.update(_.updated(gameId, list))
-        )
 
     def refreshGames(): Unit = load(ApiClient.games(activeOnly = true), Fetch.Games)(games.set)
 
@@ -1349,11 +1252,6 @@ object Store {
         games.signal.combineWith(unlistedGames.signal).map { (active, unlisted) =>
             active.find(_.gameId == gameId).orElse(unlisted.get(gameId))
         }
-
-    def refreshChallenges(gameId: GameId): Unit =
-        load(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
-            challengesByGame.update(_.updated(gameId, list))
-        )
 
     def refreshGameAdmins(gameId: GameId): Unit =
         load(ApiClient.gameAdmins(gameId), Fetch.GameAdmins(gameId))(list =>

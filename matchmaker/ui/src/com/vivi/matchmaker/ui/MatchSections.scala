@@ -1,26 +1,18 @@
 package com.vivi.matchmaker.ui
 
-import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
 import com.vivi.matchmaker.model._
 
-/** The main page's sections about the caller's own challenges and matches: invitations, ready to start, due, in
-  * progress, waiting to start and recently completed. The game screen shows the same sections narrowed to its game.
+/** The main page's sections about the caller's own matches: due, in progress and recently completed. The game screen
+  * shows the same sections narrowed to its game.
   */
 object MatchSections {
 
-    import Views.{busyButton, currentPlayer, field, heldBusy, listing, refresh, refreshableSection}
+    import Views.{field, listing, refresh, refreshableSection}
 
-    /** Shared by the three sections drawn from the caller's open challenges -- invitations, "Ready to Start" and
-      * "Waiting to Start" are one response split by what the caller is to each challenge, so any of their buttons
-      * reloads all three and all three have to say so. Held at this level rather than passed down because the sections
-      * are siblings on the main page with nothing between them to own it.
-      */
-    private[ui] val refreshingChallenges: Var[Boolean] = Var(false)
-
-    /* The same, for the two match lists. Shared by the home screen's copy of each section and the
+    /* Whether each of the two match lists is reloading. Shared by the home screen's copy of each section and the
      * game screen's, which are never both on screen — and, more to the point, by the sections
      * themselves and by the actions below that change what belongs in them. */
     private[ui] val refreshingDue: Var[Boolean] = Var(false)
@@ -30,34 +22,6 @@ object MatchSections {
      * "Recently Completed" and the game screen's "Your Completed Matches": they are two views of the
      * one list, only one of them is ever on screen, and `reloadCompleted` fills both. */
     private[ui] val refreshingCompleted: Var[Boolean] = Var(false)
-
-    /** Reloads what a change to a challenge can have changed, the way each section's own button reloads it: the
-      * caller's open challenges, and the game screen's list when that is the screen behind this.
-      *
-      * Dimmed and re-read rather than edited in place: a list that silently loses a row is a list that might have lost
-      * the wrong one.
-      */
-    private[ui] def reloadChallengeSections(gameId: GameId): Unit = {
-        refresh(refreshingChallenges, () => Store.reloadMyChallenges())
-        if (Store.page.now() == Store.Page.OneGame(gameId)) Store.refreshChallenges(gameId)
-    }
-
-    /** Reloads what starting a challenge has changed: it leaves the challenge lists, and its players are asked to
-      * choose their roles -- or, once they have, it is a match in "Current Matches", and in "Your Turn" as well if the
-      * engine says the first move is this player's. The role choices and the tournaments come with it, since a
-      * challenge is one.
-      *
-      * Through each section's own flag rather than through `Store.refreshMatches`, so that the lists visibly reload --
-      * dimmed, and marked `aria-busy` while they do -- instead of quietly growing a row the player has to notice for
-      * themselves. The completed list is not touched: a match that has just started has not finished.
-      */
-    private[ui] def reloadAfterStart(gameId: GameId): Unit = {
-        refresh(refreshingDue, () => Store.reloadDue())
-        refresh(refreshingActive, () => Store.reloadActive())
-        Store.reloadTournamentChoices()
-        Store.reloadMyTournaments()
-        reloadChallengeSections(gameId)
-    }
 
     /** Reloads the sections a re-check with the engine may have changed.
       *
@@ -78,260 +42,6 @@ object MatchSections {
         refresh(refreshingDue, () => Store.reloadDue())
         refresh(refreshingActive, () => Store.reloadActive())
         if (refreshed.isCompleted || refreshed.isCancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
-    }
-
-    /* What the caller is to a challenge, which decides the section it is listed in. */
-    private def isInvitedTo(c: ChallengeSummary): Boolean =
-        c.summary.isInvited && !c.summary.isEntered && !c.summary.isOwner
-
-    /* The fewest entries a challenge can start with: enough to fill the game's required roles, and never fewer than
-     * two. `None` when the game is not one this player has listed, which is a game whose roles nobody here knows. */
-    private def leastToStart(game: Option[Game]): Option[Int] = game.map(g => math.max(2, g.requiredSeats))
-
-    private def gameOf(games: Seq[Game], gameId: GameId): Option[Game] = games.find(_.gameId == gameId)
-
-    /** What this player has been invited to and has not answered.
-      *
-      * First on the page, and absent when there is nothing in it, for the reason "Ready to Start" is both: an
-      * invitation is a thing somebody else did that is waiting on this player, not a list they came to check. Every
-      * other section here is about a challenge or match they are already in — this is the only one about one they are
-      * not, which is also why it names who offered it.
-      */
-    private[ui] def invitationsSection: HtmlElement =
-        div(
-          /* What the last answer to an invitation was, said once, to whoever is not watching the list.
-           *
-           * Answering one removes its row, and may remove the whole section with it — which is a
-           * change nobody is told about by sight alone being gone. The error banner is `role="alert"`,
-           * so a refusal already announces itself; this is the other half, and the half that was
-           * silent. A one-line status rather than `aria-live` on the section, so that the first fetch
-           * of the session does not read every row out unprompted. Present from the start and empty,
-           * because a live region has to exist before the text arrives in it to be announced reliably. */
-          p(
-            cls := "sr-only",
-            role := "status",
-            aria.live := "polite",
-            // From the store, and stamped there with the session that said it. See `Store.invitationsSaid`.
-            child.text <-- Store.invitationsSaid
-          ),
-          child <-- Store.myChallenges.signal
-              .combineWith(
-                Store.games.signal,
-                Store.known(Store.Fetch.MyChallenges),
-                Store.failed(Store.Fetch.MyChallenges)
-              )
-              .map { (challenges, games, known, failed) =>
-                  val unanswered = challenges.filter(isInvitedTo)
-                  /* Three states, not two, and emptiness tells none of them apart. A list that failed
-                   * stands with a line saying to ask again, and its refresh button is what asks -- the
-                   * other sections drawn from this list are absent when it is empty, their buttons with
-                   * them. Nothing at all until it has answered, which is a page still loading; and
-                   * nothing once it has if there is nothing to answer. */
-                  if (failed)
-                      refreshableSection(
-                        heading = "You Have Been Invited",
-                        refreshing = refreshingChallenges,
-                        reload = () => Store.reloadMyChallenges(),
-                        subsection = false
-                      )(
-                        p(cls := "empty", "Couldn't load your invitations just now. Refresh to try again.")
-                      )
-                  else if (!known || unanswered.isEmpty) emptyNode
-                  else
-                      refreshableSection(
-                        heading = "You Have Been Invited",
-                        refreshing = refreshingChallenges,
-                        reload = () => Store.reloadMyChallenges(),
-                        subsection = false
-                      )(ul(unanswered.map(c => invitationRow(c, gameOf(games, c.summary.tournament.gameId)))))
-              }
-        )
-
-    /** One invitation: who asked, to what, on what terms — then the two answers.
-      *
-      * In a character game the invitation is a character's, so the row names it, Accept enters with it, and Decline
-      * turns down its invitation; the character is read from the invitation, whoever owns it now being who may answer.
-      * In a plain game Accept enters the player. Every fact it decides on comes from the response rather than from
-      * `Store.games`, which holds only the active games -- an invitation outlives its game being deactivated.
-      */
-    private def invitationRow(invited: ChallengeSummary, game: Option[Game]): HtmlElement = {
-        val t = invited.summary.tournament
-        // Held outside the row, which every answer to the invitations redraws: accepting one invitation reloads them
-        // all, and another's Accept still out would otherwise be pressable again.
-        val acceptBusy = heldBusy(s"accept invitation ${t.tournamentId}")
-        val declineBusy = heldBusy(s"decline invitation ${t.tournamentId}")
-        def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit = {
-            val signIn = Store.currentSignIn
-            Store.runSignedIn(
-              action =
-                  ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = character),
-              busy = busy,
-              onFailure = invitationGone(t)
-            ) { _ =>
-                Store.sayAboutInvitations(signIn, s"Invitation to ${invited.summary.gameName} accepted.")
-                // Accepting may have filled one that starts itself: the start's reloads cover both.
-                reloadAfterStart(t.gameId)
-            }
-        }
-        def declined(busy: Var[Boolean], decline: Future[Unit]): Unit = {
-            val signIn = Store.currentSignIn
-            Store.runSignedIn(action = decline, busy = busy, onFailure = invitationGone(t)) { _ =>
-                Store.sayAboutInvitations(signIn, s"Invitation to ${invited.summary.gameName} declined.")
-                reloadChallengeSections(t.gameId)
-            }
-        }
-        li(
-          cls := "row",
-          child <-- currentPlayer.map {
-              case None     => emptyNode
-              case Some(me) =>
-                  // The character of the caller's this invitation is for, in a character game.
-                  invited.invitedCharacters.find(_.owner.exists(_.playerId == me.playerId)) match {
-                      case Some(mine) =>
-                          div(
-                            div(
-                              cls := "title",
-                              s"${invited.summary.ownerNickname} invited ${mine.character.name} to ${invited.summary.gameName}"
-                            ),
-                            div(cls := "detail", challengeTerms(t, invited.entries.size)),
-                            busyButton(label = "Accept", busy = acceptBusy)(accepted(Some(mine.character.characterId))),
-                            busyButton(label = "Decline", classes = Some("link"), busy = declineBusy)(busy =>
-                                declined(
-                                  busy,
-                                  ApiClient.revokeTournamentCharacterInvitation(
-                                    gameId = t.gameId,
-                                    tournamentId = t.tournamentId,
-                                    characterId = mine.character.characterId
-                                  )
-                                )
-                            )
-                          )
-                      case None =>
-                          div(
-                            div(
-                              cls := "title",
-                              s"${invited.summary.ownerNickname} invited you to ${invited.summary.gameName}"
-                            ),
-                            div(cls := "detail", challengeTerms(t, invited.entries.size)),
-                            game match {
-                                case Some(g) if g.gameType == GameType.Plain =>
-                                    busyButton(label = "Accept", busy = acceptBusy)(accepted(None))
-                                case _ =>
-                                    button(
-                                      tpe := "button",
-                                      cls := "link",
-                                      "Open the game",
-                                      onClick --> (_ => Store.show(Store.Page.OneGame(t.gameId)))
-                                    )
-                            },
-                            busyButton(label = "Decline", classes = Some("link"), busy = declineBusy)(busy =>
-                                declined(
-                                  busy,
-                                  ApiClient.revokeTournamentInvitation(
-                                    gameId = t.gameId,
-                                    tournamentId = t.tournamentId,
-                                    playerId = me.playerId
-                                  )
-                                )
-                            )
-                          )
-                  }
-          }
-        )
-    }
-
-    /** What to do when answering an invitation is refused because it is no longer there to answer: the list was fetched
-      * before its owner withdrew it, or started or cancelled the challenge, or it filled up. 404 and 409 are both the
-      * server saying so, so the lists are re-read and the server's own account is left in the banner — only it knows
-      * which of those it was. Anything else says nothing about whether the invitation is still there, and is left as
-      * `Store.run` reported it.
-      */
-    private def invitationGone(t: Tournament)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) => reloadAfterStart(t.gameId)
-        case _                      => ()
-    }
-
-    /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
-     *
-     * Every other list here says so when it is empty, because "no matches" is an answer to a
-     * question somebody asked. This one is not a question anybody asks: a challenge becomes
-     * startable when enough players have entered it, which is something that happens *to* its owner
-     * rather than something they came to check. So it is a prompt, and a prompt with nothing to
-     * prompt is noise on every screen that carries it. */
-    private[ui] def readyToStartSection(game: Option[Game] = None): HtmlElement =
-        div(
-          child <-- Store.myChallenges.signal
-              .combineWith(Store.games.signal)
-              .map { (challenges, games) =>
-                  val mine = challengesIn(game)(challenges).filter { c =>
-                      c.summary.isOwner && !c.summary.tournament.settings.isAutoStarted &&
-                      leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
-                  }
-                  if (mine.isEmpty) emptyNode
-                  else
-                      refreshableSection(
-                        heading = "Ready to Start",
-                        refreshing = refreshingChallenges,
-                        reload = () => Store.reloadMyChallenges(),
-                        subsection = false
-                      )(ul(mine.map(readyToStartRow)))
-              }
-        )
-
-    private def readyToStartRow(c: ChallengeSummary): HtmlElement = {
-        val t = c.summary.tournament
-        li(
-          cls := "row",
-          div(cls := "title", c.summary.gameName),
-          div(cls := "detail", challengeTerms(t, c.entries.size)),
-          busyButton(label = "Start") { busy =>
-              Store.runSignedIn(
-                action = ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
-                busy = busy,
-                onFailure = challengeStale(t)
-              ) { _ =>
-                  Views.announce("Challenge started.")
-                  reloadAfterStart(t.gameId)
-              }
-          },
-          // Enough players having entered is no promise the owner still wants the match, so the way out of it stays
-          // here alongside the start.
-          busyButton(label = "Cancel") { busy =>
-              Store.runSignedIn(
-                action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
-                busy = busy,
-                onFailure = challengeStale(t)
-              ) { _ =>
-                  Views.announce("Challenge cancelled.")
-                  reloadChallengeSections(t.gameId)
-              }
-          }
-        )
-    }
-
-    /** What a refused start, cancel or withdrawal says about the lists on screen: a 409 or 404 is the challenge having
-      * moved on since the list was fetched -- started by itself as it filled, started or cancelled by its owner -- so
-      * the lists are re-read, the match lists with them in case it is now a match. Anything else -- a 5xx, a dropped
-      * connection -- says nothing about the challenge, and is left as `Store.run` reported it.
-      */
-    private[ui] def challengeStale(t: Tournament)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) => reloadAfterStart(t.gameId)
-        case _                      => ()
-    }
-
-    /** A challenge's terms in a line: how many it seats and how many have entered, its time limit, and whether it
-      * starts by itself, is live, or is rated.
-      */
-    private[ui] def challengeTerms(t: Tournament, entered: Int): String = {
-        val seats = t.settings.maxEntrants.getOrElse(t.defaultPoolSize)
-        List(
-          Some(s"$entered of $seats entered"),
-          t.settings.roundDuration.map(d => s"${Format.duration(d, TimeLimitUnit.bestFor(d))} to play"),
-          Option.when(t.settings.isAutoStarted)("starts when full"),
-          Option.when(t.settings.isLive)("live"),
-          Option.when(!t.settings.isFriendly)("rated"),
-          t.settings.start.map(at => s"for ${Format.instant(at)}")
-        ).flatten.mkString(" · ")
     }
 
     /** "List of all matches a player has a turn due" — the first thing in `ui.txt`, and the only list shown expanded
@@ -363,10 +73,6 @@ object MatchSections {
     private def matchesIn(game: Option[Game])(matches: Seq[MatchSummary]): Seq[MatchSummary] =
         game.fold(matches)(g => matches.filter(_.gameId == g.gameId))
 
-    /* The same slice, over the caller's challenges. */
-    private def challengesIn(game: Option[Game])(challenges: Seq[ChallengeSummary]): Seq[ChallengeSummary] =
-        game.fold(challenges)(g => challenges.filter(_.summary.tournament.gameId == g.gameId))
-
     /** The matches still being played. Expanded rather than behind a toggle: the wire-frame lists it as one of the four
       * things the main page shows, and a section that has to be opened to find out whether it is empty is not shown.
       */
@@ -397,81 +103,6 @@ object MatchSections {
             )
           )
         )
-
-    /** The challenges this player has entered that have not started: still filling up, or somebody else's to start. The
-      * ones this player could start right now are left out: they are in "Ready to Start", and listing them twice would
-      * offer the same button in two places.
-      *
-      * Absent when there is nothing waiting, like "Ready to Start" and for the same reason: what a player has entered
-      * and is waiting on is news when there is some, and a heading over a sentence saying there is none the rest of the
-      * time.
-      */
-    private[ui] def waitingSection(game: Option[Game] = None): HtmlElement =
-        div(
-          child <-- Store.myChallenges.signal.combineWith(Store.games.signal, currentPlayer).map {
-              (challenges, games, player) =>
-                  val waiting = challengesIn(game)(challenges).filter { c =>
-                      val ready = c.summary.isOwner && !c.summary.tournament.settings.isAutoStarted &&
-                          leastToStart(gameOf(games, c.summary.tournament.gameId)).exists(c.entries.size >= _)
-                      (c.summary.isEntered || c.summary.isOwner) && !ready
-                  }
-                  if (waiting.isEmpty) emptyNode
-                  else
-                      refreshableSection(
-                        heading = "Waiting to Start",
-                        refreshing = refreshingChallenges,
-                        reload = () => Store.reloadMyChallenges(),
-                        subsection = true
-                      )(ul(waiting.map(c => waitingRow(c, player))))
-          }
-        )
-
-    private def waitingRow(c: ChallengeSummary, player: Option[Player]): HtmlElement = {
-        val t = c.summary.tournament
-        val mine = player.flatMap(me => c.entries.find(_.playerId.contains(me.playerId)))
-        val full = t.settings.maxEntrants.exists(c.entries.size >= _)
-        li(
-          cls := "row",
-          div(cls := "title", c.summary.gameName),
-          div(cls := "detail", challengeTerms(t, c.entries.size)),
-          div(
-            cls := "detail",
-            if (c.summary.isOwner) "your challenge, waiting for players"
-            else if (full) s"full — waiting for ${c.summary.ownerNickname} to start it"
-            else s"${c.summary.ownerNickname}'s challenge, waiting for players"
-          ),
-          // The owner calls their own off; anybody else withdraws their entry. Both are refused once it has started,
-          // which `challengeStale` treats as the news it is.
-          if (c.summary.isOwner)
-              busyButton(label = "Cancel", classes = Some("link")) { busy =>
-                  Store.runSignedIn(
-                    action = ApiClient.stopTournament(gameId = t.gameId, tournamentId = t.tournamentId),
-                    busy = busy,
-                    onFailure = challengeStale(t)
-                  ) { _ =>
-                      Views.announce("Challenge cancelled.")
-                      reloadChallengeSections(t.gameId)
-                  }
-              }
-          else
-              mine.fold(emptyNode) { entry =>
-                  busyButton(label = "Withdraw", classes = Some("link")) { busy =>
-                      Store.runSignedIn(
-                        action = ApiClient.withdrawFromTournament(
-                          gameId = t.gameId,
-                          tournamentId = t.tournamentId,
-                          entrantId = entry.entrantId
-                        ),
-                        busy = busy,
-                        onFailure = challengeStale(t)
-                      ) { _ =>
-                          Views.announce("Withdrawn from the challenge.")
-                          reloadChallengeSections(t.gameId)
-                      }
-                  }
-              }
-        )
-    }
 
     /** The caller's finished matches in every game, a window of time at a time. */
     private[ui] def recentlyCompletedSection: HtmlElement =

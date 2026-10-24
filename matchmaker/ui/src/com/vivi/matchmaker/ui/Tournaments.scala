@@ -32,27 +32,45 @@ object Tournaments {
 
     // ---- lists -------------------------------------------------------------------------------
 
-    /** A game's tournaments, on its screen, with the button that creates one: subsections of the screen's
-      * "Competitions", beside its challenges, and called competitions wherever a player reads them.
+    /** A game's open competitions, on its screen -- the caller's own not yet started, then those they could enter --
+      * with the button that opens the New Competition dialog.
       */
     def gameSection(game: Game): HtmlElement =
         div(
+          // Out here, not inside the list below: that is rebuilt whenever the list is reloaded, and a dialog inside it
+          // would be rebuilt with it, losing what had been typed and the focus.
+          child <-- Store.showTournamentForm.signal.distinct.map(isOpen =>
+              if (!isOpen) emptyNode
+              else
+                  Modal.dialog(
+                    content = form(
+                      game = game,
+                      existing = None,
+                      onSaved = () => Store.showTournamentForm.set(false),
+                      headingId = Some("new-competition-heading")
+                    ),
+                    labelledBy = "new-competition-heading",
+                    close = closeNewCompetition
+                  )
+          ),
           Views.refreshableSection(
-            heading = "Other Competitions",
+            heading = "Open Competitions",
             reload = () => Store.reloadTournaments(game.gameId),
-            subsection = true
+            subsection = false
           )(
+            button(
+              tpe := "button",
+              htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
+              aria.expanded <-- Store.showTournamentForm.signal,
+              "New Competition",
+              onMountCallback(context => newCompetitionTrigger = Some(context.thisNode.ref)),
+              onUnmountCallback(_ => newCompetitionTrigger = None),
+              onClick --> (_ => Store.showTournamentForm.set(true))
+            ),
             listing(
               Store.tournamentsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
               Store.loading(Store.Fetch.Tournaments(game.gameId))
-            )(p(cls := "empty", "No other competitions in this game yet."))(rows =>
-                summaryList(rows, showGame = false)
-            ),
-            button(
-              tpe := "button",
-              "New Competition",
-              onClick --> (_ => Store.show(Store.Page.NewTournament(game.gameId)))
-            )
+            )(p(cls := "empty", "No open competitions in this game."))(rows => summaryList(rows, showGame = false))
           ),
           // The formats the game offers, for whoever administers it: nothing at all for anybody else.
           child <-- Store.currentPlayer.flatMapSwitch {
@@ -61,6 +79,17 @@ object Tournaments {
               case None => Val(emptyNode)
           }
         )
+
+    /* The button the New Competition dialog is opened from, so closing it can put focus back. */
+    private var newCompetitionTrigger: Option[dom.html.Element] = None
+
+    /* Closing the dialog abandons the invitation it was opened for, so the next competition made here is not quietly
+     * addressed to whoever was looked at before. */
+    private def closeNewCompetition(): Unit = {
+        Store.invitee.set(None)
+        Store.showTournamentForm.set(false)
+        newCompetitionTrigger.foreach(_.focus())
+    }
 
     /** The main page's tournament sections: seats waiting on the caller to choose a role, and their tournaments. */
     def mainSections: HtmlElement =
@@ -564,9 +593,48 @@ object Tournaments {
                       ),
                       busy
                     )(_ => reload(d))
-                )
+                ),
+                declineButton(d, me)
               )
         )
+    }
+
+    /** Turning down the caller's invitation, before they have entered: theirs in a plain game, and in a character game
+      * every invitation of a character of theirs. Nothing when they have none.
+      */
+    private def declineButton(d: TournamentDetail, me: Option[Player]): Node = {
+        val t = d.summary.tournament
+        val declines: Seq[() => Future[Unit]] = me.toSeq.flatMap { m =>
+            d.invited
+                .filter(_.playerId == m.playerId)
+                .map(_ =>
+                    () =>
+                        ApiClient.revokeTournamentInvitation(
+                          gameId = t.gameId,
+                          tournamentId = t.tournamentId,
+                          playerId = m.playerId
+                        )
+                ) ++ d.invitedCharacters
+                .filter(_.owner.exists(_.playerId == m.playerId))
+                .map(inv =>
+                    () =>
+                        ApiClient.revokeTournamentCharacterInvitation(
+                          gameId = t.gameId,
+                          tournamentId = t.tournamentId,
+                          characterId = inv.character.characterId
+                        )
+                )
+        }
+        val hasEntered = d.entries.exists(e => me.exists(m => e.playerId.contains(m.playerId)))
+        if (declines.isEmpty || hasEntered) emptyNode
+        else
+            busyButton(label = "Decline", busy = heldBusy(s"decline tournament ${t.tournamentId}"))(busy =>
+                Store.runSignedIn(Future.sequence(declines.map(_())), busy) { _ =>
+                    Views.announce("Invitation declined.")
+                    Store.reloadMyTournaments()
+                    reload(d)
+                }
+            )
     }
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
@@ -575,8 +643,11 @@ object Tournaments {
     private def invitationsSection(d: TournamentDetail): HtmlElement = {
         val t = d.summary.tournament
         val characterGame = d.gameType == GameType.Character
-        val prefix = Var("")
-        val found: Var[Seq[PublicPlayer]] = Var(Seq.empty)
+        // The player this competition was made for, from their page: found already, and forgotten once used.
+        val asked = Store.invitee.now()
+        Store.invitee.set(None)
+        val prefix = Var(asked.fold("")(_.nickname))
+        val found: Var[Seq[PublicPlayer]] = Var(asked.toSeq)
         val invitedCharacters = d.invitedCharacters.map(_.character.characterId).toSet
         sectionTag(
           h3("Invitations"),
@@ -943,16 +1014,6 @@ object Tournaments {
 
     // ---- creating and editing ---------------------------------------------------------------
 
-    /** The page that creates a tournament in a game. */
-    def newPage(gameId: GameId): HtmlElement =
-        div(
-          h2("New Competition"),
-          child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
-              case Some(g) => form(game = g, existing = None, onSaved = () => ())
-              case None    => p(cls := "empty", "Loading…")
-          }
-        )
-
     /** The models offered for a game, grouped by classification, as a select's options: those with none first, under no
       * heading.
       */
@@ -974,9 +1035,16 @@ object Tournaments {
       * tournament's model and default pool size are not offered for editing, since its stages cannot change.
       *
       * For a game without roles it also asks how many players a match has, and — for a tournament not yet started, with
-      * `entered` entries so far — offers the pool size that puts everyone entered in one pool.
+      * `entered` entries so far — offers the pool size that puts everyone entered in one pool. `headingId` heads it
+      * "New Competition", under that id, for the dialog it is shown in.
       */
-    def form(game: Game, existing: Option[Tournament], onSaved: () => Unit, entered: Int = 0): HtmlElement = {
+    def form(
+        game: Game,
+        existing: Option[Tournament],
+        onSaved: () => Unit,
+        entered: Int = 0,
+        headingId: Option[String] = None
+    ): HtmlElement = {
         val key = existing.fold("new-tournament")(t => s"tournament-${t.tournamentId.value}")
         val running = existing.exists(_.status == TournamentStatus.Running)
         val s0 = existing.map(_.settings).getOrElse(TournamentSettings())
@@ -990,7 +1058,10 @@ object Tournaments {
         // The model chosen, by id; none until the models have come, for a new tournament.
         val modelId: Var[Option[TournamentModelId]] = Var(existing.map(_.tournamentModelId))
         val poolSize = Var(existing.fold("")(_.defaultPoolSize.toString))
-        val invitational = Var(s0.isInvitational)
+        // Who a new competition is for, when it was asked for from their page: invitational, and once it is made its
+        // page opens with them found, ready to invite.
+        val asked = if (existing.isEmpty) Store.invitee.now() else None
+        val invitational = Var(s0.isInvitational || asked.isDefined)
         val autoRounds = Var(s0.hasAutomaticRounds)
         val friendly = Var(s0.isFriendly)
         val lateEntries = Var(s0.hasLateEntries)
@@ -1005,8 +1076,8 @@ object Tournaments {
         val live = Var(s0.isLive)
         val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
         val autoStart = Var(s0.isAutoStarted)
-        val plannedStart = Var(s0.start.fold("")(ChallengeForm.localInputOf))
-        val parameters = Var(ChallengeForm.startingChoices(game, s0.gameSettings))
+        val plannedStart = Var(s0.start.fold("")(GameSettingsFields.localInputOf))
+        val parameters = Var(GameSettingsFields.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
         val chosen: Var[Option[TournamentModel]] = Var(None)
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
@@ -1046,9 +1117,9 @@ object Tournaments {
           maxTurns = int(maxTurns),
           hasConcurrentRounds = concurrentRounds.now(),
           isPublic = isPublic.now(),
-          gameSettings = ChallengeForm.settingsOf(parameters.now()),
+          gameSettings = GameSettingsFields.settingsOf(parameters.now()),
           isLive = live.now(),
-          start = ChallengeForm.startOf(plannedStart.now()),
+          start = GameSettingsFields.startOf(plannedStart.now()),
           hasRoleChoice = chooseRoles.now(),
           maxEntrants = int(maxEntrants),
           isAutoStarted = autoStart.now() && int(maxEntrants).isDefined,
@@ -1079,13 +1150,14 @@ object Tournaments {
                     )
             }))
 
-        def checkbox(caption: String, v: Var[Boolean], tip: String) = {
+        def checkbox(caption: String, v: Var[Boolean], tip: String, disabledWhen: Signal[Boolean] = Val(false)) = {
             val id = freshTipId(s"$key-tip")
             withTip(id = id, subject = caption, text = tip)(
               label(
                 input(
                   tpe := "checkbox",
                   aria.describedBy := id,
+                  disabled <-- disabledWhen,
                   controlled(checked <-- v.signal, onClick.mapToChecked --> v)
                 ),
                 caption
@@ -1140,6 +1212,8 @@ object Tournaments {
 
         div(
           cls := "card",
+          // Headed when it is a dialog of its own, which is named by its heading.
+          headingId.fold(emptyNode)(id => h3(idAttr := id, "New Competition")),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
           models --> { ms =>
               chosen.now() match {
@@ -1151,6 +1225,9 @@ object Tournaments {
                       }
               }
           },
+          asked.fold(emptyNode)(who =>
+              p(cls := "detail", s"Once it is made, you can invite ${who.nickname} from its page.")
+          ),
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
           if (running) p(cls := "detail", "The format of a competition under way cannot be changed.")
@@ -1229,7 +1306,19 @@ object Tournaments {
             v = autoRounds,
             tip = "Each round begins as soon as the last one ends, rather than when you start it."
           ),
-          checkbox(caption = "Friendly", v = friendly, tip = "Its matches change nobody's rating."),
+          checkbox(
+            caption = "Friendly",
+            v = friendly,
+            tip = "Its matches change nobody's rating. Only an admin of the game may make a competition rated.",
+            // Left friendly by anybody else; one already rated stays theirs to edit, as the server allows.
+            disabledWhen =
+                if (!s0.isFriendly) Val(false)
+                else
+                    Store.currentPlayer.flatMapSwitch {
+                        case Some(player) => Store.administers(game.gameId, player).map(!_)
+                        case None         => Val(true)
+                    }
+          ),
           checkbox(
             caption = "Late entries",
             v = lateEntries,
@@ -1277,7 +1366,7 @@ object Tournaments {
             )
           ),
           // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
-          ChallengeForm.parameterFields(game, parameters),
+          GameSettingsFields.parameterFields(game, parameters),
           number(caption = "Minimum rating", v = minRating, tip = "Leave blank for no minimum."),
           number(caption = "Maximum rating", v = maxRating, tip = "Leave blank for no maximum."),
           number(caption = "Entries per player", v = entries, tip = "How many times one player may enter."),
@@ -1338,6 +1427,8 @@ object Tournaments {
                                 if (existing.isDefined) Views.announce("Changes saved.")
                                 onSaved()
                                 Store.show(Store.Page.OneTournament(saved.gameId, saved.tournamentId))
+                                // After the navigation, which forgets the invitee as it leaves the game's screen.
+                                Store.invitee.set(asked)
                                 Store.reloadTournament(saved.gameId, saved.tournamentId)
                             }
                         }

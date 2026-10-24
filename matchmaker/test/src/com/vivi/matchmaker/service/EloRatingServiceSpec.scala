@@ -147,11 +147,14 @@ class EloRatingServiceSpec extends PropertySuite {
 
     /** A challenge the game's admin offers and will not play in, which anybody may enter. */
     private def openChallenge(f: Fixture, friendly: Boolean): IO[Tournament] =
-        Challenges.offeredIn(f.game) *> services.tournaments.createChallenge(
-          gameId = f.game.gameId,
-          request =
-              ChallengeRequest(isPlaying = false, poolSize = Some(2), isFriendly = friendly, isAutoStarted = true),
-          callerExternalId = f.host.externalId
+        Challenges.offeredIn(f.game) *> Challenges.create(
+          tournaments = services.tournaments,
+          game = f.game,
+          owner = f.host,
+          isPlaying = false,
+          poolSize = Some(2),
+          isFriendly = friendly,
+          isAutoStarted = true
         )
 
     /** A friendly match `first` plays both seats of.

@@ -266,14 +266,10 @@ object Players {
           )
         )
 
-    /** Asking this player for a game: pick the game, and go and compose the challenge.
+    /** Asking this player to play: pick the game, and go and make a competition of it that invites them -- the New
+      * Competition dialog on the game's screen, which carries them to the competition's invitations once it is made.
       *
-      * Two steps rather than one, because a challenge is more than who it is for — it has a clock, a number of players,
-      * the game's settings — and all of that lives in the form on the game's screen. So this carries the one thing that
-      * screen cannot ask for, the player, and takes the reader there with the form already open.
-      *
-      * Not shown to a player looking at their own page: the server refuses a challenger inviting themselves, and a
-      * control that cannot work is worse than none. Nor when no games have loaded, since there would be nothing to
+      * Not shown to a player looking at their own page, nor when no games have loaded, since there would be nothing to
       * choose.
       */
     private def inviteControl(invitee: PublicPlayer): HtmlElement = {
@@ -288,7 +284,7 @@ object Players {
                   if (chosen.now().isEmpty) chosen.set(games.headOption.map(_.gameId))
                   div(
                     cls := "card",
-                    h3(s"Challenge ${invitee.nickname}"),
+                    h3(s"Invite ${invitee.nickname}"),
                     field(
                       "Game",
                       select(
@@ -302,116 +298,13 @@ object Players {
                     button(
                       tpe := "button",
                       disabled <-- chosen.signal.map(_.isEmpty),
-                      s"Offer ${invitee.nickname} a challenge",
-                      // One call, because the three things it does have to happen in one order:
-                      // `Store.show` clears the form and the invitee, so that arriving at a game any
-                      // other way cannot inherit either.
+                      s"Invite ${invitee.nickname} to a new competition",
+                      // One call, because `Store.show` forgets the invitee, so that arriving at a game any other way
+                      // cannot inherit one.
                       onClick --> (_ => chosen.now().foreach(gameId => Store.showGameToInvite(gameId, invitee)))
-                    ),
-                    // Rebuilt per game, so the choice of challenge starts over when the game does.
-                    child <-- chosen.signal.map(
-                      _.flatMap(id => games.find(_.gameId == id)) match {
-                          case Some(game) => addToExisting(game, invitee)
-                          case None       => emptyNode
-                      }
                     )
                   )
               }
-          }
-        )
-    }
-
-    /** Inviting this player to a challenge the reader has already offered in `game`, rather than composing a new one.
-      *
-      * Lists the reader's own open challenges there that neither invite this player already nor have them in, since a
-      * second invitation changes nothing and somebody already in has nothing to be asked to.
-      */
-    private def addToExisting(game: Game, invitee: PublicPlayer): HtmlElement = {
-        val picked = Var(Option.empty[TournamentId])
-
-        div(
-          onMountCallback(_ => Store.refreshChallenges(game.gameId)),
-          child <-- Store.challengesByGame.signal.map(_.get(game.gameId)).map {
-              case Some(challenges) =>
-                  // In a character game it is one of their characters that is invited, so a challenge already asking
-                  // one of them is still one to ask another to; one they are in is not.
-                  val mine = challenges.filter(c =>
-                      c.summary.isOwner && !c.entries.exists(_.playerId.contains(invitee.playerId)) &&
-                          (game.gameType == GameType.Character || !c.invited.exists(_.playerId == invitee.playerId))
-                  )
-                  if (mine.isEmpty) emptyNode
-                  else {
-                      // Kept when the list is re-read, as long as the challenge is still in it.
-                      if (!picked.now().exists(id => mine.exists(_.summary.tournament.tournamentId == id)))
-                          picked.set(mine.headOption.map(_.summary.tournament.tournamentId))
-                      div(
-                        h4(s"Or add ${invitee.nickname} to a challenge you have already offered"),
-                        field(
-                          "Challenge",
-                          select(
-                            onChange.mapToValue --> { raw =>
-                                picked.set(
-                                  raw.toLongOption
-                                      .map(TournamentId.apply)
-                                      .filter(id => mine.exists(_.summary.tournament.tournamentId == id))
-                                )
-                            },
-                            value <-- picked.signal.map(_.map(_.value.toString).getOrElse("")),
-                            // Described by its terms, never by an id.
-                            mine.map(c =>
-                                option(
-                                  value := c.summary.tournament.tournamentId.value.toString,
-                                  MatchSections.challengeTerms(c.summary.tournament, c.entries.size)
-                                )
-                            )
-                          )
-                        ),
-                        if (game.gameType == GameType.Character)
-                            // Rebuilt per challenge, leaving out the characters it already asks.
-                            child <-- picked.signal.map(
-                              _.flatMap(id => mine.find(_.summary.tournament.tournamentId == id)) match {
-                                  case Some(c) =>
-                                      val t = c.summary.tournament
-                                      characterInviteButtons(
-                                        gameId = game.gameId,
-                                        owner = invitee,
-                                        exclude = c.invitedCharacters.map(_.character.characterId).toSet
-                                      ) { (ch, busy) =>
-                                          Store.run(
-                                            action = ApiClient.inviteCharacterToTournament(
-                                              gameId = game.gameId,
-                                              tournamentId = t.tournamentId,
-                                              characterId = ch.characterId
-                                            ),
-                                            busy = busy,
-                                            onFailure = MatchSections.challengeStale(t)
-                                          )(_ => Store.refreshChallenges(game.gameId))
-                                      }
-                                  case None => emptyNode
-                              }
-                            )
-                        else
-                            busyButton(
-                              label = s"Invite ${invitee.nickname}",
-                              disabledWhen = picked.signal.map(_.isEmpty)
-                            ) { busy =>
-                                picked.now().foreach { id =>
-                                    Store.run(
-                                      action = ApiClient.inviteToTournament(
-                                        gameId = game.gameId,
-                                        tournamentId = id,
-                                        playerId = invitee.playerId
-                                      ),
-                                      busy = busy,
-                                      onFailure = MatchSections.challengeStale(
-                                        mine.find(_.summary.tournament.tournamentId == id).get.summary.tournament
-                                      )
-                                    )(_ => Store.refreshChallenges(game.gameId))
-                                }
-                            }
-                      )
-                  }
-              case None => emptyNode
           }
         )
     }
@@ -457,41 +350,12 @@ object Players {
               if (_)
                   div(
                     cls := "detail-panel",
-                    offeredChallenges(game, player),
                     Ratings.adminMatchesSection(game, player)
                   )
               else emptyNode
           }
         )
     }
-
-    /** The challenges the reader has offered this player in this game and that have not started: the same rows as "Your
-      * Open Challenges" on the game's screen, so they can be started, cancelled, or have their invitations changed from
-      * here. Offered to them means inviting them, or having them in it already. Nothing at all on the reader's own
-      * page.
-      */
-    private def offeredChallenges(game: Game, invitee: PublicPlayer): HtmlElement =
-        div(
-          onMountCallback(_ => Store.refreshChallenges(game.gameId)),
-          child <-- currentPlayer
-              .combineWith(Store.challengesByGame.signal)
-              .map {
-                  case (Some(me), _) if me.playerId == invitee.playerId => emptyNode
-                  case (Some(_), byGame) if byGame.contains(game.gameId) =>
-                      val offered = byGame(game.gameId).filter { c =>
-                          c.summary.isOwner &&
-                          (c.invited.exists(_.playerId == invitee.playerId) ||
-                              c.invitedCharacters.exists(_.owner.exists(_.playerId == invitee.playerId)) ||
-                              c.entries.exists(_.playerId.contains(invitee.playerId)))
-                      }
-                      div(
-                        h3(s"Your Challenges to ${invitee.nickname}"),
-                        if (offered.isEmpty) p(cls := "empty", "None waiting.")
-                        else ul(offered.map(Challenges.myChallengeRow(game, _)))
-                      )
-                  case _ => p(cls := "detail", "Loading your challenges…")
-              }
-        )
 
     /** Another player's characters in a game, by name only -- which is all another player may see of them -- drawn by
       * `render` once they have come, for inviting one: in a character game it is a character that is invited.

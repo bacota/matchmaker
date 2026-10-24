@@ -19,6 +19,88 @@ object Challenges {
     def offeredIn(game: Game): IO[Unit] =
         TestSession.resource.use(TournamentFixtures.model(_, game, RoundRobin.modelId.value)).void
 
+    /** A challenge as the challenge form used to make one, now that it is a competition like any other: a tournament of
+      * the round robin model, its invitations sent, opened, and its owner's entry in it unless `isPlaying` is false.
+      * Its pool size is how many it seats and the most entries it takes, the game's R if not given. Invitational when
+      * it invites anybody. A rated one is made by a game's admin, which its owner is made first.
+      */
+    def create(
+        tournaments: TournamentService[String],
+        game: Game,
+        owner: Player,
+        poolSize: Option[Int] = None,
+        characterId: Option[CharacterId] = None,
+        isPlaying: Boolean = true,
+        roundDuration: Option[Duration] = None,
+        gameSettings: String = "{}",
+        isLive: Boolean = false,
+        isFriendly: Boolean = true,
+        isPublic: Boolean = false,
+        isAutoStarted: Boolean = false,
+        invitations: List[PlayerId] = Nil,
+        characterInvitations: List[CharacterId] = Nil
+    ): IO[Tournament] = {
+        val pool = poolSize.getOrElse(game.poolSeats)
+        for {
+            // Only a game's admin may make a rated one, which its owner is made first.
+            _ <- IO.whenA(!isFriendly)(
+              TestSession.resource.use(session =>
+                  new GameAdminRepo(session)
+                      .grant(player = owner.playerId, game = game.gameId, grantedBy = owner.playerId)
+                      .attempt
+                      .void
+              )
+            )
+            made <- tournaments.create(
+              gameId = game.gameId,
+              request = TournamentRequest(
+                name = s"${owner.nickname}'s challenge",
+                tournamentModelId = RoundRobin.modelId,
+                defaultPoolSize = Some(pool),
+                settings = TournamentSettings(
+                  hasAutomaticRounds = true,
+                  isFriendly = isFriendly,
+                  isInvitational = invitations.nonEmpty || characterInvitations.nonEmpty,
+                  roundDuration = roundDuration,
+                  isPublic = isPublic,
+                  gameSettings = gameSettings,
+                  isLive = isLive,
+                  isAutoStarted = isAutoStarted,
+                  maxEntrants = Some(pool)
+                )
+              ),
+              callerExternalId = owner.externalId
+            )
+            _ <- invitations.traverse_(p =>
+                tournaments.invite(
+                  gameId = game.gameId,
+                  tournamentId = made.tournamentId,
+                  playerId = p,
+                  callerExternalId = owner.externalId
+                )
+            )
+            _ <- characterInvitations.traverse_(c =>
+                tournaments.inviteCharacter(
+                  gameId = game.gameId,
+                  tournamentId = made.tournamentId,
+                  characterId = c,
+                  callerExternalId = owner.externalId
+                )
+            )
+            opened <- tournaments.open(game.gameId, made.tournamentId, owner.externalId)
+            _ <- IO.whenA(isPlaying)(
+              tournaments
+                  .enter(
+                    gameId = game.gameId,
+                    tournamentId = made.tournamentId,
+                    characterId = characterId,
+                    callerExternalId = owner.externalId
+                  )
+                  .void
+            )
+        } yield opened
+    }
+
     /** A player in a challenge: who, the role they will choose, and the character they enter with in a character game.
       */
     case class Seat(player: Player, role: GameRoleId, character: Option[CharacterId] = None)
@@ -27,9 +109,8 @@ object Challenges {
       * each seat wants them, in the order its seats are to choose -- by rating, the strongest first. Its tournament,
       * and its match, which has then been created in the engine `services` talks to.
       *
-      * `hostedBy` offers it instead, as a game's admin offering a match they will not play in: it is then closed to all
-      * but `seats`, and starts by itself as the last of them enters. A rated one is offered by a game's admin, which
-      * its offerer is made first.
+      * `hostedBy` offers it instead, as somebody offering a match they will not play in: it is then closed to all but
+      * `seats`, and starts by itself as the last of them enters.
       */
     def startedMatch(
         services: Services[String],
@@ -60,27 +141,19 @@ object Challenges {
             case Some(host) =>
                 for {
                     _ <- offeredIn(game)
-                    _ <- TestSession.resource.use(session =>
-                        new GameAdminRepo(session)
-                            .grant(player = host.playerId, game = game.gameId, grantedBy = host.playerId)
-                            .attempt
-                            .void
-                    )
-                    t <- services.tournaments.createChallenge(
-                      gameId = game.gameId,
-                      request = ChallengeRequest(
-                        isPlaying = false,
-                        poolSize = Some(seats.size),
-                        roundDuration = roundDuration,
-                        gameSettings = settings,
-                        isLive = live,
-                        isFriendly = friendly,
-                        isPublic = isPublic,
-                        isAutoStarted = true,
-                        isOpen = false,
-                        invitations = seats.map(_.player.playerId)
-                      ),
-                      callerExternalId = host.externalId
+                    t <- create(
+                      tournaments = services.tournaments,
+                      game = game,
+                      owner = host,
+                      isPlaying = false,
+                      poolSize = Some(seats.size),
+                      roundDuration = roundDuration,
+                      gameSettings = settings,
+                      isLive = live,
+                      isFriendly = friendly,
+                      isPublic = isPublic,
+                      isAutoStarted = true,
+                      invitations = seats.map(_.player.playerId)
                     )
                     _ <- seats.traverse_(s =>
                         services.tournaments.enter(
@@ -114,26 +187,17 @@ object Challenges {
         val host = seats.head
         for {
             _ <- offeredIn(game)
-            _ <- IO.whenA(!friendly)(
-              TestSession.resource.use(session =>
-                  new GameAdminRepo(session)
-                      .grant(player = host.player.playerId, game = game.gameId, grantedBy = host.player.playerId)
-                      .attempt
-                      .void
-              )
-            )
-            t <- services.tournaments.createChallenge(
-              gameId = game.gameId,
-              request = ChallengeRequest(
-                characterId = host.character,
-                poolSize = Some(seats.size),
-                roundDuration = roundDuration,
-                gameSettings = settings,
-                isLive = live,
-                isFriendly = friendly,
-                isPublic = isPublic
-              ),
-              callerExternalId = host.player.externalId
+            t <- create(
+              tournaments = services.tournaments,
+              game = game,
+              owner = host.player,
+              characterId = host.character,
+              poolSize = Some(seats.size),
+              roundDuration = roundDuration,
+              gameSettings = settings,
+              isLive = live,
+              isFriendly = friendly,
+              isPublic = isPublic
             )
             _ <- seats.tail.traverse_(s =>
                 services.tournaments.enter(

@@ -9,8 +9,8 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, Suppressio
   *
   * Three levels are writable here, and every one of them is the caller's own: their settings in general, their settings
   * for one game, and their settings for one match. There is deliberately no route to anyone else's — a preference is
-  * not something another player, or an admin, has any business changing — so, like `TournamentService.challengesFor`,
-  * most of these take no player id and there is nothing to refuse.
+  * not something another player, or an admin, has any business changing — so, like `TournamentService.mine`, most of
+  * these take no player id and there is nothing to refuse.
   *
   * There is no fourth level: a game has no defaults of its own, and the chain ends at "send it"
   * (`NotificationLevels.unsaid`), the same for every game.

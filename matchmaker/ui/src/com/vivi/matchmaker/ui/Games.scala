@@ -65,23 +65,11 @@ object Games {
                         p(cls := "detail", game.description),
                         editGamePanel(game),
                         // What is waiting on this player in this game, before what they could join: a turn
-                        // they owe somebody is more urgent than a challenge they might accept.
-                        //
-                        // Both halves of the pending acceptances, in the order the home page puts them: the
-                        // ones this player can start now, and the ones that are still waiting on somebody.
-                        // Splitting them across two screens would leave a game page listing an acceptance as
-                        // waiting to start with no way to start it.
-                        MatchSections.readyToStartSection(Some(game)),
+                        // they owe somebody is more urgent than a competition they might enter.
                         MatchSections.dueSection(Some(game)),
                         MatchSections.myMatchesSection(Some(game)),
-                        MatchSections.waitingSection(Some(game)),
-                        // What could be joined, one heading over both kinds: the open challenges, and the game's
-                        // tournaments, which players are shown as competitions.
-                        sectionTag(
-                          cls := "refreshable",
-                          div(cls := "section-head", h2("Competitions")),
-                          div(cls := "section-body", Challenges.gameChallenges(game), Tournaments.gameSection(game))
-                        ),
+                        Characters.gameSection(game),
+                        Tournaments.gameSection(game),
                         Ratings.ratingsSection(game),
                         gameHistory(game)
                       )

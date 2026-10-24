@@ -177,7 +177,7 @@ class RouterSpec extends FunSuite {
     }
 
     test("a non-numeric game id is a bad request") {
-        assertEquals(dispatch(request(method = "GET", path = "/games/abc/challenges")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/games/abc/tournaments")).statusCode, 400)
     }
 
     // The per-game route takes the same body as the defaults route above it, so the flag that only
@@ -220,11 +220,6 @@ class RouterSpec extends FunSuite {
         "secret"
       )
     )
-
-    // Offered with a time to play and an invitation: the request's Option and list fields are the ones a client can get
-    // wrong, written here as upickle writes them.
-    private val challengeBody =
-        write(ChallengeRequest(characterId = Some(CharacterId(1)), poolSize = Some(2), invitations = List(PlayerId(2))))
 
     private val resultsBody = write(
       Json.MatchResults(results =
@@ -279,9 +274,6 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/ratings", "{}"),
       ("GET", "/games/1/ratings/2", "{}"),
       ("PUT", "/games/1/ratings/2", """{"rating":1600}"""),
-      ("GET", "/games/1/challenges", "{}"),
-      ("POST", "/games/1/challenges", challengeBody),
-      ("GET", "/me/challenges", "{}"),
       ("GET", "/games/1/characters", "{}"),
       ("GET", "/games/1/players/2/characters", "{}"),
       ("GET", "/games/1/characters/2", "{}"),
@@ -371,7 +363,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 75)
+        assertEquals(routed.size, 72)
         assertEquals(routed.distinct.size, routed.size)
     }
 

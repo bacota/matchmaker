@@ -113,13 +113,8 @@ object ApiClient {
         parts.mkString("?", "&", "")
     }
 
-    /** The open challenges the caller owns, has entered or is invited to, across every game. Takes no player id: the
-      * server scopes it to whoever the token says is calling.
-      */
-    def myChallenges(): Future[Seq[ChallengeSummary]] = get[Seq[ChallengeSummary]]("/me/challenges")
-
     /** What the caller wants to be told about: their answers in general, and the games they have answered differently
-      * for. Takes no player id for the same reason `myChallenges` does not.
+      * for. Takes no player id for the same reason `myTournaments` does not.
       */
     def notifications(): Future[NotificationSettings] = get[NotificationSettings]("/me/notifications")
 
@@ -195,8 +190,8 @@ object ApiClient {
     def characterNames(gameId: GameId, playerId: PlayerId): Future[Seq[CharacterName]] =
         get[Seq[CharacterName]](s"/games/${gameId.value}/players/${playerId.value}/characters")
 
-    /** A game's admins, each with who made them one: what tells the challenge form whether to offer what only a game's
-      * admin may — a match they will not play in, and one that is not friendly.
+    /** A game's admins, each with who made them one: what tells the game's screen whether to offer what only a game's
+      * admin may, such as choosing its competition formats.
       */
     def gameAdmins(gameId: GameId): Future[Seq[GameAdmin]] =
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
@@ -258,20 +253,6 @@ object ApiClient {
         apiKey.foreach(key => body("apiKey") = ujson.Str(key))
         send[Game](method = HttpMethod.POST, path = "/games", body = Some(ujson.write(ujson.Obj(body))))
     }
-
-    def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
-        get[Seq[ChallengeSummary]](s"/games/${gameId.value}/challenges")
-
-    /** Offers a challenge: a tournament of the challenge model, opened and entered, with its invitations sent, in one
-      * call — a challenge that is not open, made alone, would exist briefly as one nobody could enter. Everything after
-      * that is a tournament call: entering, withdrawing, starting, cancelling, inviting and choosing a role.
-      */
-    def createChallenge(gameId: GameId, request: ChallengeRequest): Future[Tournament] =
-        send[Tournament](
-          method = HttpMethod.POST,
-          path = s"/games/${gameId.value}/challenges",
-          body = Some(write(request))
-        )
 
     /** How the finished matches of one window of the caller's completed list turned out, in one call — see
       * `MatchService.results`.

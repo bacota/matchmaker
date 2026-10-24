@@ -327,9 +327,21 @@ try {
     const bobId = (await call("GET", `${MM}/me`, undefined, bob)).playerId;
     psql(`UPDATE player SET is_admin = true WHERE player_id = ${aliceId}`);
     await call("POST", `${MM}/tournament-models/sync`, {}, alice);
-    await call("PUT", `${MM}/games/${gameId}/tournament-models/challenge`, {}, alice);
+    await call("PUT", `${MM}/games/${gameId}/tournament-models/RR`, {}, alice);
 
-    const challenge = (body, sub = alice) => call("POST", `${MM}/games/${gameId}/challenges`, body, sub).then(m => m.tournamentId);
+    // A one-match competition of the round robin format, as the New Competition dialog makes one: created, its
+    // invitations sent, opened, and entered by its owner.
+    async function challenge({ poolSize, isAutoStarted = false, isOpen, isPublic = false, invitations = [] }, sub = alice) {
+        const t = (await call("POST", `${MM}/games/${gameId}/tournaments`, {
+            name: "A challenge", tournamentModelId: "RR", defaultPoolSize: poolSize,
+            settings: { hasAutomaticRounds: true, isInvitational: !isOpen, isAutoStarted, isPublic, maxEntrants: poolSize },
+        }, sub)).tournamentId;
+        for (const playerId of invitations)
+            await call("POST", `${MM}/games/${gameId}/tournaments/${t}/invitations`, { playerId }, sub);
+        await call("POST", `${MM}/games/${gameId}/tournaments/${t}/open`, {}, sub);
+        await call("POST", `${MM}/games/${gameId}/tournaments/${t}/entries`, {}, sub);
+        return t;
+    }
     async function newMatch(isPublic = false) {
         const t = await challenge({ poolSize: 2, isAutoStarted: true, isOpen: false, isPublic, invitations: [bobId] });
         await call("POST", `${MM}/games/${gameId}/tournaments/${t}/entries`, {}, bob);
@@ -397,20 +409,15 @@ try {
             await settle();
         }],
         ["game page", alice, game],
-        ["challenge form", alice, async (page, settle) => {
-            await game(page, settle);
-            await page.getByRole("button", { name: "Create Challenge" }).click();
-            await page.getByRole("dialog").waitFor();
-        }],
         ["tournament page", alice, async (page, settle) => {
             await game(page, settle);
             await page.getByRole("button", { name: openName, exact: true }).first().click();
             await settle();
         }],
-        ["new tournament form", alice, async (page, settle) => {
+        ["new competition dialog", alice, async (page, settle) => {
             await game(page, settle);
             await page.getByRole("button", { name: "New Competition" }).click();
-            await settle();
+            await page.getByRole("dialog").waitFor();
         }],
         ["add a game form", alice, menu("Add a Game")],
         ["engine: match being played", null, visit(`${ENGINE}/matches/${playing}/play?as=${alice}`)],

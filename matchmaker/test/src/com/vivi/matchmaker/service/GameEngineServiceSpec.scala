@@ -351,7 +351,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     (started, other) = made
                     participants <- participantsOf(started)
                     // Started, so it is no longer open to enter.
-                    remaining <- services.tournaments.challengesForGame(fixture.game.gameId, externalId)
+                    remaining <- services.tournaments.listForGame(fixture.game.gameId, externalId)
                 } yield {
                     val request = engine.lastRequest.get
                     started.statusUrl.contains("https://engine/status/1") &&
@@ -372,7 +372,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     request.players.flatMap(_.characterName).toSet == Set("character", "other") &&
                     request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
                     participants.map(_.playerId).toSet == Set(fixture.owner.playerId, other.playerId) &&
-                    remaining.forall(_.summary.tournament.tournamentId != started.tournamentId)
+                    remaining.forall(_.tournament.tournamentId != started.tournamentId)
                 }
                 result.timeout(30.seconds).unsafeRunSync()
         }
@@ -454,12 +454,13 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(engine = StubEngine())
             def offer(fixture: Fixture, settings: String) =
-                services.tournaments
-                    .createChallenge(
-                      gameId = fixture.game.gameId,
-                      request =
-                          ChallengeRequest(characterId = Some(fixture.character.characterId), gameSettings = settings),
-                      callerExternalId = externalId
+                Challenges
+                    .create(
+                      tournaments = services.tournaments,
+                      game = fixture.game,
+                      owner = fixture.owner,
+                      characterId = Some(fixture.character.characterId),
+                      gameSettings = settings
                     )
                     .attempt
             val result = for {
@@ -484,10 +485,11 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
-                offered <- services.tournaments.createChallenge(
-                  gameId = fixture.game.gameId,
-                  request = ChallengeRequest(characterId = Some(fixture.character.characterId)),
-                  callerExternalId = externalId
+                offered <- Challenges.create(
+                  tournaments = services.tournaments,
+                  game = fixture.game,
+                  owner = fixture.owner,
+                  characterId = Some(fixture.character.characterId)
                 )
                 attempt <- services.tournaments
                     .start(
@@ -2439,11 +2441,13 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
-                noLimit <- services.tournaments
-                    .createChallenge(
-                      gameId = fixture.game.gameId,
-                      request = ChallengeRequest(characterId = Some(fixture.character.characterId), isLive = true),
-                      callerExternalId = externalId
+                noLimit <- Challenges
+                    .create(
+                      tournaments = services.tournaments,
+                      game = fixture.game,
+                      owner = fixture.owner,
+                      characterId = Some(fixture.character.characterId),
+                      isLive = true
                     )
                     .attempt
             } yield noLimit.left.exists(_.isInstanceOf[ValidationError])
