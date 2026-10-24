@@ -3,7 +3,7 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import skunk._
-import skunk.data.Arr
+import skunk.data.{Arr, TransactionAccessMode, TransactionIsolationLevel}
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -413,12 +413,18 @@ class TournamentRepo(session: Session[IO]) {
       * they could enter. Newest first within each.
       */
     def openForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
-        for {
-            own <- session.execute(selectOwnNotStartedForGame)(((viewer, viewer), game, viewer))
-            enterable <- session.execute(selectEnterableForGame)(
-              ((viewer, viewer), game, (viewer, viewer, viewer, viewer))
+        // One snapshot for both halves: they are told apart by the owner, which can change between two statements,
+        // and a tournament handed over between them would be listed twice or not at all.
+        session
+            .transaction(TransactionIsolationLevel.RepeatableRead, TransactionAccessMode.ReadOnly)
+            .use(_ =>
+                for {
+                    own <- session.execute(selectOwnNotStartedForGame)(((viewer, viewer), game, viewer))
+                    enterable <- session.execute(selectEnterableForGame)(
+                      ((viewer, viewer), game, (viewer, viewer, viewer, viewer))
+                    )
+                } yield (own ++ enterable).map(summaryOf(viewer))
             )
-        } yield (own ++ enterable).map(summaryOf(viewer))
 
     /** The tournaments `viewer` owns, has entered or is invited to, in every game, that are not over, newest first. */
     def summariesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
