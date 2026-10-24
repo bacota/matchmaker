@@ -614,6 +614,8 @@ object Store {
             case Page.OneTournament(gameId, tournamentId) =>
                 if (!tournament.now().exists(_.summary.tournament.tournamentId == tournamentId)) tournament.set(None)
                 reloadTournament(gameId, tournamentId)
+                // Whether the caller administers the game, for its Edit form: only an admin may make it rated.
+                refreshGameAdmins(gameId)
             case Page.OneGame(gameId) =>
                 reloadTournaments(gameId)
                 reloadTournamentModels(gameId)
