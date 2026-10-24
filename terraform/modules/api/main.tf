@@ -313,8 +313,6 @@ locals {
     # rather than deleted, so this is a POST and not a DELETE.
     "POST /me/notifications/retry",
     "PUT /me/notifications/games/{gameId}",
-    # The open challenges the caller owns, has entered or is invited to, in every game.
-    "GET /me/challenges",
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",
@@ -339,10 +337,6 @@ locals {
     "GET /games/{gameId}/ratings",
     "GET /games/{gameId}/ratings/{playerId}",
     "PUT /games/{gameId}/ratings/{playerId}",
-    # A game's open challenges, and offering one: a tournament of the challenge model, opened and
-    # entered in one call. Everything after that is the tournament routes below.
-    "GET /games/{gameId}/challenges",
-    "POST /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one. No state.
     "GET /games/{gameId}/players/{playerId}/characters",
