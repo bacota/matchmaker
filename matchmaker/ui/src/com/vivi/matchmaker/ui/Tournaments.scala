@@ -194,17 +194,20 @@ object Tournaments {
                 CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
                 value <-- Store.endedFrame.signal.map(_.code),
                 onChange.mapToValue --> { code =>
-                    CompletedFrame.fromCode(code).foreach { frame =>
-                        Store.endedFrame.set(frame)
-                        Store.reloadMyEndedTournaments()
-                    }
+                    CompletedFrame.fromCode(code).foreach(Store.showEndedFrame)
                 }
               )
             ),
             listing(Store.myEndedTournaments.signal, Store.loading(Store.Fetch.MyEndedTournaments))(
               p(
                 cls := "empty",
-                child.text <-- Store.endedFrame.signal.map(f => s"None of yours ended in the ${f.label.toLowerCase}.")
+                // Nothing to say about the window when it could not be had: the banner says why.
+                child.text <-- Store.endedFrame.signal
+                    .combineWith(Store.failed(Store.Fetch.MyEndedTournaments))
+                    .map {
+                        case (_, true)  => "Your ended competitions could not be loaded."
+                        case (frame, _) => s"None of yours ended in the ${frame.label.toLowerCase}."
+                    }
               )
             )(rows => summaryList(rows, showGame = true))
           ),

@@ -1008,6 +1008,17 @@ object Store {
             .zip(reloadMyEndedTournaments())
             .map(_ => ())
 
+    /** Shows the ended tournaments of another window: emptied at once, so that the last window's rows are not shown
+      * under this one's name while its answer is on its way, or after it has failed.
+      */
+    def showEndedFrame(frame: CompletedFrame): Future[Unit] = {
+        endedFrame.set(frame)
+        myEndedTournaments.set(Seq.empty)
+        // Another window is another question, which nothing has answered yet: the list says it is loading.
+        outcomes.update(_ - Fetch.MyEndedTournaments)
+        reloadMyEndedTournaments()
+    }
+
     def reloadMyEndedTournaments(): Future[Unit] =
         reload(ApiClient.myEndedTournaments(endedFrame.now()), Fetch.MyEndedTournaments)(myEndedTournaments.set)
 
