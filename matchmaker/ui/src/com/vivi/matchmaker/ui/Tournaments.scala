@@ -471,8 +471,8 @@ object Tournaments {
                           span(
                             Views.tipField(
                               id = freshTipId("round-length-tip"),
-                              caption = "This round's length (hours)",
-                              text = "How long this round lasts. Blank uses the competition's round length."
+                              caption = Labels.competition.roundLength,
+                              text = Tips.competition.roundLength
                             )(
                               input(
                                 tpe := "number",
@@ -496,9 +496,7 @@ object Tournaments {
                           withTip(
                             id = freshTipId("check-round-tip"),
                             subject = "Check Round",
-                            text = "Ends any match of this round whose clock has run out, as a player's look at it would, and " +
-                                "forfeits any seat that ran out of time to choose its role. It runs in the background, " +
-                                "so what it changes shows when the page is next refreshed."
+                            text = Tips.competition.checkRound
                           )(
                             busyButton(label = "Check Round", busy = heldBusy(s"check round ${t.tournamentId}"))(busy =>
                                 Store.run(ApiClient.checkRound(t.gameId, t.tournamentId), busy)(_ => checking.set(true))
@@ -765,7 +763,10 @@ object Tournaments {
               ),
           div(
             cls := "row",
-            field("Find a player", input(controlled(value <-- prefix.signal, onInput.mapToValue --> prefix))),
+            field(
+              Labels.competition.findPlayer,
+              input(controlled(value <-- prefix.signal, onInput.mapToValue --> prefix))
+            ),
             busyButton(label = "Search", disabledWhen = prefix.signal.map(_.trim.isEmpty))(busy =>
                 Store.run(ApiClient.searchPlayers(prefix.now().trim), busy)(r => found.set(r.players))
             )
@@ -936,9 +937,7 @@ object Tournaments {
           withTip(
             id = freshTipId("decide-tip"),
             subject = "Decide by hand",
-            text =
-                "For a match that cannot be played, such as one a player never turned up to: it is called off, and its " +
-                    "seats ranked as you say. The ranks decide the competition and move nobody's rating."
+            text = Tips.competition.decide
           )(
             button(
               tpe := "button",
@@ -1302,18 +1301,19 @@ object Tournaments {
         /* How many players a match of a game without roles has: a number in the game's range, or everyone in the
          * pool. */
         def playersControl: HtmlElement = {
-            val range = game.maxPlayers.fold(s"at least ${game.requiredSeats}")(m => s"${game.requiredSeats} to $m")
+            val fewest = game.requiredSeats.toString
             val id = freshTipId(s"$key-tip")
             div(
               withTip(
                 id = id,
-                subject = "Players per match",
-                text = s"How many players each match has: $range. Or everyone in the pool in one match — then set " +
-                    "the pool size to how many should play together."
+                subject = Labels.competition.playersPerMatch,
+                text = game.maxPlayers.fold(Tips.competition.playersPerMatchAtLeast(fewest = fewest))(m =>
+                    Tips.competition.playersPerMatchBetween(fewest = fewest, most = m.toString)
+                )
               )(
                 label(
                   cls := "field",
-                  "Players per match",
+                  Labels.competition.playersPerMatch,
                   select(
                     aria.describedBy := id,
                     onChange.mapToValue --> (v => wholePool.set(v == "pool")),
@@ -1362,15 +1362,18 @@ object Tournaments {
           asked.fold(emptyNode)(who =>
               p(cls := "detail", s"Once it is made, you can invite ${who.nickname} from its page.")
           ),
-          field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
-          field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
+          field(Labels.competition.name, input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+          field(
+            Labels.competition.description,
+            input(controlled(value <-- description.signal, onInput.mapToValue --> description))
+          ),
           if (running) p(cls := "detail", "The format of a competition under way cannot be changed.")
           else
               div(
                 Views.tipField(
                   id = freshTipId(s"$key-tip"),
-                  caption = "Format",
-                  text = "The formats this game's admins offer, grouped by kind."
+                  caption = Labels.competition.format,
+                  text = Tips.competition.format
                 )(
                   select(
                     onChange.mapToValue --> { v =>
@@ -1414,10 +1417,9 @@ object Tournaments {
                 },
                 if (game.isRoleless) playersControl else emptyNode,
                 number(
-                  caption = "Pool Size",
+                  caption = Labels.competition.poolSize,
                   v = poolSize,
-                  tip =
-                      "How many play in a pool of any stage that does not set its own size. Filled in from the format."
+                  tip = Tips.competition.poolSize
                 ),
                 // Everyone entered so far in one pool: as many as the game takes in a match, when it has a most.
                 if (game.isRoleless && entered > 0) {
@@ -1431,14 +1433,14 @@ object Tournaments {
               ),
           h4("Settings"),
           checkbox(
-            caption = "Invitational",
+            caption = Labels.competition.invitational,
             v = invitational,
-            tip = "Only players you invite may enter. You may always enter your own competition."
+            tip = Tips.competition.invitational
           ),
           checkbox(
-            caption = "Auto start",
+            caption = Labels.competition.autoRounds,
             v = autoRounds,
-            tip = "Each round begins as soon as the last one ends, rather than when you start it."
+            tip = Tips.competition.autoRounds
           ),
           // Only for an admin of the game, who alone may make a competition rated.
           child <-- Store.currentPlayer.flatMapSwitch {
@@ -1449,60 +1451,58 @@ object Tournaments {
                           if (!isAdmin) emptyNode
                           else
                               checkbox(
-                                caption = "Friendly",
+                                caption = Labels.competition.friendly,
                                 v = friendly,
-                                tip = "Its matches change nobody's rating."
+                                tip = Tips.competition.friendly
                               )
                       )
               case None => Val(emptyNode)
           },
           checkbox(
-            caption = "Late entries",
+            caption = Labels.competition.lateEntries,
             v = lateEntries,
-            tip = "Players may enter after it has started, joining from its next stage."
+            tip = Tips.competition.lateEntries
           ),
           checkbox(
-            caption = "Concurrent rounds",
+            caption = Labels.competition.concurrentRounds,
             v = concurrentRounds,
-            tip = "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
+            tip = Tips.competition.concurrentRounds
           ),
-          checkbox(caption = "Public", v = isPublic, tip = "Anybody may see it listed, and watch its matches."),
+          checkbox(caption = Labels.competition.isPublic, v = isPublic, tip = Tips.competition.isPublic),
           // Nothing to choose in a game without roles.
           if (game.isRoleless) emptyNode
           else
               checkbox(
-                caption = "Players choose roles",
+                caption = Labels.competition.chooseRoles,
                 v = chooseRoles,
-                tip =
-                    "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
-                        "being given them."
+                tip = Tips.competition.chooseRoles
               ),
           checkbox(
-            caption = "Live",
+            caption = Labels.competition.live,
             v = live,
-            tip =
-                "Its matches are played in real time: the game engine runs the turns and keeps the clock, so a round " +
-                    "length is required."
+            tip = Tips.competition.live
           ),
           // A round robin is one match of everyone who enters: no most to set, nor to start on.
           child <-- modelId.signal.map(id =>
               if (isRoundRobin(id)) emptyNode
               else
                   div(
-                    number(caption = "Max players (optional)", v = maxEntrants, tip = "Leave blank for no limit."),
+                    number(
+                      caption = Labels.competition.maxEntrants,
+                      v = maxEntrants,
+                      tip = Tips.competition.maxEntrants
+                    ),
                     checkbox(
-                      caption = "Start when full",
+                      caption = Labels.competition.autoStart,
                       v = autoStart,
-                      tip = "It starts by itself as soon as it has its most players."
+                      tip = Tips.competition.autoStart
                     )
                   )
           ),
           Views.tipField(
             id = freshTipId(s"$key-tip"),
-            caption = "When to play (optional)",
-            text =
-                "When you mean it to be played, shown to anyone deciding whether to enter. It does not schedule or start " +
-                    "the competition."
+            caption = Labels.competition.plannedStart,
+            text = Tips.competition.plannedStart
           )(
             input(
               tpe := "datetime-local",
@@ -1511,15 +1511,13 @@ object Tournaments {
           ),
           // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
           GameSettingsFields.parameterFields(game, parameters),
-          number(caption = "Min rating (optional)", v = minRating, tip = "Leave blank for no minimum."),
-          number(caption = "Max rating (optional)", v = maxRating, tip = "Leave blank for no maximum."),
-          number(caption = "Max entries per player", v = entries, tip = "How many times one player may enter."),
+          number(caption = Labels.competition.minRating, v = minRating, tip = Tips.competition.minRating),
+          number(caption = Labels.competition.maxRating, v = maxRating, tip = Tips.competition.maxRating),
+          number(caption = Labels.competition.entries, v = entries, tip = Tips.competition.entries),
           Views.tipField(
             id = freshTipId(s"$key-tip"),
-            caption = "Match time limit",
-            text =
-                "How long a round lasts; you may give a round started by hand another. In a game of turns each player has " +
-                    "a chess clock of an equal share of it."
+            caption = Labels.competition.timeLimit,
+            text = Tips.competition.timeLimit
           )(
             span(
               cls := "time-limit",
@@ -1531,7 +1529,7 @@ object Tournaments {
                 controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
               ),
               select(
-                aria.label := "Time unit",
+                aria.label := Labels.competition.timeUnit,
                 value <-- timeUnit.signal,
                 onChange.mapToValue --> timeUnit,
                 timeUnits.map((unit, _) => option(value := unit, unit))
@@ -1540,9 +1538,9 @@ object Tournaments {
           ),
           if (game.moveType == MoveType.Simultaneous && game.maxTurns.isEmpty)
               number(
-                caption = "Turns per match",
+                caption = Labels.competition.maxTurns,
                 v = maxTurns,
-                tip = "This game does not say how many turns it lasts; a round's time is divided among this many."
+                tip = Tips.competition.maxTurns
               )
           else emptyNode,
           div(
@@ -1632,9 +1630,7 @@ object Tournaments {
           withTip(
             id = tipId,
             subject = "Competition Formats",
-            text =
-                "The formats ticked here are the ones offered when a competition of this game is created. A competition " +
-                    "already made keeps its format whatever you change here."
+            text = Tips.competition.formats
           )(h3("Competition Formats")),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
           listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
@@ -1689,10 +1685,7 @@ object Tournaments {
               withTip(
                 id = syncTip,
                 subject = "Sync Formats",
-                text =
-                    "Makes every game's formats the ones the code defines: adds new ones and updates changed ones. A " +
-                        "format the code no longer has is removed with its competitions if nobody has entered one, and " +
-                        "otherwise only taken off every list."
+                text = Tips.competition.syncFormats
               )(
                 busyButton(label = "Sync Formats")(busy =>
                     Store.run(ApiClient.syncTournamentModels(), busy) { done =>

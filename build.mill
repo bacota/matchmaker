@@ -16,6 +16,51 @@ def sharedSources(moduleDir: os.Path): Seq[os.Path] = {
   Seq(root / "shared" / "src", root / "matchmaker" / "src" / "com" / "vivi" / "matchmaker" / "model")
 }
 
+/** A properties file of the UI's text as the source of a Scala object: `game.roles` becomes `<objectName>.game.roles`,
+  * and a value with `{name}` in it a method taking `name`. Compiled rather than fetched at run time, so a key the code
+  * asks for and the file lacks, or a placeholder renamed on one side only, fails the build instead of showing nothing.
+  */
+def textObject(file: os.Path, objectName: String, example: String): String = {
+  val props = new java.util.Properties
+  val in = java.nio.file.Files.newBufferedReader(file.toNIO, java.nio.charset.StandardCharsets.UTF_8)
+  try props.load(in)
+  finally in.close()
+  val fileName = file.last
+  val name = "[a-z][A-Za-z0-9]*"
+  val placeholder = ("\\{(" + name + ")\\}").r
+  def literal(s: String) =
+    "\"" + s.flatMap {
+      case '\\' => "\\\\"
+      case '"'  => "\\\""
+      case '\n' => "\\n"
+      case c    => c.toString
+    } + "\""
+  val keys = props.stringPropertyNames().toArray(Array.empty[String]).toSeq.sorted
+  keys.filterNot(_.matches(name + "\\." + name)).foreach { key =>
+    throw new Exception(s"$fileName: '$key' is not two names joined by a dot, such as $example")
+  }
+  val objects = keys.groupBy(_.takeWhile(_ != '.')).toSeq.sortBy(_._1).map { (screen, inScreen) =>
+    val members = inScreen.map { key =>
+      val member = key.drop(screen.length + 1)
+      val text = props.getProperty(key)
+      if (placeholder.replaceAllIn(text, "").exists(c => c == '{' || c == '}'))
+        throw new Exception(s"$fileName: $key has a brace that is not part of a {name}")
+      val params = placeholder.findAllMatchIn(text).map(_.group(1)).toSeq.distinct
+      if (params.isEmpty) s"    val `$member`: String = ${literal(text)}"
+      else {
+        val pieces = placeholder.split(text).toSeq.map(literal)
+        val names = placeholder.findAllMatchIn(text).map(_.group(1)).toSeq
+        val body = pieces.zipAll(names, "\"\"", "").flatMap((p, n) => Seq(p) ++ Option.when(n.nonEmpty)(s"`$n`"))
+        s"    def `$member`(${params.map(p => s"`$p`: String").mkString(", ")}): String = ${body.mkString(" + ")}"
+      }
+    }
+    s"  object `$screen` {\n${members.mkString("\n")}\n  }"
+  }
+  "package com.vivi.matchmaker.ui\n\n" +
+    s"/** Generated from matchmaker/ui/$fileName by build.mill: edit that, not this. */\n" +
+    s"private[ui] object $objectName {\n${objects.mkString("\n\n")}\n}\n"
+}
+
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
 
@@ -173,6 +218,22 @@ object matchmaker extends ScalaModule {
     def scalaJSVersion = "1.17.0"
 
     def sources = Task.Sources(Seq(moduleDir / "src") ++ sharedSources(moduleDir)*)
+
+    /** The text of every "?" tip, and the caption of every form field, each kept in one file to be edited without
+      * touching the code.
+      */
+    def tipsFile = Task.Source(moduleDir / "tips.properties")
+    def labelsFile = Task.Source(moduleDir / "labels.properties")
+
+    /** `tips.properties` as `object Tips` and `labels.properties` as `object Labels`; see [[textObject]]. */
+    def generatedSources = Task {
+      os.write(Task.dest / "Tips.scala", textObject(file = tipsFile().path, objectName = "Tips", example = "game.roles"))
+      os.write(
+        Task.dest / "Labels.scala",
+        textObject(file = labelsFile().path, objectName = "Labels", example = "game.name")
+      )
+      super.generatedSources() ++ Seq(PathRef(Task.dest))
+    }
 
     def mvnDeps = Seq(
       mvn"org.scala-js::scalajs-dom::2.8.0",

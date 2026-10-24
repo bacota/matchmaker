@@ -470,7 +470,7 @@ object Account {
               ),
               label(
                 cls := "field",
-                "Game",
+                Labels.account.game,
                 select(
                   value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
                   onChange.mapToValue --> { raw =>
@@ -588,7 +588,7 @@ object Account {
             child.text <-- Store.currentPlayer.map(_.map(p => s"Other players see you as ${p.nickname}.").getOrElse(""))
           ),
           label(
-            "New nickname",
+            Labels.account.nickname,
             input(
               tpe := "text",
               autoComplete := "nickname",
@@ -646,7 +646,7 @@ object Account {
               case None          => emptyNode
           },
           label(
-            "New email address",
+            Labels.account.email,
             input(
               tpe := "email",
               autoComplete := "email",
@@ -685,7 +685,7 @@ object Account {
                       }
                     ),
                     label(
-                      "Code",
+                      Labels.account.code,
                       input(
                         tpe := "text",
                         autoComplete := "one-time-code",
@@ -739,7 +739,7 @@ object Account {
           onSubmit.preventDefault --> (_ => if (!busy.now()) savePassword(busy)),
           h3("Password"),
           label(
-            "Current password",
+            Labels.account.currentPassword,
             input(
               tpe := "password",
               autoComplete := "current-password",
@@ -747,7 +747,7 @@ object Account {
             )
           ),
           label(
-            "New password",
+            Labels.account.newPassword,
             input(
               tpe := "password",
               autoComplete := "new-password",

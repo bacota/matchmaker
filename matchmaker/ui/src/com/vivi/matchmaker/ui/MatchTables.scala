@@ -13,7 +13,6 @@ object MatchTables {
         freshTipId,
         friendlyHeading,
         friendlyLabel,
-        friendlyMeaning,
         listing,
         openSignedIn,
         scopeAttr,
@@ -242,7 +241,7 @@ object MatchTables {
               role := "cell",
               cls := "elo",
               // Only the "?", a word being too wide for the column; named for a screen reader by what it marks.
-              tipped(id = freshTipId("friendly-tip"), text = friendlyMeaning, control = emptyNode)(
+              tipped(id = freshTipId("friendly-tip"), text = Tips.matches.friendly, control = emptyNode)(
                 cls := "tip-toggle",
                 aria.label := "Friendly match",
                 "?"

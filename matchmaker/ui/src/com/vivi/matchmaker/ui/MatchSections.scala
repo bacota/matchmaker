@@ -229,7 +229,7 @@ object MatchSections {
 
         Seq(
           field(
-            "Show",
+            Labels.matches.show,
             select(
               CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
               value <-- Store.completedFrame.signal.map(_.code),

@@ -75,12 +75,7 @@ object GameForm {
           withTip(
             id = s"$formKey-roles-tip",
             subject = "Roles",
-            text = "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
-                "every required role is filled, or, for a challenge that starts itself, every required and " +
-                "recommended role. Optional roles can always be left empty, and a recommended one counts " +
-                "toward a competition's pool size. A role that already exists can " +
-                "be renamed but not removed — acceptances and played matches name it, so retire one by " +
-                "making it optional."
+            text = Tips.game.roles
           )(h4("Roles")),
           children <-- roles.signal.map(_.zipWithIndex.map { (draft, i) =>
               val nameTip = s"$formKey-role-$i-name-tip"
@@ -94,11 +89,11 @@ object GameForm {
                 withTip(
                   id = nameTip,
                   subject = "Role name",
-                  text = "What the game engine is sent for this seat, so it has to be the name the engine expects."
+                  text = Tips.game.roleName
                 )(
                   label(
                     cls := "field",
-                    "Name",
+                    Labels.game.roleName,
                     input(
                       aria.describedBy := nameTip,
                       controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
@@ -108,11 +103,11 @@ object GameForm {
                 withTip(
                   id = displayTip,
                   subject = "Role display name",
-                  text = "What players see for this seat. Left blank, it is the name."
+                  text = Tips.game.roleDisplayName
                 )(
                   label(
                     cls := "field",
-                    "Display name",
+                    Labels.game.roleDisplayName,
                     input(
                       aria.describedBy := displayTip,
                       controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
@@ -122,12 +117,11 @@ object GameForm {
                 withTip(
                   id = typeTip,
                   subject = "Role type",
-                  text = "Required: a match cannot start without it. Recommended: a challenge that starts itself " +
-                      "waits for it too. Optional: it can always be left empty."
+                  text = Tips.game.roleType
                 )(
                   label(
                     cls := "field",
-                    "Type",
+                    Labels.game.roleType,
                     select(
                       aria.describedBy := typeTip,
                       onChange.mapToValue --> (code => draft.roleType.set(RoleType.fromCode(code))),
@@ -139,12 +133,11 @@ object GameForm {
                 withTip(
                   id = preferenceTip,
                   subject = "Role preference level",
-                  text = "In a competition where roles are chosen, the role with the highest level goes to the " +
-                      "highest seed. Leave blank for no preference."
+                  text = Tips.game.rolePreference
                 )(
                   label(
                     cls := "field",
-                    "Preference",
+                    Labels.game.rolePreference,
                     input(
                       tpe := "number",
                       inputMode := "numeric",
@@ -180,7 +173,7 @@ object GameForm {
           withTip(
             id = s"$formKey-parameters-tip",
             subject = "Parameters",
-            text = "How the game engine is configured when a match is created. A game may have none at all."
+            text = Tips.game.parameters
           )(h4("Parameters")),
           children <-- parameters.signal.map(_.zipWithIndex.map { (draft, i) =>
               // A caption on each box, as on a role's: a placeholder is gone at the first keystroke, and with it
@@ -189,26 +182,23 @@ object GameForm {
                 cls := "row",
                 tipField(
                   id = s"$formKey-parameter-$i-name-tip",
-                  caption = "Name",
-                  text = "What the game engine is sent for this parameter, so it has to be the name the engine expects."
+                  caption = Labels.game.parameterName,
+                  text = Tips.game.parameterName
                 )(input(controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name))),
                 tipField(
                   id = s"$formKey-parameter-$i-display-tip",
-                  caption = "Display name",
-                  text = "What players see for this parameter. Left blank, it is the name."
+                  caption = Labels.game.parameterDisplayName,
+                  text = Tips.game.parameterDisplayName
                 )(input(controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName))),
                 tipField(
                   id = s"$formKey-parameter-$i-values-tip",
-                  caption = "Values, comma separated",
-                  text = "The values a challenger can choose between, such as \"3, 5, 7\". A parameter with " +
-                      "none is not offered."
+                  caption = Labels.game.parameterValues,
+                  text = Tips.game.parameterValues
                 )(input(controlled(value <-- draft.values.signal, onInput.mapToValue --> draft.values))),
                 tipField(
                   id = s"$formKey-parameter-$i-default-tip",
-                  caption = "Default value",
-                  text =
-                      "The value a new challenge starts with. It has to be one of the values; left blank, it is the " +
-                          "first."
+                  caption = Labels.game.parameterDefault,
+                  text = Tips.game.parameterDefault
                 )(input(controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default))),
                 button(
                   cls := "link",
@@ -390,12 +380,11 @@ object GameForm {
               val tipId = s"$formKey-characters-tip"
               withTip(
                 id = tipId,
-                subject = "Requires characters",
-                text = "Whether a player needs a character of their own to offer or accept a challenge. Characters " +
-                    "are made in the game engine, which tells matchmaker once one exists."
+                subject = Labels.game.requiresCharacters,
+                text = Tips.game.requiresCharacters
               )(
                 label(
-                  "Requires characters ",
+                  s"${Labels.game.requiresCharacters} ",
                   input(
                     tpe := "checkbox",
                     aria.describedBy := tipId,
@@ -413,9 +402,8 @@ object GameForm {
               Option.when(gt == GameType.Character)(
                 tipField(
                   id = s"$formKey-character-url-tip",
-                  caption = "Character page url",
-                  text = "The engine's page where a player makes a character. A player without one is sent there " +
-                      "before they can offer or accept a challenge."
+                  caption = Labels.game.characterUrl,
+                  text = Tips.game.characterUrl
                 )(
                   input(
                     tpe := "url",
@@ -426,32 +414,29 @@ object GameForm {
           ),
           tipField(
             id = s"$formKey-name-tip",
-            caption = "Name",
-            text = "The game's name as the game engine knows it. Players see the display name instead, when there " +
-                "is one."
+            caption = Labels.game.name,
+            text = Tips.game.name
           )(input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           tipField(
             id = s"$formKey-display-name-tip",
-            caption = "Display name",
-            text = "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
-                "name, which is what the game engine is told."
+            caption = Labels.game.displayName,
+            text = Tips.game.displayName
           )(input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))),
           tipField(
             id = s"$formKey-description-tip",
-            caption = "Description",
-            text = "A line or two about the game, shown under its name on the game's page."
+            caption = Labels.game.description,
+            text = Tips.game.description
           )(input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
           tipField(
             id = s"$formKey-url-tip",
-            caption = "Game engine url",
-            text = "The address matchmaker calls to have the game engine create a match."
+            caption = Labels.game.url,
+            text = Tips.game.url
           )(input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
           // The name means nothing on its own, and getting it wrong fails nowhere near this form.
           tipField(
             id = s"$formKey-engine-identity-tip",
-            caption = "Engine identity",
-            text = "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
-                "game's API key are taken to come from it."
+            caption = Labels.game.engineIdentity,
+            text = Tips.game.engineIdentity
           )(
             input(
               autoComplete := "off",
@@ -463,16 +448,11 @@ object GameForm {
           // back.
           tipField(
             id = s"$formKey-api-key-tip",
-            caption = "API key",
+            caption = Labels.game.apiKey,
             text = existing match {
-                case Some(game) if game.hasApiKey =>
-                    "A key is set. Leave this blank to keep it, or enter a new one to replace it."
-                case Some(_) =>
-                    "No key is set, so a deployed engine will refuse every call. Enter the key the engine " +
-                        "was deployed with."
-                case None =>
-                    "The key the engine was deployed with, at least 24 characters. It is stored, never shown " +
-                        "again, and can be replaced here later."
+                case Some(game) if game.hasApiKey => Tips.game.apiKeySet
+                case Some(_)                      => Tips.game.apiKeyMissing
+                case None                         => Tips.game.apiKeyNew
             }
           )(
             // A password field, so it is not shown while it is typed, and new-password so that no browser
@@ -489,8 +469,8 @@ object GameForm {
           if (TimeoutAction.values.sizeIs > 1)
               tipField(
                 id = s"$formKey-timeout-action-tip",
-                caption = "When a turn runs out",
-                text = "What happens to a player who takes longer over a turn than the competition allows."
+                caption = Labels.game.timeoutAction,
+                text = Tips.game.timeoutAction
               )(
                 select(
                   onChange.mapToValue --> (code => timeoutAction.set(TimeoutAction.fromCode(code))),
@@ -506,9 +486,8 @@ object GameForm {
               val tipId = s"$formKey-disable-tip"
               withTip(
                 id = tipId,
-                subject = "Disable Game",
-                text = "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
-                    "and matches are left as they are. It is listed on Add a Game, where it can be enabled again."
+                subject = Labels.game.disable,
+                text = Tips.game.disable
               )(
                 label(
                   cls := "warn",
@@ -517,7 +496,7 @@ object GameForm {
                     aria.describedBy := tipId,
                     controlled(checked <-- disabled.signal, onClick.mapToChecked --> disabled)
                   ),
-                  "Disable Game"
+                  Labels.game.disable
                 )
               )
           },
@@ -526,14 +505,12 @@ object GameForm {
               val tipId = s"$formKey-seats-tip"
               withTip(
                 id = tipId,
-                subject = "Seats",
-                text = "Whether each player takes one of the game's roles, or the game is played by any number of " +
-                    "players with no roles at all. A competition of a game without roles says how many players each " +
-                    "match has. Such a game is always played with everyone moving at once."
+                subject = Labels.game.seats,
+                text = Tips.game.seats
               )(
                 label(
                   cls := "field",
-                  "Seats",
+                  Labels.game.seats,
                   select(
                     aria.describedBy := tipId,
                     onChange.mapToValue --> { code =>
@@ -555,8 +532,8 @@ object GameForm {
                   div(
                     tipField(
                       id = s"$formKey-min-players-tip",
-                      caption = "Fewest players",
-                      text = "The fewest players one match can have, at least 1."
+                      caption = Labels.game.minPlayers,
+                      text = Tips.game.minPlayers
                     )(
                       input(
                         tpe := "number",
@@ -567,8 +544,8 @@ object GameForm {
                     ),
                     tipField(
                       id = s"$formKey-max-players-tip",
-                      caption = "Most players",
-                      text = "The most players one match can have. Leave blank if there is no limit."
+                      caption = Labels.game.maxPlayers,
+                      text = Tips.game.maxPlayers
                     )(
                       input(
                         tpe := "number",
@@ -582,13 +559,12 @@ object GameForm {
               val tipId = s"$formKey-move-type-tip"
               withTip(
                 id = tipId,
-                subject = "Moves",
-                text = "Whether players take turns one after another, or all move at once. A competition gives each " +
-                    "player a chess clock in the first case and a time limit per turn in the second."
+                subject = Labels.game.moveType,
+                text = Tips.game.moveType
               )(
                 label(
                   cls := "field",
-                  "Moves",
+                  Labels.game.moveType,
                   select(
                     aria.describedBy := tipId,
                     // A game without roles is always simultaneous.
@@ -604,13 +580,12 @@ object GameForm {
               val tipId = s"$formKey-max-turns-tip"
               withTip(
                 id = tipId,
-                subject = "Maximum turns",
-                text = "How many turns a match lasts, if the game always ends after a fixed number. A competition " +
-                    "divides a round's time by it when everyone moves at once. Leave blank if it varies."
+                subject = Labels.game.maxTurns,
+                text = Tips.game.maxTurns
               )(
                 label(
                   cls := "field",
-                  "Maximum turns",
+                  Labels.game.maxTurns,
                   input(
                     tpe := "number",
                     inputMode := "numeric",

@@ -71,9 +71,7 @@ object Ratings {
                     subsection = true,
                     tip = Some(
                       s"friendly-admin-tip-${game.gameId.value}" ->
-                          (s"Every match ${player.nickname} has played or is playing in this game, public or not. As " +
-                              "an admin of this game, you say whether each is friendly — even once it is over, until " +
-                              "one of its players has played another match of this game since.")
+                          Tips.rankings.friendlyOrRated(nickname = player.nickname)
                     )
                   )(
                     if (found.isEmpty) p(cls := "empty", "None yet.")
@@ -127,7 +125,7 @@ object Ratings {
                 }
               )
             ),
-            "Friendly"
+            Labels.rankings.friendly
           )
         )
     }
@@ -161,7 +159,7 @@ object Ratings {
               label(
                 cls := "field",
                 forId := id,
-                "Rankings by role",
+                Labels.rankings.role,
                 select(
                   idAttr := id,
                   onChange.mapToValue --> (v => chosen.set(game.roles.find(_.gameRoleId.value.toString == v))),
@@ -316,15 +314,8 @@ object Ratings {
             subsection = role.isDefined,
             tip = Some(
               s"ratings-tip-${game.gameId.value}$idSuffix" -> role.fold(
-                s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
-                    s"Every rated match of this game moves its players' ratings; a friendly one does not. " +
-                    s"A player's first rated match starts them at ${EloRating.initial}."
-              )(r =>
-                  s"Players are ranked by their Elo rating as ${r.displayName}, which a rated match moves against " +
-                      s"the other players' ratings in the roles they played. So a role that wins more than its " +
-                      s"players' ratings say it should is rated higher than the others. A player's first rated " +
-                      s"match as ${r.displayName} starts them at ${EloRating.initial}."
-              )
+                Tips.rankings.players(initialRating = EloRating.initial.toString)
+              )(r => Tips.rankings.role(role = r.displayName, initialRating = EloRating.initial.toString))
             )
           )(
             // Two regions, mounted with the section so that what arrives in them is announced: how
@@ -488,7 +479,7 @@ object Ratings {
                     busy
                   )(answer => found.set(Some(Right(answer))))
           },
-          label(forId := id, "Find a Player"),
+          label(forId := id, Labels.rankings.findPlayer),
           div(
             cls := "compound",
             input(
@@ -601,7 +592,7 @@ object Ratings {
                               }
                           }
                       },
-                      label(cls := "sr-only", forId := id, s"New rating for ${rated.nickname}"),
+                      label(cls := "sr-only", forId := id, Labels.rankings.newRating(nickname = rated.nickname)),
                       ratingInput(id, typed, placeholder := "New rating"),
                       // Not disabled while saving: a disabled button drops the keyboard's focus. A press
                       // made meanwhile is ignored by the filter above instead.
@@ -633,7 +624,7 @@ object Ratings {
                   }
               }
           },
-          label(forId := id, s"Rate ${player.nickname}"),
+          label(forId := id, Labels.rankings.rate(nickname = player.nickname)),
           div(
             cls := "compound",
             ratingInput(id, typed, placeholder := "New rating"),

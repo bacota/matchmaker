@@ -345,7 +345,7 @@ object SignIn {
           focusFirstField,
           h2("Sign In"),
           label(
-            "Email",
+            Labels.signIn.email,
             input(
               tpe := "email",
               autoComplete := "username",
@@ -355,7 +355,7 @@ object SignIn {
             )
           ),
           label(
-            "Password",
+            Labels.signIn.password,
             input(
               tpe := "password",
               autoComplete := "current-password",
@@ -403,7 +403,7 @@ object SignIn {
             }
           ),
           label(
-            "Code",
+            Labels.signIn.code,
             input(
               tpe := "text",
               // Lets phones offer the code straight from the notification.
@@ -428,7 +428,7 @@ object SignIn {
           h2("Choose a Password"),
           p("This account is signed in with a temporary password. Pick a permanent one to continue."),
           label(
-            "New password",
+            Labels.signIn.newPassword,
             input(
               tpe := "password",
               autoComplete := "new-password",

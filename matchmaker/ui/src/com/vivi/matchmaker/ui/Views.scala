@@ -318,7 +318,10 @@ object Views {
           cls := "card",
           h2("Choose a Nickname"),
           p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
-          field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
+          field(
+            Labels.register.nickname,
+            input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))
+          ),
           busyButton(label = "Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
                   if (Store.isStillSignedInAs(signIn)) {
@@ -550,15 +553,11 @@ object Views {
     /** "friendly" under a match or a challenge that is one, with what that means a tap away. Said only when it is: a
       * rated match is the ordinary kind, and needs no saying.
       */
-    private[ui] val friendlyMeaning =
-        "A friendly match is played for fun: it does not change either player's Elo rating or place in the " +
-            "rankings. Every other match is rated."
-
     private[ui] def friendlyLabel(): HtmlElement =
         withTip(
           id = freshTipId("friendly-tip"),
           subject = "friendly",
-          text = friendlyMeaning
+          text = Tips.matches.friendly
         )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
 
     /** The "Friendly" column's heading: the word itself showing what a friendly match is, as the Elo column's
@@ -569,7 +568,7 @@ object Views {
     private[ui] def friendlyHeading(): HtmlElement =
         span(
           span(cls := "narrow-heading", "Friendly"),
-          tipWord(id = freshTipId("friendly-tip"), word = "Friendly", text = friendlyMeaning)
+          tipWord(id = freshTipId("friendly-tip"), word = "Friendly", text = Tips.matches.friendly)
         )
 
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =

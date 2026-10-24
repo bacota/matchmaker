@@ -33,6 +33,10 @@ On a form or other functional page, the text that explains a field or section go
 paragraph: `withTip` or `tipField` in `Views.scala`, and `refreshableSection(..., tip = Some(id -> text))` for a
 refreshable section's heading. Status messages, live regions and empty-state text stay visible.
 
+A tip's text lives in `matchmaker/ui/tips.properties`, not in the code: the build generates `Tips` from it, so
+`game.roles` there is `Tips.game.roles`, and a `{name}` in a tip makes it a method taking `name`. A new tip adds a key
+there.
+
 ## Fetches go through the store
 
 The fetch loop (a fetch on mount inside a view that re-renders when the store changes) has happened here: expanding a
@@ -49,3 +53,7 @@ game on the player page once sent about sixteen `GET /games/{id}/challenges` a s
 Wherever the screen is wide enough, a field's caption and its control share one line. `label.field` does this for
 every form from 48rem up (the rule in `app.css`) and stacks below that. Use `Views.field` or `Views.tipField` for a
 captioned control so it gets this, rather than a layout of its own.
+
+A caption's text lives in `matchmaker/ui/labels.properties`, generated into `Labels` the same way as tips: `game.name`
+there is `Labels.game.name`. A field with a tip uses the same key in both files. A new field adds a key there. A
+caption that comes from data, such as a game parameter's display name, stays in the code.
