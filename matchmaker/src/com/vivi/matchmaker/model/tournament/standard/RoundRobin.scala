@@ -12,7 +12,16 @@ object RoundRobin
       description = "",
       classification = None,
       hasRoleChoice = true,
-      formOverrides = Map("labels.competition.maxEntrants" -> None, "labels.competition.autoStart" -> None)
+      formOverrides = Map(
+        "labels.competition.maxEntrants" -> None,
+        "labels.competition.autoStart" -> None,
+        "labels.compeition.poolSize" -> Some("Number of participants"),
+        "tips.competition.poolSize" -> None,
+        "tips.competition.autoRounds" -> Some(
+          "Start as soon as everybody signs up.  If there is more than one round than stat each round as soon as the previous round ends"
+        ),
+        "labels.competition.lateEntries" -> None
+      )
     ) {
 
     /** The model's id, which the challenge screens find their tournaments by. */
