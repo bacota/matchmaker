@@ -7,7 +7,7 @@ package standard
 object RoundRobin
     extends StandardModel(
       id = "RR",
-      version = 2,
+      version = 3,
       name = "Round Robin Challenge",
       description = "",
       classification = None,
@@ -15,10 +15,11 @@ object RoundRobin
       formOverrides = Map(
         "labels.competition.maxEntrants" -> None,
         "labels.competition.autoStart" -> None,
-        "labels.compeition.poolSize" -> Some("Number of participants"),
+        "labels.competition.poolSize" -> Some("Number of participants"),
         "tips.competition.poolSize" -> None,
         "tips.competition.autoRounds" -> Some(
-          "Start as soon as everybody signs up.  If there is more than one round than stat each round as soon as the previous round ends"
+          "Start as soon as everybody signs up. If there is more than one round, then start each round as soon as the " +
+              "previous round ends."
         ),
         "labels.competition.lateEntries" -> None
       )
