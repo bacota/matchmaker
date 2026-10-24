@@ -621,10 +621,12 @@ object Tournaments {
                   busy = answerBusy(t)
                 )(busy =>
                     Store.runSignedIn(
-                      ApiClient.enterTournament(
-                        gameId = t.gameId,
-                        tournamentId = t.tournamentId,
-                        characterId = chosen.now()
+                      thenShown(d)(
+                        ApiClient.enterTournament(
+                          gameId = t.gameId,
+                          tournamentId = t.tournamentId,
+                          characterId = chosen.now()
+                        )
                       ),
                       busy
                     )(_ => reload(d))
@@ -666,17 +668,25 @@ object Tournaments {
             busyButton(label = "Decline", busy = answerBusy(t))(busy =>
                 // Reloaded even when one of them fails: the others went through, and the page would otherwise go on
                 // offering them.
-                Store.runSignedIn(Future.sequence(declines.map(_())), busy, onFailure = _ => reload(d)) { _ =>
-                    Views.announce("Invitation declined.")
-                    Store.reloadMyTournaments()
-                    reload(d)
+                Store.runSignedIn(thenShown(d)(Future.sequence(declines.map(_()))), busy, onFailure = _ => reload(d)) {
+                    _ =>
+                        Views.announce("Invitation declined.")
+                        Store.reloadMyTournaments()
+                        reload(d)
                 }
             )
     }
 
     /* Entering and declining, one busy flag between them: each changes what the other may do, and until its answer
-     * reloads the page, both are still offered. */
+     * reloads the page, both are still offered. So it is held through that reload too -- see `thenShown`. */
     private def answerBusy(t: Tournament): Var[Boolean] = heldBusy(s"answer tournament ${t.tournamentId.value}")
+
+    /* `action`, settled only once the page has been read again after it: a button whose answer changes what the page
+     * offers stays busy until the page says so, rather than for one round trip less. */
+    private def thenShown[A](d: TournamentDetail)(action: Future[A]): Future[A] = {
+        val t = d.summary.tournament
+        action.flatMap(answer => Store.reloadTournament(t.gameId, t.tournamentId).map(_ => answer))
+    }
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
