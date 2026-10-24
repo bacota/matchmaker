@@ -1097,6 +1097,10 @@ object Tournaments {
     private val timeUnits: Seq[(String, Long)] =
         Seq("minutes" -> 1L, "hours" -> 60L, "days" -> 1440L, "weeks" -> 10080L)
 
+    /* The match time limit a new competition starts with, and saves when its format leaves the field out: none, as
+     * on the server. */
+    private val defaultTimeLimit: Option[java.time.Duration] = None
+
     private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
 
     /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
@@ -1138,8 +1142,9 @@ object Tournaments {
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
-        // The match time limit as typed, in the unit chosen: the largest unit it is a whole number of.
-        val (limit0, unit0) = s0.roundDuration.fold(("48", "hours")) { d =>
+        // The match time limit as typed, in the unit chosen: the largest unit it is a whole number of, and blank, in
+        // hours, for none.
+        val (limit0, unit0) = s0.roundDuration.orElse(defaultTimeLimit).fold(("", "hours")) { d =>
             val minutes = d.toMinutes
             timeUnits.reverse
                 .collectFirst { case (unit, size) if minutes % size == 0 => ((minutes / size).toString, unit) }
@@ -1209,7 +1214,7 @@ object Tournaments {
                   val size = timeUnits.toMap.getOrElse(timeUnit.now(), 60L)
                   java.time.Duration.ofMinutes((n * size).round)
               },
-              default = Some(java.time.Duration.ofHours(48))
+              default = defaultTimeLimit
             )
         // Left out, the server's default: the format's suggestion, else the game's R.
         def poolSizeAsked: Option[Int] =
@@ -1649,7 +1654,9 @@ object Tournaments {
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
-                else if (duration.isEmpty) Store.reportProblem("A competition needs a match time limit.")
+                // Asked for where it is shown; a format that leaves it out saves the default.
+                else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
+                    Store.reportProblem("A competition needs a match time limit.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else
                     modelId.now().foreach { id =>
