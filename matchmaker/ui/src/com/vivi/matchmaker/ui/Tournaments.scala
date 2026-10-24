@@ -50,7 +50,7 @@ object Tournaments {
                       headingId = Some("new-competition-heading")
                     ),
                     labelledBy = "new-competition-heading",
-                    close = closeNewCompetition
+                    close = () => closeNewCompetition(game.gameId)
                   )
           ),
           Views.refreshableSection(
@@ -84,12 +84,18 @@ object Tournaments {
     private var newCompetitionTrigger: Option[dom.html.Element] = None
 
     /* Closing the dialog abandons the invitation it was opened for, so the next competition made here is not quietly
-     * addressed to whoever was looked at before. */
-    private def closeNewCompetition(): Unit = {
-        Store.invitee.set(None)
-        Store.showTournamentForm.set(false)
-        newCompetitionTrigger.foreach(_.focus())
-    }
+     * addressed to whoever was looked at before. Refused while its save is out: the answer closes it and goes to what
+     * was made, and a dialog closed and opened again meanwhile could make a second one. */
+    private def closeNewCompetition(gameId: GameId): Unit =
+        if (!savingBusy(gameId, None).now()) {
+            Store.invitee.set(None)
+            Store.showTournamentForm.set(false)
+            newCompetitionTrigger.foreach(_.focus())
+        }
+
+    /* The form's save, busy for as long as it is out, whatever is drawn again or closed meanwhile. */
+    private def savingBusy(gameId: GameId, existing: Option[Tournament]): Var[Boolean] =
+        heldBusy(existing.fold(s"new competition in ${gameId.value}")(t => s"save tournament ${t.tournamentId.value}"))
 
     /** The main page's tournament sections: seats waiting on the caller to choose a role, and their tournaments. */
     def mainSections: HtmlElement =
@@ -1420,7 +1426,10 @@ object Tournaments {
           div(
             cls := "row",
             button(tpe := "button", "Check", onClick --> (_ => check())),
-            busyButton(label = if (existing.isDefined) "Save Changes" else "Create Competition")(busy =>
+            busyButton(
+              label = if (existing.isDefined) "Save Changes" else "Create Competition",
+              busy = savingBusy(game.gameId, existing)
+            )(busy =>
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
