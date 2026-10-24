@@ -8,7 +8,7 @@ import com.vivi.matchmaker.model._
 /** One game's screen, the new-game screen, and the dialog that edits a game. */
 object Games {
 
-    import Views.{currentPlayer, errorBanner, refreshableSection}
+    import Views.{currentPlayer, refreshableSection}
 
     /** One game's screen: its open challenges, a way to offer one, and this player's history in it. An admin also gets
       * the edit form.
@@ -126,8 +126,8 @@ object Games {
         editGameTrigger.foreach(_.focus())
     }
 
-    /* The edit form as a modal dialog, the way `challengeDialog` shows the challenge form: closed by Escape, by a
-     * click on the backdrop, or by its own Close button, and closed by a save that succeeds. */
+    /* The edit form as a modal dialog: closed by Escape, by a click on the backdrop, or by its own Close button, and
+     * closed by a save that succeeds. */
     private def editGameDialog(game: Game): HtmlElement = {
         val opening = editGameOpening
         gameDialog(
@@ -147,29 +147,10 @@ object Games {
         close: () => Unit,
         onSaved: Game => Unit = _ => ()
     ): HtmlElement =
-        div(
-          cls := "modal-scrim",
-          Modal.inertBehind,
-          onClick --> (event => if (event.target == event.currentTarget) close()),
-          GameForm
-              .gameForm(existing = existing, heading = Some(headingId -> title), onSaved = onSaved)
-              .amend(
-                cls := "modal",
-                role := "dialog",
-                htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
-                aria.labelledBy := headingId,
-                tabIndex := -1,
-                inContext(node => onMountCallback(_ => node.ref.focus())),
-                onKeyDown.filter(_.key == "Escape") --> { event =>
-                    event.stopPropagation()
-                    close()
-                },
-                errorBanner,
-                div(
-                  cls := "alternatives",
-                  button(tpe := "button", cls := "link", "Close", onClick --> (_ => close()))
-                )
-              )
+        Modal.dialog(
+          content = GameForm.gameForm(existing = existing, heading = Some(headingId -> title), onSaved = onSaved),
+          labelledBy = headingId,
+          close = close
         )
 
     /** This player's finished matches in one game, most recently finished first.
