@@ -766,9 +766,16 @@ label.field > .hint {
   position: fixed;
 }
 .tip.open,
-.tip-toggle:hover + .tip:not(.dismissed),
 .tip-toggle:focus-visible + .tip:not(.dismissed) {
   display: block;
+}
+
+/* Hover only where there is a pointer that hovers: a touch screen leaves `:hover` on whatever was last
+   tapped, and a tip shown for that -- after the page moved under it -- is one nobody asked for. */
+@media (hover: hover) {
+  .tip-toggle:hover + .tip:not(.dismissed) {
+    display: block;
+  }
 }
 
 /* A captioned field with a tip beside it takes the row's width, leaving the "?" only what it needs. */

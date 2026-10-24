@@ -635,14 +635,16 @@ object Views {
             },
             onBlur --> (_ => open.set(false)),
             // A tip that is showing takes the Escape that hides it, so a dialog the tip is in stays open. Showing by
-            // `open`, or by the CSS, which shows it for keyboard focus and hover without telling `open` -- and a
-            // hovered tip's Escape comes from wherever focus is, not from this button. So it is heard on the document,
+            // `open`, or by the CSS, which shows it for keyboard focus and -- where a pointer hovers, as the CSS has
+            // it, not a touch screen's leftover `:hover` -- for hover, without telling `open`. And a hovered tip's
+            // Escape comes from wherever focus is, not from this button. So it is heard on the document,
             // while capturing, which is before anything on the way to that focus can hear it.
             inContext(node =>
                 documentEvents(_.onKeyDown.useCapture)
                     .filter(event =>
                         event.key == "Escape" && !dismissed.now() &&
-                            (open.now() || node.ref.matches(":focus-visible") || node.ref.matches(":hover"))
+                            (open.now() || node.ref.matches(":focus-visible") ||
+                                (node.ref.matches(":hover") && dom.window.matchMedia("(hover: hover)").matches))
                     ) --> { event =>
                     event.stopPropagation()
                     open.set(false)
