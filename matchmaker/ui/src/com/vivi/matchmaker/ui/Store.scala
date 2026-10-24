@@ -103,6 +103,8 @@ object Store {
         charactersByGame.set(Map.empty)
         gameAdminsByGame.set(Map.empty)
         myTournaments.set(Seq.empty)
+        myEndedTournaments.set(Seq.empty)
+        endedFrame.set(CompletedFrame.Day)
         tournamentChoices.set(Seq.empty)
         tournamentStandings.set(Seq.empty)
         tournamentsByGame.set(Map.empty)
@@ -159,7 +161,7 @@ object Store {
         case PlayerSearch
         case NotificationSettings
         // Tournaments: the caller's own, the seats waiting on them, a game's, and the one shown.
-        case MyTournaments, TournamentChoices, TournamentStandings
+        case MyTournaments, MyEndedTournaments, TournamentChoices, TournamentStandings
         case Tournaments(gameId: GameId)
         case OneTournament
         case TournamentModels(gameId: GameId)
@@ -242,8 +244,14 @@ object Store {
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
 
-    /** The tournaments the caller owns, has entered or is invited to, for the main page. */
+    /** The tournaments the caller owns, has entered or is invited to that are not over, for the main page. */
     val myTournaments: Var[Seq[TournamentSummary]] = Var(Seq.empty)
+
+    /** The tournaments the caller owns that ended within the last [[endedFrame]], for the main page. */
+    val myEndedTournaments: Var[Seq[TournamentSummary]] = Var(Seq.empty)
+
+    /** How far back the main page's ended tournaments go, as the viewer last chose: the last day until they choose. */
+    val endedFrame: Var[CompletedFrame] = Var(CompletedFrame.Day)
 
     /** The seats waiting on the caller to choose a role in a tournament match. */
     val tournamentChoices: Var[Seq[TournamentChoice]] = Var(Seq.empty)
@@ -984,6 +992,7 @@ object Store {
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         completedFor(page.now()).foreach(showCompleted(_))
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+        load(ApiClient.myEndedTournaments(endedFrame.now()), Fetch.MyEndedTournaments)(myEndedTournaments.set)
         load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
         load(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
     }
@@ -991,7 +1000,14 @@ object Store {
     def reloadTournamentStandings(): Future[Unit] =
         reload(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
 
-    def reloadMyTournaments(): Future[Unit] = reload(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+    /** The caller's tournaments, those not over and those ended: one ending moves it from the first to the second. */
+    def reloadMyTournaments(): Future[Unit] =
+        reload(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+            .zip(reloadMyEndedTournaments())
+            .map(_ => ())
+
+    def reloadMyEndedTournaments(): Future[Unit] =
+        reload(ApiClient.myEndedTournaments(endedFrame.now()), Fetch.MyEndedTournaments)(myEndedTournaments.set)
 
     def reloadTournamentChoices(): Future[Unit] =
         reload(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)

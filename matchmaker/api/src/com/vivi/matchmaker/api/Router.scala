@@ -542,6 +542,18 @@ object Router {
             case ("GET", "me" :: "tournaments" :: Nil) =>
                 ok(services.tournaments.mine(caller))
 
+            // The tournaments the caller owns that ended within the last `frame` (a day if not given).
+            case ("GET", "me" :: "tournaments" :: "ended" :: Nil) =>
+                request.query.get("frame") match {
+                    case None => ok(services.tournaments.endedOwned(caller, CompletedFrame.Day))
+                    case Some(raw) =>
+                        CompletedFrame
+                            .fromCode(raw)
+                            .fold(IO.pure(Errors.badRequest(s"'$raw' is not a valid frame")))(frame =>
+                                ok(services.tournaments.endedOwned(caller, frame))
+                            )
+                }
+
             // Where the caller stands in every tournament they have entered.
             case ("GET", "me" :: "tournament-standings" :: Nil) =>
                 ok(services.tournaments.standings(caller))

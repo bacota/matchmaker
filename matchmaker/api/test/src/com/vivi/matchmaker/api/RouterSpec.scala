@@ -142,6 +142,7 @@ class RouterSpec extends FunSuite {
     // Every part of a completed list's window is optional, and each one given has to be well formed.
     test("a completed list's window with a part that is not well formed is a bad request") {
         assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?frame=fortnight")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/me/tournaments/ended?frame=fortnight")).statusCode, 400)
         assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?page=-1")).statusCode, 400)
         assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?page=many")).statusCode, 400)
         assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?asOf=yesterday")).statusCode, 400)
@@ -313,6 +314,7 @@ class RouterSpec extends FunSuite {
       ("POST", "/matches/11/archive/expired", "{}"),
       // Tournaments. A create or edit names a standard design by key; settings are all defaulted.
       ("GET", "/me/tournaments", "{}"),
+      ("GET", "/me/tournaments/ended", "{}"),
       ("GET", "/me/tournament-standings", "{}"),
       ("GET", "/games/1/tournaments", "{}"),
       ("POST", "/games/1/tournaments", """{"name":"Open","tournamentModelId":6}"""),
@@ -363,7 +365,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 72)
+        assertEquals(routed.size, 73)
         assertEquals(routed.distinct.size, routed.size)
     }
 

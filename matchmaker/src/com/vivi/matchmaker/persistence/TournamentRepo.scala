@@ -307,6 +307,8 @@ class TournamentRepo(session: Session[IO]) {
         sql"(t.tournament_model_id <> '#$challenge' OR t.status IN ('draft', 'open', 'running'))"
     // Not yet started: what a game's screen lists, as the partial index `tournament_not_started` is written.
     private val isNotStarted: Fragment[Void] = sql"t.status IN ('draft', 'open')"
+    // Not over: what a player's own list of competitions shows.
+    private val isNotOver: Fragment[Void] = sql"t.status IN ('draft', 'open', 'running')"
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
     // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
@@ -368,7 +370,16 @@ class TournamentRepo(session: Session[IO]) {
           WHERE $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
-    private val selectListedForPlayer = selectSummariesForPlayer(isListed)
+    private val selectNotOverForPlayer = selectSummariesForPlayer(isNotOver)
+
+    // When a tournament that is over ended: `ended_at` as it finished, and its last change for one that has none.
+    private val endedAt = sql"coalesce(t.ended_at, t.update_date)"
+
+    private val selectEndedOwnedSince: Query[((PlayerId, PlayerId), PlayerId, Instant), SummaryRow] =
+        sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
+          FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
+          WHERE t.owner = $playerId AND t.status IN ('finished', 'cancelled') AND $endedAt >= $instant
+          ORDER BY $endedAt DESC, t.tournament_id DESC""".query(summaryCodec)
 
     private val selectSummary: Query[((PlayerId, PlayerId), GameId, TournamentId), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
@@ -379,13 +390,15 @@ class TournamentRepo(session: Session[IO]) {
     def notStartedForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
         session.execute(selectNotStartedForGame)(((viewer, viewer), game)).map(_.map(summaryOf(viewer)))
 
-    /** The tournaments `viewer` owns, has entered or is invited to, in every game, newest first: all but the challenges
-      * that are over.
-      */
+    /** The tournaments `viewer` owns, has entered or is invited to, in every game, that are not over, newest first. */
     def summariesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
         session
-            .execute(selectListedForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer)))
+            .execute(selectNotOverForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer)))
             .map(_.map(summaryOf(viewer)))
+
+    /** The tournaments `viewer` owns that finished or were cancelled since `since`, the most recently ended first. */
+    def endedOwnedSince(viewer: PlayerId, since: Instant): IO[List[TournamentSummary]] =
+        session.execute(selectEndedOwnedSince)(((viewer, viewer), viewer, since)).map(_.map(summaryOf(viewer)))
 
     /** One tournament as `viewer` sees it in a list. */
     def summary(game: GameId, id: TournamentId, viewer: PlayerId): IO[Option[TournamentSummary]] =

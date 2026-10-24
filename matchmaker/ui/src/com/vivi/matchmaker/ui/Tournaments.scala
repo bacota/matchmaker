@@ -176,6 +176,32 @@ object Tournaments {
                     summaryList(mine, showGame = true)
                   )
           },
+          // Drawn once, not from the list: the Show control keeps its focus as the list it asks for arrives.
+          Views.refreshableSection(
+            heading = "My Ended Competitions",
+            reload = () => Store.reloadMyEndedTournaments(),
+            subsection = false
+          )(
+            field(
+              "Show",
+              select(
+                CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
+                value <-- Store.endedFrame.signal.map(_.code),
+                onChange.mapToValue --> { code =>
+                    CompletedFrame.fromCode(code).foreach { frame =>
+                        Store.endedFrame.set(frame)
+                        Store.reloadMyEndedTournaments()
+                    }
+                }
+              )
+            ),
+            listing(Store.myEndedTournaments.signal, Store.loading(Store.Fetch.MyEndedTournaments))(
+              p(
+                cls := "empty",
+                child.text <-- Store.endedFrame.signal.map(f => s"None of yours ended in the ${f.label.toLowerCase}.")
+              )
+            )(rows => summaryList(rows, showGame = true))
+          ),
           child <-- Store.tournamentStandings.signal.map { rows =>
               if (rows.isEmpty) emptyNode
               else

@@ -66,13 +66,21 @@ class TournamentService[T](
             )
         }
 
-    /** The tournaments the caller owns, has entered, or is invited to, bar the challenges that are over: those are
-      * matches played, and the completed matches list them.
-      */
+    /** The tournaments the caller owns, has entered, or is invited to that are not over. */
     def mine(callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
                 new TournamentRepo(session).summariesForPlayer(p.playerId)
+            )
+        }
+
+    /** The tournaments the caller owns that finished or were cancelled within the last `frame`, the most recently ended
+      * first: a window of time, as a player's completed matches are.
+      */
+    def endedOwned(callerExternalId: String, frame: CompletedFrame): IO[List[TournamentSummary]] =
+        sessionPool.use { session =>
+            requireCaller(session, callerExternalId).flatMap(p =>
+                new TournamentRepo(session).endedOwnedSince(p.playerId, now().minus(frame.span))
             )
         }
 

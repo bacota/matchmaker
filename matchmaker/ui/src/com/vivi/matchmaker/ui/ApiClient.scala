@@ -288,6 +288,10 @@ object ApiClient {
     /** The tournaments the caller owns, has entered or is invited to. */
     def myTournaments(): Future[Seq[TournamentSummary]] = get[Seq[TournamentSummary]]("/me/tournaments")
 
+    /** The tournaments the caller owns that ended within the last `frame`. */
+    def myEndedTournaments(frame: CompletedFrame): Future[Seq[TournamentSummary]] =
+        get[Seq[TournamentSummary]](s"/me/tournaments/ended?frame=${frame.code}")
+
     /** The seats waiting on the caller to choose a role. */
     def tournamentChoices(): Future[Seq[TournamentChoice]] = get[Seq[TournamentChoice]]("/me/tournament-choices")
 

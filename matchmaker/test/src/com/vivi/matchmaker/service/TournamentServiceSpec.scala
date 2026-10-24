@@ -826,22 +826,26 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(theirs.exists(s => s.isInvited && !s.isOwner))
     }
 
-    test(
-      "a challenge that is over leaves a player's lists, and a tournament that is over stays; a game lists neither"
-    ) {
+    test("a competition that is over leaves a player's and a game's lists, and its owner's ended list holds it") {
         // A challenge's status as a finished or cancelled one's: the lists read nothing else of how it ended.
         def ended(t: Tournament, status: TournamentStatus): IO[Unit] =
             TestSession.resource.use { session =>
                 val repo = new TournamentRepo(session)
                 repo.read(t.gameId, t.tournamentId).flatMap(found => repo.update(found.get.copy(status = status)))
             }
-        case class Listed(mine: Set[TournamentId], standings: Set[TournamentId], game: Set[TournamentId])
+        case class Listed(
+            mine: Set[TournamentId],
+            standings: Set[TournamentId],
+            game: Set[TournamentId],
+            ended: Set[TournamentId]
+        )
         def listed(f: Fixture, p: Player): IO[Listed] =
             (
               tournaments.mine(p.externalId).map(_.map(_.tournament.tournamentId)),
               tournaments.standings(p.externalId).map(_.map(_.tournamentId)),
-              tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId))
-            ).mapN((a, b, c) => Listed(mine = a.toSet, standings = b.toSet, game = c.toSet))
+              tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId)),
+              tournaments.endedOwned(p.externalId, CompletedFrame.Day).map(_.map(_.tournament.tournamentId))
+            ).mapN((a, b, c, d) => Listed(mine = a.toSet, standings = b.toSet, game = c.toSet, ended = d.toSet))
         val (ids, open, over) = run(for {
             f <- fixture(2)
             entrant = f.players.head
@@ -878,7 +882,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(open.mine, challenges + tournament)
         assertEquals(open.standings, Set(entered, owned))
         assertEquals(open.game, challenges + tournament)
-        assertEquals(over, Listed(mine = Set(tournament), standings = Set.empty, game = Set.empty))
+        assertEquals(open.ended, Set.empty[TournamentId])
+        // Over, finished or cancelled: gone from every list but the owner's ended one, which holds only their own.
+        assertEquals(
+          over,
+          Listed(mine = Set.empty, standings = Set.empty, game = Set.empty, ended = Set(owned, tournament))
+        )
     }
 
     test("a game lists its caller's own competitions not yet started first, then the open ones they could enter") {
