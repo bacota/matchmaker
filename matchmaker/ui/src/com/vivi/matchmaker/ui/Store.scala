@@ -1009,14 +1009,19 @@ object Store {
             .map(_ => ())
 
     /** Shows the ended tournaments of another window: emptied at once, so that the last window's rows are not shown
-      * under this one's name while its answer is on its way, or after it has failed.
+      * under this one's name while its answer is on its way, or after it has failed. What it found, once it has --
+      * nothing when it failed, or when another window has been asked for since.
       */
-    def showEndedFrame(frame: CompletedFrame): Future[Unit] = {
+    def showEndedFrame(frame: CompletedFrame): Future[Option[Seq[TournamentSummary]]] = {
         endedFrame.set(frame)
         myEndedTournaments.set(Seq.empty)
         // Another window is another question, which nothing has answered yet: the list says it is loading.
         outcomes.update(_ - Fetch.MyEndedTournaments)
-        reloadMyEndedTournaments()
+        reloadMyEndedTournaments().map(_ =>
+            Option.when(endedFrame.now() == frame && outcomes.now().get(Fetch.MyEndedTournaments).contains(true))(
+              myEndedTournaments.now()
+            )
+        )
     }
 
     def reloadMyEndedTournaments(): Future[Unit] =

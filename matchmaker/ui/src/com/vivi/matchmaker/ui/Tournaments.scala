@@ -197,7 +197,18 @@ object Tournaments {
                 CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
                 value <-- Store.endedFrame.signal.map(_.code),
                 onChange.mapToValue --> { code =>
-                    CompletedFrame.fromCode(code).foreach(Store.showEndedFrame)
+                    CompletedFrame.fromCode(code).foreach { frame =>
+                        // Said as well as shown: the list changes under a select whose focus stays where it is.
+                        Store
+                            .showEndedFrame(frame)
+                            .foreach(_.foreach { found =>
+                                val within = frame.label.toLowerCase
+                                Views.announce(
+                                  if (found.isEmpty) s"None of yours ended in the $within."
+                                  else s"${found.size} of yours ended in the $within."
+                                )
+                            })
+                    }
                 }
               )
             ),
