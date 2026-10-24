@@ -185,7 +185,7 @@ object Tournaments {
           },
           // Drawn once, not from the list: the Show control keeps its focus as the list it asks for arrives.
           Views.refreshableSection(
-            heading = "My Ended Competitions",
+            heading = "Completed Challenges and Tournaments",
             reload = () => Store.reloadMyEndedTournaments(),
             subsection = false
           )(
