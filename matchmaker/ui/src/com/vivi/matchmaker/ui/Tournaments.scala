@@ -615,7 +615,7 @@ object Tournaments {
                 else emptyNode,
                 busyButton(
                   label = if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter",
-                  busy = heldBusy(s"enter tournament ${t.tournamentId}")
+                  busy = answerBusy(t)
                 )(busy =>
                     Store.runSignedIn(
                       ApiClient.enterTournament(
@@ -660,14 +660,20 @@ object Tournaments {
         val hasEntered = d.entries.exists(e => me.exists(m => e.playerId.contains(m.playerId)))
         if (declines.isEmpty || hasEntered) emptyNode
         else
-            busyButton(label = "Decline", busy = heldBusy(s"decline tournament ${t.tournamentId}"))(busy =>
-                Store.runSignedIn(Future.sequence(declines.map(_())), busy) { _ =>
+            busyButton(label = "Decline", busy = answerBusy(t))(busy =>
+                // Reloaded even when one of them fails: the others went through, and the page would otherwise go on
+                // offering them.
+                Store.runSignedIn(Future.sequence(declines.map(_())), busy, onFailure = _ => reload(d)) { _ =>
                     Views.announce("Invitation declined.")
                     Store.reloadMyTournaments()
                     reload(d)
                 }
             )
     }
+
+    /* Entering and declining, one busy flag between them: each changes what the other may do, and until its answer
+     * reloads the page, both are still offered. */
+    private def answerBusy(t: Tournament): Var[Boolean] = heldBusy(s"answer tournament ${t.tournamentId.value}")
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
