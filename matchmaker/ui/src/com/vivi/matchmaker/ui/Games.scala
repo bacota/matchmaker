@@ -120,11 +120,14 @@ object Games {
      * the opening that made it. Moved on by every close, so an answer from before one is never current. */
     private var editGameOpening = 0
 
-    private def closeEditGame(): Unit = {
-        editGameOpening += 1
-        Store.editingGame.set(None)
-        editGameTrigger.foreach(_.focus())
-    }
+    /* Refused while its save is out: reopened meanwhile, the form would be drafted from the game as it was, and a
+     * second save from it could add again what the first added. */
+    private def closeEditGame(game: Game): Unit =
+        if (!GameForm.savingBusy(Some(game)).now()) {
+            editGameOpening += 1
+            Store.editingGame.set(None)
+            editGameTrigger.foreach(_.focus())
+        }
 
     /* The edit form as a modal dialog: closed by Escape, by a click on the backdrop, or by its own Close button, and
      * closed by a save that succeeds. */
@@ -134,8 +137,8 @@ object Games {
           existing = Some(game),
           headingId = s"edit-game-${game.gameId.value}-heading",
           title = s"Edit ${game.displayName}",
-          close = closeEditGame,
-          onSaved = _ => if (editGameOpening == opening) closeEditGame()
+          close = () => closeEditGame(game),
+          onSaved = _ => if (editGameOpening == opening) closeEditGame(game)
         )
     }
 
@@ -192,11 +195,13 @@ object Games {
         // by leaving the page, so that a create answered after either does not pull the admin to the new game's
         // screen from wherever they have gone since. The game is recorded all the same.
         var opening = 0
-        def close(): Unit = {
-            opening += 1
-            adding.set(false)
-            trigger.foreach(_.focus())
-        }
+        // Refused while a save is out, as the edit dialog's is: a second create would make a second game.
+        def close(): Unit =
+            if (!GameForm.savingBusy(None).now()) {
+                opening += 1
+                adding.set(false)
+                trigger.foreach(_.focus())
+            }
         div(
           onUnmountCallback(_ => opening += 1),
           h2("Add a Game"),

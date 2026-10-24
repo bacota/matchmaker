@@ -6,7 +6,7 @@ import com.vivi.matchmaker.model._
 /** The form that creates or edits a game: its roles, its parameters and its limits. */
 object GameForm {
 
-    import Views.{busyButton, field, tipField, withTip}
+    import Views.{busyButton, field, heldBusy, tipField, withTip}
 
     /** "An admin user should be able to create a new game."
       *
@@ -335,6 +335,12 @@ object GameForm {
       * every game picker. It hides the game rather than closing it — its challenges, invitations and matches are left
       * as they are, since `isActive` decides what is listed, not what may be played.
       */
+    /** The game form's save, busy for as long as it is out, whatever is drawn again or closed meanwhile: what the
+      * dialogs it is shown in refuse to close on.
+      */
+    private[ui] def savingBusy(existing: Option[Game]): Var[Boolean] =
+        heldBusy(existing.fold("create game")(g => s"save game ${g.gameId.value}"))
+
     private[ui] def gameForm(
         existing: Option[Game],
         heading: Option[(String, String)] = None,
@@ -618,6 +624,7 @@ object GameForm {
           parameterEditor(formKey, parameters),
           busyButton(
             label = if (existing.isDefined) "Save Changes" else "Create Game",
+            busy = savingBusy(existing),
             // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
             // to be long enough, as the server checks too.
             disabledWhen = name.signal
