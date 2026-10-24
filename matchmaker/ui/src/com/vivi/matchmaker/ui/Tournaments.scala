@@ -190,7 +190,9 @@ object Tournaments {
             subsection = false
           )(
             field(
-              "Show",
+              // Not "Show", as the completed matches' is: two controls of one name on a page cannot be told apart in
+              // a screen reader's list of them.
+              "Ended within",
               select(
                 CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
                 value <-- Store.endedFrame.signal.map(_.code),
