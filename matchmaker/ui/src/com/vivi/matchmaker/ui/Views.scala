@@ -91,6 +91,10 @@ object Views {
     private[ui] def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
+    /** [[field]] whose caption changes as it is shown. */
+    private[ui] def field(caption: Signal[String], control: HtmlElement): HtmlElement =
+        label(cls := "field", child.text <-- caption, control)
+
     /** The body of a list: its rows, or a line saying why there are none.
       *
       * Three answers rather than two, because "there is nothing here" and "nobody has told us yet" are different things
@@ -534,6 +538,16 @@ object Views {
           label(cls := "field", caption, control.amend(aria.describedBy := id))
         )
 
+    /** [[tipField]] whose caption and tip change as it is shown: the competition form's, which the format chosen may
+      * reword.
+      */
+    private[ui] def tipField(id: String, caption: Signal[String], text: Signal[String])(
+        control: HtmlElement
+    ): HtmlElement =
+        withTip(id = id, subject = caption, text = text)(
+          label(cls := "field", child.text <-- caption, control.amend(aria.describedBy := id))
+        )
+
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
       * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
       * `aria-describedby` at it and have it read out whether or not it is showing.
@@ -574,6 +588,16 @@ object Views {
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
+    /** [[withTip]] whose subject and tip change as it is shown. */
+    private[ui] def withTip(id: String, subject: Signal[String], text: Signal[String])(
+        control: HtmlElement
+    ): HtmlElement =
+        tipped(id = id, text = child.text <-- text, control = control)(
+          cls := "tip-toggle",
+          aria.label <-- subject.map(s => s"About $s"),
+          "?"
+        )
+
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
       * cell too narrow to hold both a word and a "?" -- the heading of a running match's Friendly column. A button, so
       * that a keyboard and a finger can reach the tip as well as a mouse can, but set as the word with a dotted line
@@ -582,8 +606,9 @@ object Views {
     private def tipWord(id: String, word: String, text: String): HtmlElement =
         tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
 
-    /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. */
-    private[ui] def tipped(id: String, text: String, control: Modifier[HtmlElement])(
+    /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. `text` is the
+     * tip's words, or a `child.text` that keeps them up to date. */
+    private[ui] def tipped(id: String, text: Modifier[HtmlElement], control: Modifier[HtmlElement])(
         toggle: Modifier[HtmlElement]*
     ): HtmlElement = {
         val open = Var(false)

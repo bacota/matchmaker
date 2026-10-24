@@ -57,3 +57,8 @@ captioned control so it gets this, rather than a layout of its own.
 A caption's text lives in `matchmaker/ui/labels.properties`, generated into `Labels` the same way as tips: `game.name`
 there is `Labels.game.name`. A field with a tip uses the same key in both files. A new field adds a key there. A
 caption that comes from data, such as a game parameter's display name, stays in the code.
+
+A competition format can reword the competition form's captions and tips while it is the one chosen:
+`StandardModel.formOverrides`, keyed `labels.<key>` or `tips.<key>`, reaches the form on the stored model. So a caption
+or tip on that form goes through the form's `labelOf` or `tipOf` with its key, not straight to `Labels` or `Tips`, or
+no format can reword it. `FormOverridesSpec` fails a format whose override names a key neither file has.

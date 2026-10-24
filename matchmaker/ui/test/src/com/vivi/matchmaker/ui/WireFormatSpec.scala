@@ -127,6 +127,23 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.parameters, Seq.empty)
     }
 
+    test("a tournament model carries its form overrides as an object of words") {
+        val model = TournamentModel(
+          tournamentModelId = TournamentModelId("heats"),
+          version = 3,
+          name = "Heats",
+          description = "",
+          classification = None,
+          poolSize = None,
+          hasLateEntries = false,
+          design = com.vivi.matchmaker.model.tournament.TournamentDesign(Nil),
+          formOverrides = Map("labels.competition.poolSize" -> "Heat size")
+        )
+
+        assert(write(model).contains(""""formOverrides":{"labels.competition.poolSize":"Heat size"}"""), write(model))
+        assertEquals(read[TournamentModel](write(model)), model)
+    }
+
     test("ids are transparent on the wire, not wrapped in an object") {
         // A UI that sent {"value": 7} where the server expects 7 would fail only at runtime, so the
         // encoding is asserted rather than just the round trip.

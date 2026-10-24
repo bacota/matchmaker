@@ -139,8 +139,44 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         assertEquals((synced.added, synced.updated), (Nil, List(repechage)))
         StandardModels.all.foreach { m =>
             val found = stored.find(_.tournamentModelId.value == m.id)
-            assertEquals(found.map(s => (s.version, s.design)), Some((m.version, m.design)), m.id)
+            assertEquals(
+              found.map(s => (s.version, s.design, s.formOverrides)),
+              Some((m.version, m.design, m.formOverrides)),
+              m.id
+            )
         }
+    }
+
+    test("a model's form overrides are stored with it, rewritten with it, and not given to its inner models") {
+        val nested = dropped.copy(
+          design = TournamentDesign(
+            List(
+              StageDesign(
+                hasBrackets = false,
+                demote = None,
+                design = Some(TournamentDesign(List(StageDesign(hasBrackets = false, demote = None))))
+              )
+            )
+          ),
+          formOverrides =
+              Map("labels.competition.poolSize" -> "Group size", "tips.competition.poolSize" -> "Per group.")
+        )
+        val reworded = nested.copy(version = 2, formOverrides = Map("labels.competition.live" -> "Blitz"))
+        val id = nested.tournamentModelId
+        val (written, rewritten, inner) = run(TestSession.resource.use { session =>
+            val repo = new TournamentModelRepo(session)
+            for {
+                _ <- session.transaction.use(_ => repo.create(nested))
+                written <- repo.read(id)
+                _ <- session.transaction.use(_ => repo.replace(reworded))
+                rewritten <- repo.read(id)
+                inner <- repo.read(TournamentModelId(s"${id.value}/stage-1"))
+                _ <- session.transaction.use(_ => repo.delete(id))
+            } yield (written, rewritten, inner)
+        })
+        assertEquals(written.map(_.formOverrides), Some(nested.formOverrides))
+        assertEquals(rewritten.map(_.formOverrides), Some(reworded.formOverrides))
+        assertEquals(inner.map(_.formOverrides), Some(Map.empty[String, String]))
     }
 
     // ---- a sync removing a model the code no longer defines ----

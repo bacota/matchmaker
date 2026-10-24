@@ -24,6 +24,9 @@ import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
 class TournamentModelRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val modelId = SkunkIdCodecs.tournamentModelId
+    // form_overrides holds an object of strings; anything else in it is not an override, and is passed over.
+    private val overrides: Codec[Map[String, String]] =
+        SkunkCodecs.jsonObject.imap(_.collect { case (k, v: String) => k -> v })(identity)
 
     private type ModelRow =
         (
@@ -37,14 +40,15 @@ class TournamentModelRepo(session: Session[IO]) {
             String,
             Boolean,
             Boolean,
-            Boolean
+            Boolean,
+            Map[String, String]
         )
     private val modelRow: Decoder[ModelRow] =
-        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool *: bool
+        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool *: bool *: overrides
 
     private val modelColumns =
         "tournament_model_id, version, name, description, classification, pool_size, has_late_entries, " +
-            "first_stage_model_id, is_active, has_role_choice, is_root"
+            "first_stage_model_id, is_active, has_role_choice, is_root, form_overrides"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -75,7 +79,7 @@ class TournamentModelRepo(session: Session[IO]) {
                       inner = inner => designOf(TournamentModelId(inner), depth + 1)
                     )
             models.map {
-                case (id, version, name, description, classification, poolSize, late, _, active, choose, root) =>
+                case (id, version, name, description, classification, poolSize, late, _, active, choose, root, words) =>
                     TournamentModel(
                       tournamentModelId = id,
                       version = version,
@@ -87,7 +91,8 @@ class TournamentModelRepo(session: Session[IO]) {
                       design = designOf(id, 0),
                       isActive = active,
                       hasRoleChoice = choose,
-                      isRoot = root
+                      isRoot = root,
+                      formOverrides = words
                     )
             }
         }
@@ -156,20 +161,32 @@ class TournamentModelRepo(session: Session[IO]) {
 
     // ---- writing a model from the code ----
 
-    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Boolean)
+    private type Properties =
+        (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Boolean, Map[String, String])
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.hasLateEntries, m.hasRoleChoice, m.isRoot)
+        (
+          m.version,
+          m.name,
+          m.description,
+          m.classification,
+          m.poolSize,
+          m.hasLateEntries,
+          m.hasRoleChoice,
+          m.isRoot,
+          m.formOverrides
+        )
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            has_late_entries, has_role_choice, is_root, first_stage_model_id)
-          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, $bool, '')""".command
+                                            has_late_entries, has_role_choice, is_root, form_overrides,
+                                            first_stage_model_id)
+          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, $bool, $overrides, '')""".command
 
     private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
                  classification = ${text.opt}, pool_size = ${int4.opt}, has_late_entries = $bool, has_role_choice = $bool,
-                 is_root = $bool, is_active = true
+                 is_root = $bool, form_overrides = $overrides, is_active = true
           WHERE tournament_model_id = $modelId""".command
 
     private val setFirst: Command[(String, TournamentModelId)] =
@@ -248,7 +265,7 @@ class TournamentModelRepo(session: Session[IO]) {
                         val innerId = TournamentModelId(s"${model.value}/$stageId")
                         for {
                             _ <- session.execute(insertModel)(
-                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false, false)
+                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false, false, Map.empty)
                             )
                             _ <- writeDesign(innerId, inner)
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))
