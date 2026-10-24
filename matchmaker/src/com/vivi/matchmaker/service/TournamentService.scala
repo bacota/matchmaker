@@ -45,13 +45,7 @@ class TournamentService[T](
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
-                new TournamentRepo(session).notStartedForGame(gameId, p.playerId).map { all =>
-                    val (mine, others) = all.partition(_.isOwner)
-                    mine ++ others.filter(s =>
-                        s.tournament.status == TournamentStatus.Open &&
-                            (!s.tournament.settings.isInvitational || s.isInvited || s.isEntered)
-                    )
-                }
+                new TournamentRepo(session).openForGame(gameId, p.playerId)
             )
         }
 

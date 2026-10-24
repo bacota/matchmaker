@@ -358,7 +358,30 @@ class TournamentRepo(session: Session[IO]) {
           WHERE t.game_id = $gameId AND $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
-    private val selectNotStartedForGame = selectSummariesForGame(isNotStarted)
+    // A game's list, in two halves, each read by `tournament_not_started` and holding only the rows it shows, so that
+    // nobody else's drafts, nor invitationals the viewer has no part in, are read and summarised to be thrown away.
+    private def selectForGame[A](where: Fragment[A]) =
+        sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
+          FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
+          WHERE t.game_id = $gameId AND $isNotStarted AND $where
+          ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
+
+    // The viewer's own, in draft or taking entries.
+    private val selectOwnNotStartedForGame = selectForGame(sql"t.owner = $playerId")
+
+    // Somebody else's, taking entries, that the viewer could enter: open to anybody, or invitational and the viewer
+    // entered or invited -- themselves, or a character of theirs.
+    private val selectEnterableForGame = selectForGame(
+      sql"""t.status = 'open' AND t.owner <> $playerId AND (NOT t.is_invitational
+              OR EXISTS (SELECT 1 FROM entrant_player e
+                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
+              OR EXISTS (SELECT 1 FROM player_invitation i
+                          WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
+              OR EXISTS (SELECT 1 FROM character_invitation ci
+                          JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                          WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
+                            AND c.player_id = $playerId))"""
+    )
 
     private def selectSummariesForPlayer(
         where: Fragment[Void]
@@ -386,9 +409,16 @@ class TournamentRepo(session: Session[IO]) {
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId""".query(summaryCodec)
 
-    /** A game's tournaments not yet started -- in draft or taking entries -- as `viewer` sees them, newest first. */
-    def notStartedForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
-        session.execute(selectNotStartedForGame)(((viewer, viewer), game)).map(_.map(summaryOf(viewer)))
+    /** A game's open competitions as `viewer` may see them: their own not yet started, then those taking entries that
+      * they could enter. Newest first within each.
+      */
+    def openForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
+        for {
+            own <- session.execute(selectOwnNotStartedForGame)(((viewer, viewer), game, viewer))
+            enterable <- session.execute(selectEnterableForGame)(
+              ((viewer, viewer), game, (viewer, viewer, viewer, viewer))
+            )
+        } yield (own ++ enterable).map(summaryOf(viewer))
 
     /** The tournaments `viewer` owns, has entered or is invited to, in every game, that are not over, newest first. */
     def summariesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
