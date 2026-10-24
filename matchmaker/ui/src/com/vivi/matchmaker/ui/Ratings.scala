@@ -313,9 +313,9 @@ object Ratings {
             reload = () => fetch(),
             subsection = role.isDefined,
             tip = Some(
-              s"ratings-tip-${game.gameId.value}$idSuffix" -> role.fold(
-                Tips.rankings.players(initialRating = EloRating.initial.toString)
-              )(r => Tips.rankings.role(role = r.displayName, initialRating = EloRating.initial.toString))
+              s"ratings-tip-${game.gameId.value}$idSuffix" -> role.fold(Tips.rankings.players)(r =>
+                  Tips.rankings.role(role = r.displayName)
+              )
             )
           )(
             // Two regions, mounted with the section so that what arrives in them is announced: how
