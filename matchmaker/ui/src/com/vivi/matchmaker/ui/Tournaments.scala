@@ -1135,7 +1135,8 @@ object Tournaments {
         val asked = if (existing.isEmpty) Store.invitee.now() else None
         val invitational = Var(s0.isInvitational || asked.isDefined)
         val autoRounds = Var(s0.hasAutomaticRounds)
-        val friendly = Var(s0.isFriendly)
+        // Unticked for a new competition: an admin's is rated unless they tick it.
+        val friendly = Var(existing.fold(false)(_.settings.isFriendly))
         val lateEntries = Var(s0.hasLateEntries)
         val concurrentRounds = Var(s0.hasConcurrentRounds)
         val isPublic = Var(s0.isPublic)
@@ -1227,7 +1228,12 @@ object Tournaments {
             value = autoRounds.now(),
             default = fresh.hasAutomaticRounds
           ),
-          isFriendly = unlessLeftOut(key = "competition.friendly", value = friendly.now(), default = fresh.isFriendly),
+          // Anybody else, who is not shown the box, keeps what it was -- friendly, for a new competition.
+          isFriendly = unlessLeftOut(
+            key = "competition.friendly",
+            value = if (Store.isAdministering(game.gameId)) friendly.now() else s0.isFriendly,
+            default = fresh.isFriendly
+          ),
           isInvitational = unlessLeftOut(
             key = "competition.invitational",
             value = invitational.now(),
