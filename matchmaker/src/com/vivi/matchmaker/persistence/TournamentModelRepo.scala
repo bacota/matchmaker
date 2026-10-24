@@ -24,9 +24,13 @@ import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
 class TournamentModelRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val modelId = SkunkIdCodecs.tournamentModelId
-    // form_overrides holds an object of strings; anything else in it is not an override, and is passed over.
-    private val overrides: Codec[Map[String, String]] =
-        SkunkCodecs.jsonObject.imap(_.collect { case (k, v: String) => k -> v })(identity)
+    // form_overrides holds an object of strings, and of nulls for what the form leaves out; anything else in it is not
+    // an override, and is passed over.
+    private val overrides: Codec[Map[String, Option[String]]] =
+        SkunkCodecs.jsonObject.imap(_.collect {
+            case (k, v: String) => k -> Some(v)
+            case (k, null)      => k -> None
+        })(_.view.mapValues(_.orNull).toMap)
 
     private type ModelRow =
         (
@@ -41,7 +45,7 @@ class TournamentModelRepo(session: Session[IO]) {
             Boolean,
             Boolean,
             Boolean,
-            Map[String, String]
+            Map[String, Option[String]]
         )
     private val modelRow: Decoder[ModelRow] =
         modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool *: bool *: overrides
@@ -162,7 +166,7 @@ class TournamentModelRepo(session: Session[IO]) {
     // ---- writing a model from the code ----
 
     private type Properties =
-        (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Boolean, Map[String, String])
+        (Int, String, String, Option[String], Option[Int], Boolean, Boolean, Boolean, Map[String, Option[String]])
 
     private def propertiesOf(m: TournamentModel): Properties =
         (

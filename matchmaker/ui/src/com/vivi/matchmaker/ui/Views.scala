@@ -91,9 +91,16 @@ object Views {
     private[ui] def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
-    /** [[field]] whose caption changes as it is shown. */
-    private[ui] def field(caption: Signal[String], control: HtmlElement): HtmlElement =
-        label(cls := "field", child.text <-- caption, control)
+    /** [[field]] whose caption changes as it is shown, and that is left out while it is `None`: the competition form's,
+      * which the format chosen may reword.
+      */
+    private[ui] def field(caption: Signal[Option[String]], control: HtmlElement): HtmlElement =
+        label(cls := "field", child.text <-- caption.map(_.getOrElse("")), control, shownWhen(caption))
+
+    /* Hidden while `caption` is `None`: out of sight and out of the accessibility tree, and kept, with what was typed
+     * into it, for when it is shown again. */
+    private[ui] def shownWhen(caption: Signal[Option[String]]): Modifier[HtmlElement] =
+        display <-- caption.map(c => if (c.isDefined) "" else "none")
 
     /** The body of a list: its rows, or a line saying why there are none.
       *
@@ -539,14 +546,16 @@ object Views {
         )
 
     /** [[tipField]] whose caption and tip change as it is shown: the competition form's, which the format chosen may
-      * reword.
+      * reword. Left out while the caption is `None`, and without its tip while the tip is.
       */
-    private[ui] def tipField(id: String, caption: Signal[String], text: Signal[String])(
+    private[ui] def tipField(id: String, caption: Signal[Option[String]], text: Signal[Option[String]])(
         control: HtmlElement
-    ): HtmlElement =
-        withTip(id = id, subject = caption, text = text)(
-          label(cls := "field", child.text <-- caption, control.amend(aria.describedBy := id))
-        )
+    ): HtmlElement = {
+        val words = caption.map(_.getOrElse(""))
+        withTip(id = id, subject = words, text = text)(
+          label(cls := "field", child.text <-- words, control.amend(aria.describedBy := id))
+        ).amend(shownWhen(caption))
+    }
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
       * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
@@ -588,11 +597,16 @@ object Views {
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
-    /** [[withTip]] whose subject and tip change as it is shown. */
-    private[ui] def withTip(id: String, subject: Signal[String], text: Signal[String])(
+    /** [[withTip]] whose subject and tip change as it is shown, with no tip while it is `None`. */
+    private[ui] def withTip(id: String, subject: Signal[String], text: Signal[Option[String]])(
         control: HtmlElement
     ): HtmlElement =
-        tipped(id = id, text = child.text <-- text, control = control)(
+        tipped(
+          id = id,
+          text = child.text <-- text.map(_.getOrElse("")),
+          control = control,
+          hasTip = text.map(_.isDefined)
+        )(
           cls := "tip-toggle",
           aria.label <-- subject.map(s => s"About $s"),
           "?"
@@ -607,10 +621,17 @@ object Views {
         tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
 
     /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. `text` is the
-     * tip's words, or a `child.text` that keeps them up to date. */
-    private[ui] def tipped(id: String, text: Modifier[HtmlElement], control: Modifier[HtmlElement])(
+     * tip's words, or a `child.text` that keeps them up to date. While `hasTip` is false the button and the tip are
+     * hidden, leaving `control` alone. */
+    private[ui] def tipped(
+        id: String,
+        text: Modifier[HtmlElement],
+        control: Modifier[HtmlElement],
+        hasTip: Signal[Boolean] = Val(true)
+    )(
         toggle: Modifier[HtmlElement]*
     ): HtmlElement = {
+        val tipDisplay = hasTip.map(if (_) "" else "none")
         val open = Var(false)
         // Escape hides a tip that hover or keyboard focus is showing, which `open` knows nothing about: this holds it
         // hidden, with focus left where it was, until the pointer or focus arrives afresh.
@@ -621,6 +642,7 @@ object Views {
           cls := "tip",
           cls("open") <-- open.signal,
           cls("dismissed") <-- dismissed.signal,
+          display <-- tipDisplay,
           text
         )
         // In a table that scrolls sideways, the scrolling box would clip a tip hanging below its heading, so there the
@@ -638,6 +660,7 @@ object Views {
           control,
           button(
             tpe := "button",
+            display <-- tipDisplay,
             toggle,
             // So that the tip is read out as the button is reached, rather than only shown: a screen reader is not
             // told what appeared when it opened.

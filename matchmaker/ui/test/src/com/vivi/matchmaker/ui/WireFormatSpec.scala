@@ -127,7 +127,7 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.parameters, Seq.empty)
     }
 
-    test("a tournament model carries its form overrides as an object of words") {
+    test("a tournament model carries its form overrides as an object of words, and of nulls for what is left out") {
         val model = TournamentModel(
           tournamentModelId = TournamentModelId("heats"),
           version = 3,
@@ -137,10 +137,15 @@ class WireFormatSpec extends FunSuite {
           poolSize = None,
           hasLateEntries = false,
           design = com.vivi.matchmaker.model.tournament.TournamentDesign(Nil),
-          formOverrides = Map("labels.competition.poolSize" -> "Heat size")
+          formOverrides = Map("labels.competition.poolSize" -> Some("Heat size"), "labels.competition.live" -> None)
         )
 
-        assert(write(model).contains(""""formOverrides":{"labels.competition.poolSize":"Heat size"}"""), write(model))
+        assert(
+          write(model).contains(
+            """"formOverrides":{"labels.competition.poolSize":"Heat size","labels.competition.live":null}"""
+          ),
+          write(model)
+        )
         assertEquals(read[TournamentModel](write(model)), model)
     }
 

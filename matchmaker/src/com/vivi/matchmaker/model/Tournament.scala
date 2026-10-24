@@ -71,8 +71,8 @@ case class TournamentSettings(
   * a tournament is created, if any. `poolSize` is the default pool size to suggest, `None` for the game's R.
   * `hasRoleChoice` is what a tournament made from it starts with: every match's seats choose their roles. A model that
   * is not `isActive` is one the code no longer defines, kept for the tournaments made from it. `formOverrides` is the
-  * model's own wording of the competition form's captions and tips, by `labels.<key>` or `tips.<key>`
-  * ([[com.vivi.matchmaker.model.tournament.standard.StandardModel]] says more).
+  * model's own wording of the competition form's captions and tips, by `labels.<key>` or `tips.<key>`, `None` for one
+  * the form leaves out ([[com.vivi.matchmaker.model.tournament.standard.StandardModel]] says more).
   */
 case class TournamentModel(
     tournamentModelId: TournamentModelId,
@@ -86,7 +86,7 @@ case class TournamentModel(
     isActive: Boolean = true,
     hasRoleChoice: Boolean = false,
     isRoot: Boolean = false,
-    formOverrides: Map[String, String] = Map.empty
+    formOverrides: Map[String, Option[String]] = Map.empty
 )
 
 /** What a site admin's sync of the models with the code did: the models it `added`, those it `updated` to a newer

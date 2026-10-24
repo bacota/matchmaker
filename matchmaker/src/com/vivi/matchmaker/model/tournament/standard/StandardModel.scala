@@ -18,8 +18,10 @@ package standard
   *
   * `formOverrides` rewords the competition form while it is the format chosen: a key is a key of the UI's
   * `labels.properties` or `tips.properties` prefixed with the file's name -- `labels.competition.poolSize` for the pool
-  * size's caption, `tips.competition.poolSize` for its tip -- and its value the words used instead. A `{name}` the
-  * file's text has may be used in an override too. Like anything else here, changing one bumps `version`.
+  * size's caption, `tips.competition.poolSize` for its tip -- and its value the words used instead, or `None` to leave
+  * it out: a caption's `None` leaves out the whole field, whose setting is then what a tournament starts with, and a
+  * tip's leaves out the tip. The name, the format and the time unit are never left out. A `{name}` the file's text has
+  * may be used in an override too. Like anything else here, changing one bumps `version`.
   */
 abstract class StandardModel(
     val id: String,
@@ -30,7 +32,7 @@ abstract class StandardModel(
     val poolSize: Option[Int] = None,
     val hasLateEntries: Boolean = false,
     val hasRoleChoice: Boolean = false,
-    val formOverrides: Map[String, String] = Map.empty
+    val formOverrides: Map[String, Option[String]] = Map.empty
 ) {
     def design: TournamentDesign
 

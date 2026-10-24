@@ -1158,13 +1158,20 @@ object Tournaments {
         // Whether a save has been tried: until then a format not yet chosen is not called a problem.
         val hasTriedSaving = Var(false)
         val chosen: Var[Option[TournamentModel]] = Var(None)
-        // The captions and tips as the chosen format words them, where it does (`FormOverrides`).
-        val overrides: Signal[Map[String, String]] =
-            chosen.signal.map(_.fold(Map.empty[String, String])(_.formOverrides)).distinct
-        def labelOf(key: String, default: String): Signal[String] =
+        // The captions and tips as the chosen format words them, where it does, and the fields and tips it leaves out,
+        // as `None` (`FormOverrides`).
+        val overrides: Signal[Map[String, Option[String]]] =
+            chosen.signal.map(_.fold(Map.empty[String, Option[String]])(_.formOverrides)).distinct
+        def labelOf(key: String, default: String): Signal[Option[String]] =
             overrides.map(FormOverrides.label(_, key, default))
-        def tipOf(key: String, default: String, fills: (String, String)*): Signal[String] =
+        def tipOf(key: String, default: String, fills: (String, String)*): Signal[Option[String]] =
             overrides.map(FormOverrides.tip(_, key, default, fills*))
+        def isLeftOut(key: String): Boolean =
+            chosen.now().exists(m => FormOverrides.label(m.formOverrides, key, "").isEmpty)
+        /* What a field saves: what it holds, or, when the chosen format leaves it out, `default` -- what a new
+         * competition starts with, which for a field that choosing a format fills in is what the format fills in. */
+        def unlessLeftOut[A](key: String, value: => A, default: => A): A = if (isLeftOut(key)) default else value
+        val fresh = TournamentSettings()
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
         // or the code no longer defines it: not among those offered, and kept unless another is chosen.
         val kept = existing.map(_.tournamentModelId)
@@ -1173,7 +1180,13 @@ object Tournaments {
         def isKeeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
         def playersPerMatch: Option[Int] =
-            Option.when(game.isRoleless && !wholePool.now())(perMatch.now().trim.toIntOption).flatten
+            if (!game.isRoleless) None
+            else
+                unlessLeftOut(
+                  key = "competition.playersPerMatch",
+                  value = Option.when(!wholePool.now())(perMatch.now().trim.toIntOption).flatten,
+                  default = game.minPlayers
+                )
         // The game's R as this tournament plays it: its roles, or for a game without roles the players per match.
         def r: Int = TournamentGame.of(game, playersPerMatch).poolSeats
 
@@ -1189,37 +1202,78 @@ object Tournaments {
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
-        def isRoundRobin(id: Option[TournamentModelId]): Boolean = id.exists(_.value == "RR")
         def duration: Option[java.time.Duration] =
-            timeLimit.now().trim.toDoubleOption.filter(_ > 0).map { n =>
-                val size = timeUnits.toMap.getOrElse(timeUnit.now(), 60L)
-                java.time.Duration.ofMinutes((n * size).round)
-            }
+            unlessLeftOut(
+              key = "competition.timeLimit",
+              value = timeLimit.now().trim.toDoubleOption.filter(_ > 0).map { n =>
+                  val size = timeUnits.toMap.getOrElse(timeUnit.now(), 60L)
+                  java.time.Duration.ofMinutes((n * size).round)
+              },
+              default = Some(java.time.Duration.ofHours(48))
+            )
+        // Left out, the server's default: the format's suggestion, else the game's R.
+        def poolSizeAsked: Option[Int] =
+            unlessLeftOut(key = "competition.poolSize", value = int(poolSize), default = None)
+        def maxEntrantsAsked: Option[Int] =
+            unlessLeftOut(key = "competition.maxEntrants", value = int(maxEntrants), default = fresh.maxEntrants)
         def settings = TournamentSettings(
-          hasAutomaticRounds = autoRounds.now(),
-          isFriendly = friendly.now(),
-          isInvitational = invitational.now(),
-          hasLateEntries = lateEntries.now(),
-          minRating = int(minRating),
-          maxRating = int(maxRating),
-          entriesPerPlayer = int(entries).getOrElse(1),
+          hasAutomaticRounds = unlessLeftOut(
+            key = "competition.autoRounds",
+            value = autoRounds.now(),
+            default = fresh.hasAutomaticRounds
+          ),
+          isFriendly = unlessLeftOut(key = "competition.friendly", value = friendly.now(), default = fresh.isFriendly),
+          isInvitational = unlessLeftOut(
+            key = "competition.invitational",
+            value = invitational.now(),
+            default = fresh.isInvitational || asked.isDefined
+          ),
+          hasLateEntries = unlessLeftOut(
+            key = "competition.lateEntries",
+            value = lateEntries.now(),
+            default = chosen.now().fold(fresh.hasLateEntries)(_.hasLateEntries)
+          ),
+          minRating = unlessLeftOut(key = "competition.minRating", value = int(minRating), default = fresh.minRating),
+          maxRating = unlessLeftOut(key = "competition.maxRating", value = int(maxRating), default = fresh.maxRating),
+          entriesPerPlayer = unlessLeftOut(
+            key = "competition.entries",
+            value = int(entries).getOrElse(1),
+            default = fresh.entriesPerPlayer
+          ),
           roundDuration = duration,
-          maxTurns = int(maxTurns),
-          hasConcurrentRounds = concurrentRounds.now(),
-          isPublic = isPublic.now(),
+          maxTurns = unlessLeftOut(key = "competition.maxTurns", value = int(maxTurns), default = fresh.maxTurns),
+          hasConcurrentRounds = unlessLeftOut(
+            key = "competition.concurrentRounds",
+            value = concurrentRounds.now(),
+            default = fresh.hasConcurrentRounds
+          ),
+          isPublic = unlessLeftOut(key = "competition.isPublic", value = isPublic.now(), default = fresh.isPublic),
           gameSettings = GameSettingsFields.settingsOf(parameters.now()),
-          isLive = live.now(),
-          start = GameSettingsFields.startOf(plannedStart.now()),
-          hasRoleChoice = chooseRoles.now(),
-          maxEntrants = if (isRoundRobin(modelId.now())) None else int(maxEntrants),
-          isAutoStarted = autoStart.now() && !isRoundRobin(modelId.now()) && int(maxEntrants).isDefined,
+          isLive = unlessLeftOut(key = "competition.live", value = live.now(), default = fresh.isLive),
+          start = unlessLeftOut(
+            key = "competition.plannedStart",
+            value = GameSettingsFields.startOf(plannedStart.now()),
+            default = fresh.start
+          ),
+          hasRoleChoice = unlessLeftOut(
+            key = "competition.chooseRoles",
+            value = chooseRoles.now(),
+            default = chosen.now().fold(fresh.hasRoleChoice)(_.hasRoleChoice)
+          ),
+          maxEntrants = maxEntrantsAsked,
+          isAutoStarted =
+              unlessLeftOut(key = "competition.autoStart", value = autoStart.now(), default = fresh.isAutoStarted) &&
+                  maxEntrantsAsked.isDefined,
           playersPerMatch = playersPerMatch
         )
         /* "A number of players" with no number is not "everyone in the pool", though both leave `playersPerMatch`
          * empty: refused here, so that a blank or mistyped count is never saved as the other mode. */
         def countProblem: List[Problem] =
             Option
-                .when(game.isRoleless && !wholePool.now() && perMatch.now().trim.toIntOption.forall(_ < 1))(
+                .when(
+                  game.isRoleless && !isLeftOut("competition.playersPerMatch") && !wholePool.now() &&
+                      perMatch.now().trim.toIntOption.forall(_ < 1)
+                )(
                   Problem(
                     where = "",
                     message = "players per match has to be a whole number above 0, or choose everyone in the pool"
@@ -1236,7 +1290,7 @@ object Tournaments {
                       design = m.design,
                       game = TournamentGame.of(game, playersPerMatch),
                       maxTurns = settings.maxTurns,
-                      defaultPoolSize = int(poolSize).orElse(Some(r))
+                      defaultPoolSize = poolSizeAsked.orElse(m.poolSize).orElse(Some(r))
                     )
             })
         def check(): Unit = problems.set(found)
@@ -1287,13 +1341,14 @@ object Tournaments {
         }
 
         def checkbox(
-            caption: Signal[String],
+            caption: Signal[Option[String]],
             v: Var[Boolean],
-            tip: Signal[String],
+            tip: Signal[Option[String]],
             disabledWhen: Signal[Boolean] = Val(false)
         ) = {
             val id = freshTipId(s"$key-tip")
-            withTip(id = id, subject = caption, text = tip)(
+            val words = caption.map(_.getOrElse(""))
+            withTip(id = id, subject = words, text = tip)(
               label(
                 input(
                   tpe := "checkbox",
@@ -1301,11 +1356,11 @@ object Tournaments {
                   disabled <-- disabledWhen,
                   controlled(checked <-- v.signal, onClick.mapToChecked --> v)
                 ),
-                child.text <-- caption
+                child.text <-- words
               )
-            )
+            ).amend(Views.shownWhen(caption))
         }
-        def number(caption: Signal[String], v: Var[String], tip: Signal[String]) =
+        def number(caption: Signal[Option[String]], v: Var[String], tip: Signal[Option[String]]) =
             Views.tipField(id = freshTipId(s"$key-tip"), caption = caption, text = tip)(
               input(tpe := "number", inputMode := "numeric", controlled(value <-- v.signal, onInput.mapToValue --> v))
             )
@@ -1316,10 +1371,12 @@ object Tournaments {
             val fewest = game.requiredSeats.toString
             val id = freshTipId(s"$key-tip")
             val caption = labelOf("competition.playersPerMatch", Labels.competition.playersPerMatch)
+            val words = caption.map(_.getOrElse(""))
             div(
+              Views.shownWhen(caption),
               withTip(
                 id = id,
-                subject = caption,
+                subject = words,
                 text = game.maxPlayers.fold(
                   tipOf(
                     "competition.playersPerMatchAtLeast",
@@ -1337,7 +1394,7 @@ object Tournaments {
               )(
                 label(
                   cls := "field",
-                  child.text <-- caption,
+                  child.text <-- words,
                   select(
                     aria.describedBy := id,
                     onChange.mapToValue --> (v => wholePool.set(v == "pool")),
@@ -1453,6 +1510,8 @@ object Tournaments {
                     val everyone = game.maxPlayers.fold(entered)(math.min(entered, _))
                     button(
                       tpe := "button",
+                      // Gone with the pool size it fills in.
+                      Views.shownWhen(labelOf("competition.poolSize", Labels.competition.poolSize)),
                       s"One pool of everyone entered ($everyone)",
                       onClick --> (_ => poolSize.set(everyone.toString))
                     )
@@ -1513,22 +1572,15 @@ object Tournaments {
             v = live,
             tip = tipOf("competition.live", Tips.competition.live)
           ),
-          // A round robin is one match of everyone who enters: no most to set, nor to start on.
-          child <-- modelId.signal.map(id =>
-              if (isRoundRobin(id)) emptyNode
-              else
-                  div(
-                    number(
-                      caption = labelOf("competition.maxEntrants", Labels.competition.maxEntrants),
-                      v = maxEntrants,
-                      tip = tipOf("competition.maxEntrants", Tips.competition.maxEntrants)
-                    ),
-                    checkbox(
-                      caption = labelOf("competition.autoStart", Labels.competition.autoStart),
-                      v = autoStart,
-                      tip = tipOf("competition.autoStart", Tips.competition.autoStart)
-                    )
-                  )
+          number(
+            caption = labelOf("competition.maxEntrants", Labels.competition.maxEntrants),
+            v = maxEntrants,
+            tip = tipOf("competition.maxEntrants", Tips.competition.maxEntrants)
+          ),
+          checkbox(
+            caption = labelOf("competition.autoStart", Labels.competition.autoStart),
+            v = autoStart,
+            tip = tipOf("competition.autoStart", Tips.competition.autoStart)
           ),
           Views.tipField(
             id = freshTipId(s"$key-tip"),
@@ -1572,7 +1624,8 @@ object Tournaments {
                 controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
               ),
               select(
-                aria.label <-- labelOf("competition.timeUnit", Labels.competition.timeUnit),
+                aria.label <-- labelOf("competition.timeUnit", Labels.competition.timeUnit)
+                    .map(_.getOrElse(Labels.competition.timeUnit)),
                 value <-- timeUnit.signal,
                 onChange.mapToValue --> timeUnit,
                 timeUnits.map((unit, _) => option(value := unit, unit))
@@ -1603,8 +1656,12 @@ object Tournaments {
                         val request = TournamentRequest(
                           name = name.now().trim,
                           tournamentModelId = id,
-                          description = description.now().trim,
-                          defaultPoolSize = int(poolSize),
+                          description = unlessLeftOut(
+                            key = "competition.description",
+                            value = description.now().trim,
+                            default = ""
+                          ),
+                          defaultPoolSize = poolSizeAsked,
                           settings = settings
                         )
                         val saving: Future[Tournament] = existing match {

@@ -158,10 +158,9 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
               )
             )
           ),
-          formOverrides =
-              Map("labels.competition.poolSize" -> "Group size", "tips.competition.poolSize" -> "Per group.")
+          formOverrides = Map("labels.competition.poolSize" -> Some("Group size"), "tips.competition.poolSize" -> None)
         )
-        val reworded = nested.copy(version = 2, formOverrides = Map("labels.competition.live" -> "Blitz"))
+        val reworded = nested.copy(version = 2, formOverrides = Map("labels.competition.live" -> Some("Blitz")))
         val id = nested.tournamentModelId
         val (written, rewritten, inner) = run(TestSession.resource.use { session =>
             val repo = new TournamentModelRepo(session)
@@ -176,7 +175,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         })
         assertEquals(written.map(_.formOverrides), Some(nested.formOverrides))
         assertEquals(rewritten.map(_.formOverrides), Some(reworded.formOverrides))
-        assertEquals(inner.map(_.formOverrides), Some(Map.empty[String, String]))
+        assertEquals(inner.map(_.formOverrides), Some(Map.empty[String, Option[String]]))
     }
 
     // ---- a sync removing a model the code no longer defines ----

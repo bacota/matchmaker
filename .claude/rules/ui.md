@@ -58,7 +58,11 @@ A caption's text lives in `matchmaker/ui/labels.properties`, generated into `Lab
 there is `Labels.game.name`. A field with a tip uses the same key in both files. A new field adds a key there. A
 caption that comes from data, such as a game parameter's display name, stays in the code.
 
-A competition format can reword the competition form's captions and tips while it is the one chosen:
-`StandardModel.formOverrides`, keyed `labels.<key>` or `tips.<key>`, reaches the form on the stored model. So a caption
-or tip on that form goes through the form's `labelOf` or `tipOf` with its key, not straight to `Labels` or `Tips`, or
-no format can reword it. `FormOverridesSpec` fails a format whose override names a key neither file has.
+A competition format can reword the competition form's captions and tips while it is the one chosen, or leave them
+out: `StandardModel.formOverrides`, keyed `labels.<key>` or `tips.<key>`, reaches the form on the stored model, and a
+caption's `None` leaves out its field, a tip's `None` the tip. So a caption or tip on that form goes through the form's
+`labelOf` or `tipOf` with its key, not straight to `Labels` or `Tips`, and a field's setting goes through
+`unlessLeftOut`, which saves what a new competition starts with for a field left out. A format's own special case on
+the form is written this way, not as a test of its id: Round Robin leaves out the most players and starting when full.
+`FormOverridesSpec` fails a format whose override names a key neither file has, or leaves out a field that is always
+shown.
