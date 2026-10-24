@@ -1235,7 +1235,8 @@ object Tournaments {
             }))
 
         /* The fields a check reads, with those choosing a format also fills in, as last accepted: a change whose check
-         * raises a warning they did not have is put back, and the warning said in the banner instead. */
+         * raises a problem -- an error or a warning -- they did not have is put back, and the problem said in the
+         * banner instead. */
         type Fields =
             (Boolean, String, Option[TournamentModel], Option[TournamentModelId], String, String, Boolean, Boolean)
         def fields: Fields = (
@@ -1248,16 +1249,16 @@ object Tournaments {
           lateEntries.now(),
           chooseRoles.now()
         )
-        def warnings: Set[Problem] = problems.now().filter(_.isWarning).toSet
+        def found: Set[Problem] = problems.now().toSet
         var accepted: Fields = fields
-        var acceptedWarnings: Set[Problem] = Set.empty
+        var acceptedProblems: Set[Problem] = Set.empty
         def accept(): Unit = {
             accepted = fields
-            acceptedWarnings = warnings
+            acceptedProblems = found
         }
         def checkChange(): Unit = {
             check()
-            val raised = warnings -- acceptedWarnings
+            val raised = found -- acceptedProblems
             if (raised.isEmpty) accept()
             else {
                 val (pool, count, model, id, turns, size, late, roles) = accepted
