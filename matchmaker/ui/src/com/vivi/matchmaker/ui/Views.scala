@@ -364,8 +364,9 @@ object Views {
       * A link on a screen -- an opponent's name, "Back to search" -- is taken out of the page with the screen it was
       * on, and the focus with it: a keyboard was left at the top of the document and a screen reader told nothing about
       * where it had arrived. A menu entry stays, but the page it opened is elsewhere, and the heading is what says
-      * which page it is. Focus already inside the new screen -- the challenge dialog a player's page opens onto takes
-      * it as it mounts -- is left where it is. A turn later than the change, so that the new screen has been drawn.
+      * which page it is. Focus already inside the new screen -- the New Competition dialog a player's page opens onto
+      * takes it as it mounts -- is left where it is. A turn later than the change, so that the new screen has been
+      * drawn; and a screen still loading passes the focus to its heading when that arrives.
       */
     private def focusNewScreen(screen: dom.html.Element): Unit =
         dom.window.setTimeout(
@@ -374,13 +375,23 @@ object Views {
               val lost = active == null || active == dom.document.body || !dom.document.body.contains(active) ||
                   active.closest(".menu") != null
               if (lost) {
-                  val target = screen.querySelector("h2") match {
+                  def focusHeading(): Boolean = screen.querySelector("h2") match {
                       case heading: dom.html.Element =>
                           heading.setAttribute("tabindex", "-1")
-                          heading
-                      case _ => screen
+                          heading.focus()
+                          true
+                      case _ => false
                   }
-                  target.focus()
+                  if (!focusHeading()) {
+                      // A screen still loading has no heading yet: the screen holds the focus until it comes, and
+                      // hands it on then -- unless the reader has moved it meanwhile.
+                      screen.focus()
+                      val watching = new dom.MutationObserver((_, observer) =>
+                          if (dom.document.activeElement != screen || focusHeading()) observer.disconnect()
+                      )
+                      watching.observe(screen, new dom.MutationObserverInit { childList = true; subtree = true })
+                      dom.window.setTimeout(() => watching.disconnect(), 5000)
+                  }
               }
           },
           0
