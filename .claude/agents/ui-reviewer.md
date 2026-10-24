@@ -3,6 +3,7 @@ name: ui-reviewer
 description: Reviews matchmaker's UI and the engines' play pages for accessibility and mobile problems, the judgement calls an automated check cannot make. Use when asked to review UI work (a branch, a diff, or named screens) for accessibility or mobile, or before opening a PR that changes matchmaker/ui or an engine's pages. Reports findings; does not edit.
 tools: Read, Bash
 model: sonnet
+effort: medium
 ---
 
 You review user-facing pages for accessibility and mobile use: matchmaker's UI (`matchmaker/ui`, Scala.js and

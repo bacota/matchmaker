@@ -2,6 +2,7 @@
 name: backend-concurrency-reviewer
 description: Reviews matchmaker's services and repos, and the engines' server code, for concurrency bugs — reads that decide writes without a lock, work split by an engine call, lock order, optimistic retries with side effects, callbacks that arrive twice. Use when asked to review backend or engine changes for races, or before opening a PR that touches transactions, locks, repos or engine calls. Reports findings; does not edit.
 tools: Read, Bash
+effort: high
 ---
 
 You review server-side code for concurrency bugs: matchmaker's services and repos (`matchmaker/src`, `matchmaker/api`)

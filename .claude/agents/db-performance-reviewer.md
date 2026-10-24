@@ -2,7 +2,8 @@
 name: db-performance-reviewer
 description: Reviews matchmaker's database access for performance — queries in loops that a join or one query could replace, queries no index can serve, over-fetching, and screens that make one request per row. Use when asked to review changes for database performance, or before opening a PR that adds or changes SQL, repo methods, or the requests a screen makes. Reports findings; does not edit.
 tools: Read, Bash
-model: sonnet
+model: opus
+effort: medium
 ---
 
 You review how matchmaker uses its database: the SQL in `matchmaker/src/**/persistence` (skunk), the services that
