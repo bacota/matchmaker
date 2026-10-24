@@ -1156,6 +1156,8 @@ object Tournaments {
         val plannedStart = Var(s0.start.fold("")(GameSettingsFields.localInputOf))
         val parameters = Var(GameSettingsFields.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
+        // Whether a save has been tried: until then a format not yet chosen is not called a problem.
+        val hasTriedSaving = Var(false)
         val chosen: Var[Option[TournamentModel]] = Var(None)
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
         // or the code no longer defines it: not among those offered, and kept unless another is chosen.
@@ -1222,7 +1224,7 @@ object Tournaments {
             problems.set(countProblem ++ (chosen.now() match {
                 // The format it was made from, checked again as it is saved.
                 case None if isKeeping => Nil
-                case None              => List(Problem(where = "", message = "choose a format"))
+                case None => if (hasTriedSaving.now()) List(Problem(where = "", message = "choose a format")) else Nil
                 case Some(m) =>
                     Validation.validate(
                       design = m.design,
@@ -1495,11 +1497,11 @@ object Tournaments {
           else emptyNode,
           div(
             cls := "row",
-            button(tpe := "button", "Check", onClick --> (_ => check())),
             busyButton(
               label = if (existing.isDefined) "Save Changes" else "Create Competition",
               busy = savingBusy(game.gameId, existing)
             )(busy =>
+                hasTriedSaving.set(true)
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
@@ -1543,6 +1545,11 @@ object Tournaments {
           ),
           ul(
             aria.live := "polite",
+            // Checked again whenever a field it reads changes.
+            wholePool.signal
+                .combineWith(perMatch.signal, chosen.signal, modelId.signal, maxTurns.signal, poolSize.signal) --> (_ =>
+                check()
+            ),
             children <-- problems.signal.map(
               _.map(pr =>
                   li(
