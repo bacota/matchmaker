@@ -1220,8 +1220,8 @@ object Tournaments {
                   )
                 )
                 .toList
-        def check(): Unit =
-            problems.set(countProblem ++ (chosen.now() match {
+        def found: List[Problem] =
+            countProblem ++ (chosen.now() match {
                 // The format it was made from, checked again as it is saved.
                 case None if isKeeping => Nil
                 case None => if (hasTriedSaving.now()) List(Problem(where = "", message = "choose a format")) else Nil
@@ -1232,11 +1232,13 @@ object Tournaments {
                       maxTurns = settings.maxTurns,
                       defaultPoolSize = int(poolSize).orElse(Some(r))
                     )
-            }))
+            })
+        def check(): Unit = problems.set(found)
 
         /* The fields a check reads, with those choosing a format also fills in, as last accepted: a change whose check
          * raises a problem -- an error or a warning -- they did not have is put back, and the problem said in the
-         * banner instead. */
+         * banner instead. The problems are worked out rather than read back from `problems`, whose set, made inside
+         * an observer, lands only after it returns. */
         type Fields =
             (Boolean, String, Option[TournamentModel], Option[TournamentModelId], String, String, Boolean, Boolean)
         def fields: Fields = (
@@ -1249,18 +1251,19 @@ object Tournaments {
           lateEntries.now(),
           chooseRoles.now()
         )
-        def found: Set[Problem] = problems.now().toSet
         var accepted: Fields = fields
-        var acceptedProblems: Set[Problem] = Set.empty
-        def accept(): Unit = {
-            accepted = fields
-            acceptedProblems = found
-        }
+        var acceptedProblems: List[Problem] = Nil
+        // Whether the next check is of the format the form fills in as the formats arrive: not a change to undo.
+        var isFillingIn = false
         def checkChange(): Unit = {
-            check()
-            val raised = found -- acceptedProblems
-            if (raised.isEmpty) accept()
-            else {
+            val now = found
+            val raised = now.filterNot(acceptedProblems.contains)
+            if (raised.isEmpty || isFillingIn) {
+                isFillingIn = false
+                accepted = fields
+                acceptedProblems = now
+                problems.set(now)
+            } else {
                 val (pool, count, model, id, turns, size, late, roles) = accepted
                 Var.set(
                   wholePool -> pool,
@@ -1272,7 +1275,7 @@ object Tournaments {
                   lateEntries -> late,
                   chooseRoles -> roles
                 )
-                check()
+                problems.set(acceptedProblems)
                 Store.reportProblem(s"That change was undone: ${raised.map(_.describe).mkString("; ")}")
             }
         }
@@ -1346,9 +1349,13 @@ object Tournaments {
               chosen.now() match {
                   case Some(_) => ()
                   case None =>
-                      modelId.now() match {
-                          case Some(id) => ms.find(_.tournamentModelId == id).foreach(m => chosen.set(Some(m)))
-                          case None     => ms.headOption.foreach(choose)
+                      val filled = modelId.now() match {
+                          case Some(id) => ms.find(_.tournamentModelId == id)
+                          case None     => ms.headOption
+                      }
+                      filled.foreach { m =>
+                          isFillingIn = true
+                          if (modelId.now().isDefined) chosen.set(Some(m)) else choose(m)
                       }
               }
           },
@@ -1590,8 +1597,8 @@ object Tournaments {
             aria.live := "polite",
             // Checked again whenever a field it reads changes, once typing pauses so a number half typed is not judged.
             onMountCallback { _ =>
+                acceptedProblems = found
                 check()
-                accept()
             },
             wholePool.signal
                 .combineWith(perMatch.signal, chosen.signal, modelId.signal, maxTurns.signal, poolSize.signal)
