@@ -2,7 +2,8 @@ package com.vivi.matchmaker.model.tournament
 package standard
 
 /** Round Robin: the simplest tournament there is, one match of everyone who enters -- so there is no most to set, nor
-  * to start on, and the form leaves both out.
+  * to start on, and the form leaves both out, with late entries. Its pool is everyone taking part, so the form calls
+  * the pool size the number of participants, without the tip about pools, and says what starting by itself means here.
   */
 object RoundRobin
     extends StandardModel(
