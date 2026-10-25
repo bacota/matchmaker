@@ -17,7 +17,7 @@
     ["chin", "Chin", "You are knocked out only by power above your defense plus three times this."]
   ];
 
-  /* Each characteristic's explanation is a tip behind a "?" rather than a line under it. It still
+  /* Each characteristic's explanation is a tip behind an ⓘ rather than a line under it. It still
    * describes the field (aria-describedby reads a hidden element too), so a screen reader hears it
    * on reaching the field without opening anything. */
   const inputs = {};
@@ -28,7 +28,7 @@
     row.innerHTML =
       '<span class="caption"><label for="f-' + key + '">' + label + '</label>' +
       '<button type="button" class="tip-toggle" aria-label="About ' + label + '" aria-expanded="false"' +
-      ' aria-controls="f-' + key + '-hint">?</button>' +
+      ' aria-controls="f-' + key + '-hint"><span class="tip-icon" aria-hidden="true">i</span></button>' +
       '<span class="tip" role="tooltip" id="f-' + key + '-hint">' + hint + '</span></span>' +
       '<input id="f-' + key + '" type="number" inputmode="numeric" step="1" required min="' + rules.min +
       '" max="' + rules.max + '" aria-describedby="f-' + key + '-hint">';

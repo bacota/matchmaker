@@ -29,7 +29,7 @@ rule was written for.
 
 ## Explanations are tips, not paragraphs
 
-On a form or other functional page, the text that explains a field or section goes in a "?" tip, not a visible
+On a form or other functional page, the text that explains a field or section goes in an ⓘ tip, not a visible
 paragraph: `withTip` or `tipField` in `Views.scala`, and `refreshableSection(..., tip = Some(id -> text))` for a
 refreshable section's heading. Status messages, live regions and empty-state text stay visible.
 

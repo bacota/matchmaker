@@ -20,7 +20,7 @@ import com.vivi.matchmaker.model.tournament.{
   * that creates or edits one.
   *
   * Built from `Views`' own pieces — `field`, `withTip`, `busyButton`, `listing` — so that a tournament's page reads
-  * like every other screen: labelled controls, explanations behind a "?", buttons that say they are busy. Everything
+  * like every other screen: labelled controls, explanations behind an ⓘ, buttons that say they are busy. Everything
   * that writes into the store goes through `Store`'s loads, so a late answer from an earlier session or an earlier
   * tournament is dropped.
   */

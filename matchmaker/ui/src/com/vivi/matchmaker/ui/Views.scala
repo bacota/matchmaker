@@ -7,7 +7,7 @@ import org.scalajs.dom
 import com.vivi.matchmaker.model._
 
 /** The page's frame -- header, error banner, registration, the menu and the screen it switches between -- and the
-  * pieces every screen is built from: labelled fields, busy buttons, refreshable sections, explanations behind a "?".
+  * pieces every screen is built from: labelled fields, busy buttons, refreshable sections, explanations behind an ⓘ.
   */
 object Views {
 
@@ -557,7 +557,7 @@ object Views {
         ).amend(shownWhen(caption))
     }
 
-    /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
+    /** A control with a tip beside it: an ⓘ button that shows `text` on hover, on keyboard focus, and on a tap, which
       * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
       * `aria-describedby` at it and have it read out whether or not it is showing.
       *
@@ -572,6 +572,11 @@ object Views {
         tipsMade += 1
         s"$prefix-$tipsMade"
     }
+
+    /** The face of a tip's button: an "i" in a circle, drawn by `.tip-icon` rather than a ⓘ, which some fonts set too
+      * small and faint to read. The button's `aria-label` is what a screen reader hears.
+      */
+    private[ui] def tipIcon(): HtmlElement = span(cls := "tip-icon", aria.hidden := true, "i")
 
     /** "friendly" under a match or a challenge that is one, with what that means a tap away. Said only when it is: a
       * rated match is the ordinary kind, and needs no saying.
@@ -595,7 +600,7 @@ object Views {
         )
 
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
-        tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
+        tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", tipIcon())
 
     /** [[withTip]] whose subject and tip change as it is shown, with no tip while it is `None`. */
     private[ui] def withTip(id: String, subject: Signal[String], text: Signal[Option[String]])(
@@ -609,18 +614,18 @@ object Views {
         )(
           cls := "tip-toggle",
           aria.label <-- subject.map(s => s"About $s"),
-          "?"
+          tipIcon()
         )
 
-    /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
-      * cell too narrow to hold both a word and a "?" -- the heading of a running match's Friendly column. A button, so
+    /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as an ⓘ beside it would. For a
+      * cell too narrow to hold both a word and an ⓘ -- the heading of a running match's Friendly column. A button, so
       * that a keyboard and a finger can reach the tip as well as a mouse can, but set as the word with a dotted line
       * under it.
       */
     private def tipWord(id: String, word: String, text: String): HtmlElement =
         tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
 
-    /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. `text` is the
+    /* The tip, and the button that shows it after `control`: the ⓘ of `withTip`, or `tipWord`'s word. `text` is the
      * tip's words, or a `child.text` that keeps them up to date. While `hasTip` is false the button and the tip are
      * hidden, leaving `control` alone. */
     private[ui] def tipped(
@@ -646,7 +651,7 @@ object Views {
           text
         )
         // In a table that scrolls sideways, the scrolling box would clip a tip hanging below its heading, so there the
-        // tip is pinned to the window instead (`.table-scroll .tip`), under its "?" as it is about to show.
+        // tip is pinned to the window instead (`.table-scroll .tip`), under its ⓘ as it is about to show.
         def place(toggle: dom.Element): Unit =
             if (toggle.closest(".table-scroll") != null) {
                 val at = toggle.getBoundingClientRect()

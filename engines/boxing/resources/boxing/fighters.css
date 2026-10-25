@@ -31,13 +31,16 @@
   #fighters dl > div { display: flex; gap: .375rem; white-space: nowrap; }
   #fighters dt { opacity: .75; }
   #fighters dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
-  /* A characteristic's explanation sits behind a "?" beside its name. The tip opens below the row,
+  /* A characteristic's explanation sits behind an ⓘ beside its name. The tip opens below the row,
      no wider than it, so on a phone it stays on the screen: on hover where there is a mouse,
      on keyboard focus, and on a tap (`.open`), the only one of the three a touch screen has. */
   form .field.trait { position: relative; }
   .caption { display: flex; align-items: center; gap: .125rem; }
   .tip-toggle { min-width: 44px; min-height: 44px; padding: 0; border: none; background: none; color: inherit;
                 font: inherit; font-weight: 700; cursor: help; }
+  .tip-icon { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+              width: 1.25em; height: 1.25em; border: 1.5px solid currentColor; border-radius: 50%;
+              font-family: Georgia, "Times New Roman", serif; line-height: 1; }
   .tip { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 10; max-width: 22rem; padding: .5rem .75rem; border: 1px solid var(--line);
          border-radius: 6px; background: var(--paper); color: var(--ink); font-size: .875rem; line-height: 1.4;
          box-shadow: 0 2px 8px #0004; }

@@ -713,7 +713,7 @@ label.field > .hint {
   margin-bottom: 0.5rem;
 }
 
-/* A checkbox with a "?" beside it that explains it (`withTip`). The tip opens below the row and is
+/* A checkbox with an ⓘ beside it that explains it (`withTip`). The tip opens below the row and is
    pinned to its left edge, so on a phone it stays on the screen rather than running off the side of
    it. It opens on hover where there is a mouse, on keyboard focus, and on a tap (`.open`), which is
    the only one of the three a touch screen has. */
@@ -738,6 +738,22 @@ label.field > .hint {
   font-weight: bold;
   cursor: help;
 }
+/* The tip's face (`tipIcon`): an "i" in a circle, drawn rather than a ⓘ, which some fonts set too
+   small and faint to read. */
+.tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1.25em;
+  height: 1.25em;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  font-weight: bold;
+  line-height: 1;
+}
 .tip-toggle:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: -6px;
@@ -745,7 +761,7 @@ label.field > .hint {
 }
 /* A word that is its own tip (`tipWord`): set as the word, in the text's own weight, with a dotted
    line under it to say there is more to it. Its height on a phone is the 44px every button gets, taken
-   from the lines around it as the "?" takes it. */
+   from the lines around it as the ⓘ takes it. */
 .tip-toggle.tip-word {
   min-width: 0;
   font-size: inherit;
@@ -778,7 +794,7 @@ label.field > .hint {
   line-height: 1.4;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
-/* In a table that scrolls sideways, which would clip it, a tip is pinned to the window under its "?"
+/* In a table that scrolls sideways, which would clip it, a tip is pinned to the window under its ⓘ
    (withTip places it). */
 .table-scroll .tip {
   position: fixed;
@@ -796,8 +812,8 @@ label.field > .hint {
   }
 }
 
-/* A captioned field with a tip beside it takes the row's width, leaving the "?" only what it needs. */
-/* A tip on a line of a row ("friendly"): the line keeps the row's own spacing. The "?" is still
+/* A captioned field with a tip beside it takes the row's width, leaving the ⓘ only what it needs. */
+/* A tip on a line of a row ("friendly"): the line keeps the row's own spacing. The ⓘ is still
    44px to tap, but takes none of that height from the layout -- it overlaps the lines above and
    below instead of pushing them apart. */
 .with-tip.inline-tip {
@@ -882,7 +898,7 @@ button:disabled {
 
 /* Raised, so a button reads as something to press rather than a box of text: lit from above, a
    darker lower edge and a shadow under it, and pushed in while it is held. Only the buttons drawn as
-   buttons -- the link-buttons, the refresh glyph, the menu entries and the "?" tips have no box to
+   buttons -- the link-buttons, the refresh glyph, the menu entries and the ⓘ tips have no box to
    raise. A disabled or busy one lies flat, which says it will not press as well as its dimming does.
    Forced-colors mode drops the gradient and shadows by itself and keeps the border. */
 button:not(.link, .toggle, .refresh, .menu-item, .tip-toggle) {
@@ -1472,7 +1488,7 @@ h3[tabindex="-1"]:focus-visible {
 
    The headings are still there for a screen reader, which is told it is a table by the roles
    Main gives each part. Their tip buttons go, since a button that cannot be seen should not take
-   the focus -- a "?", or a word that is its own tip, whose plain copy (`.narrow-heading`) is shown in
+   the focus -- an ⓘ, or a word that is its own tip, whose plain copy (`.narrow-heading`) is shown in
    its place so the column keeps its name. What a parameter is called moves into its cell, and the
    check mark says "friendly". */
 @media (max-width: 40rem) {
@@ -1567,7 +1583,7 @@ h3[tabindex="-1"]:focus-visible {
 }
 
 /* The competition form's match time limit, its number and its unit on one line; and its
-   checkboxes close together -- the "?" keeps its 44px to tap but overlaps the rows around it rather
+   checkboxes close together -- the ⓘ keeps its 44px to tap but overlaps the rows around it rather
    than spacing them out, as `.inline-tip` does. */
 .competition-form .time-limit {
   display: flex;

@@ -16,6 +16,7 @@ object MatchTables {
         listing,
         openSignedIn,
         scopeAttr,
+        tipIcon,
         tipped
     }
 
@@ -231,7 +232,7 @@ object MatchTables {
         )
     }
 
-    /** A finished match's Elo cell: the change it made to the player's rating, signed, or a "?" saying it was friendly
+    /** A finished match's Elo cell: the change it made to the player's rating, signed, or an ⓘ saying it was friendly
       * -- a tip on what that means -- for a match that changed nobody's. Empty for one with no change recorded: called
       * off, or finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
       */
@@ -240,11 +241,11 @@ object MatchTables {
             td(
               role := "cell",
               cls := "elo",
-              // Only the "?", a word being too wide for the column; named for a screen reader by what it marks.
+              // Only the ⓘ, a word being too wide for the column; named for a screen reader by what it marks.
               tipped(id = freshTipId("friendly-tip"), text = Tips.matches.friendly, control = emptyNode)(
                 cls := "tip-toggle",
                 aria.label := "Friendly match",
-                "?"
+                tipIcon()
               ).amend(cls := "inline-tip")
             )
         else
