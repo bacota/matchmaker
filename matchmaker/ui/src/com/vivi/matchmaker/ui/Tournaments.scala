@@ -296,7 +296,7 @@ object Tournaments {
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
-        s.isOwner && s.isRoundOver && !s.tournament.settings.hasAutomaticRounds
+        s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
@@ -439,18 +439,20 @@ object Tournaments {
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
         val entered = d.entries.count(!_.isWithdrawn)
         // Entries can keep coming after the pool size was set to how many had entered, and a game without roles played
-        // as one match a pool would then start as more than one match.
-        val morePools = Option.when(
-          t.status == TournamentStatus.Open &&
-              Store.games.now().exists(g => g.gameId == t.gameId && g.isRoleless) && entered > t.defaultPoolSize
-        )(
-          p(
-            cls := "detail",
-            role := "status",
-            s"$entered have entered and pools hold ${t.defaultPoolSize}, so this will start as more than one pool. " +
-                "Edit the competition to change the pool size."
-          )
-        )
+        // as one match a pool would then start as more than one match. A pool of everyone entered never is.
+        val morePools = t.defaultPoolSize
+            .filter(size =>
+                t.status == TournamentStatus.Open &&
+                    Store.games.now().exists(g => g.gameId == t.gameId && g.isRoleless) && entered > size
+            )
+            .map(size =>
+                p(
+                  cls := "detail",
+                  role := "status",
+                  s"$entered have entered and pools hold $size, so this will start as more than one pool. " +
+                      "Edit the competition to change the pool size."
+                )
+            )
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
         val checking = Var(false)
         // This round's own length, in hours; blank for the tournament's.
@@ -838,7 +840,7 @@ object Tournaments {
                   p(
                     cls := "detail",
                     "Every match of this round is over." +
-                        (if (t.settings.hasAutomaticRounds) ""
+                        (if (t.settings.isAutoStarted) ""
                          else if (d.summary.isOwner) " Start the next round when you are ready."
                          else s" The next starts when ${d.summary.ownerNickname} starts it.")
                   )
@@ -1131,12 +1133,11 @@ object Tournaments {
             Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty))
         // The model chosen, by id; none until the models have come, for a new tournament.
         val modelId: Var[Option[TournamentModelId]] = Var(existing.map(_.tournamentModelId))
-        val poolSize = Var(existing.fold("")(_.defaultPoolSize.toString))
+        val poolSize = Var(existing.flatMap(_.defaultPoolSize).fold("")(_.toString))
         // Who a new competition is for, when it was asked for from their page: invitational, and once it is made its
         // page opens with them found, ready to invite.
         val asked = if (existing.isEmpty) Store.invitee.now() else None
         val invitational = Var(s0.isInvitational || asked.isDefined)
-        val autoRounds = Var(s0.hasAutomaticRounds)
         // Unticked for a new competition: an admin's is rated unless they tick it.
         val friendly = Var(existing.fold(false)(_.settings.isFriendly))
         // Whether the creator of a new competition enters it as it is made: ticked unless they administer the game, who
@@ -1234,11 +1235,6 @@ object Tournaments {
         def maxEntrantsAsked: Option[Int] =
             unlessLeftOut(key = "competition.maxEntrants", value = int(maxEntrants), default = fresh.maxEntrants)
         def settings = TournamentSettings(
-          hasAutomaticRounds = unlessLeftOut(
-            key = "competition.autoRounds",
-            value = autoRounds.now(),
-            default = fresh.hasAutomaticRounds
-          ),
           // Anybody else, who is not shown the box, keeps what it was -- friendly, for a new competition.
           isFriendly = unlessLeftOut(
             key = "competition.friendly",
@@ -1284,8 +1280,7 @@ object Tournaments {
           ),
           maxEntrants = maxEntrantsAsked,
           isAutoStarted =
-              unlessLeftOut(key = "competition.autoStart", value = autoStart.now(), default = fresh.isAutoStarted) &&
-                  maxEntrantsAsked.isDefined,
+              unlessLeftOut(key = "competition.autoStart", value = autoStart.now(), default = fresh.isAutoStarted),
           playersPerMatch = playersPerMatch
         )
         /* "A number of players" with no number is not "everyone in the pool", though both leave `playersPerMatch`
@@ -1312,7 +1307,10 @@ object Tournaments {
                       design = m.design,
                       game = TournamentGame.of(game, playersPerMatch),
                       maxTurns = settings.maxTurns,
-                      defaultPoolSize = poolSizeAsked.orElse(m.poolSize).orElse(Some(r))
+                      // As the server checks it: a pool of everyone entered at the most it takes.
+                      defaultPoolSize = poolSizeAsked
+                          .orElse(m.poolSize)
+                          .orElse(if (m.hasPoolOfEveryone) maxEntrantsAsked else Some(r))
                     )
             })
         def check(): Unit = problems.set(found)
@@ -1569,11 +1567,6 @@ object Tournaments {
             caption = labelOf("competition.invitational", Labels.competition.invitational),
             v = invitational,
             tip = tipOf("competition.invitational", Tips.competition.invitational)
-          ),
-          checkbox(
-            caption = labelOf("competition.autoRounds", Labels.competition.autoRounds),
-            v = autoRounds,
-            tip = tipOf("competition.autoRounds", Tips.competition.autoRounds)
           ),
           // Only for an admin of the game, who alone may make a competition rated.
           child <-- Store.currentPlayer.flatMapSwitch {

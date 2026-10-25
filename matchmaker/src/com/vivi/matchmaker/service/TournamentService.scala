@@ -40,8 +40,8 @@ class TournamentService[T](
     // ---- reading ---------------------------------------------------------------------------
 
     /** A game's open competitions as the caller may see them: their own not yet started, then those taking entries that
-      * they could enter -- any that anybody may enter, and an invitational one they are invited to or have entered.
-      * Newest first within each.
+      * they could enter -- any that anybody may enter, and an invitational one they are invited to or have entered,
+      * while they have an entry left in it. Newest first within each.
       */
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
@@ -178,7 +178,7 @@ class TournamentService[T](
                 }
             }
             .flatTap(t =>
-                IO.whenA(t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds)(
+                IO.whenA(t.status == TournamentStatus.Running && t.settings.isAutoStarted)(
                   started(t.gameId, t.tournamentId)
                 )
             )
@@ -303,7 +303,7 @@ class TournamentService[T](
                               name = request.name.trim,
                               description = request.description.trim,
                               settings = t.settings.copy(
-                                hasAutomaticRounds = s.hasAutomaticRounds,
+                                isAutoStarted = s.isAutoStarted,
                                 hasLateEntries = s.hasLateEntries,
                                 roundDuration = roundDuration
                               )
@@ -496,7 +496,7 @@ class TournamentService[T](
                 .flatMap { (t, caller, entrant, wasInvited, startedNow) =>
                     notifications.entered(session = session, tournament = t, actor = caller, wasInvited = wasInvited) *>
                         startedNow.traverse_(running =>
-                            IO.whenA(running.settings.hasAutomaticRounds)(started(running.gameId, running.tournamentId))
+                            IO.whenA(running.settings.isAutoStarted)(started(running.gameId, running.tournamentId))
                         ) *>
                         IO.pure(entrant)
                 }
@@ -692,7 +692,7 @@ class TournamentService[T](
                     } yield running
                 }
             }
-            .flatTap(t => IO.whenA(t.settings.hasAutomaticRounds)(started(t.gameId, t.tournamentId)))
+            .flatTap(t => IO.whenA(t.settings.isAutoStarted)(started(t.gameId, t.tournamentId)))
 
     /* A start, under the tournament's lock, which the caller holds: by its owner, or by the entry that filled one that
      * starts itself. */
@@ -709,22 +709,24 @@ class TournamentService[T](
               )
             )
             design <- requireDesign(session, t)
+            // A pool of everyone entered is as many as have.
+            sized = t.copy(defaultPoolSize = t.defaultPoolSize.orElse(Some(entries.size)))
             problems = Validation
                 .validate(
                   design = design,
                   game = TournamentGame.of(game, t.settings.playersPerMatch),
                   maxTurns = t.settings.maxTurns,
-                  defaultPoolSize = Some(t.defaultPoolSize)
+                  defaultPoolSize = sized.defaultPoolSize
                 )
                 .filterNot(_.isWarning)
             _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
             ratings <- currentRatings(session = session, gameId = t.gameId, entries = entries)
             state = Progress.start(
               entrants = entries.map(_.entrantId.value),
-              env = env(t = t, design = design, game = game, ratings = ratings),
+              env = env(t = sized, design = design, game = game, ratings = ratings),
               firstPoolId = TournamentStateRepo.NewPoolIds
             )
-            running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
+            running = sized.copy(status = TournamentStatus.Running, startedAt = Some(now()))
             _ <- new TournamentRepo(session).update(running)
             _ <- new TournamentRepo(session).writeState(game = t.gameId, id = t.tournamentId, state = state)
         } yield running
@@ -746,7 +748,7 @@ class TournamentService[T](
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings,
-          defaultPoolSize = Some(t.defaultPoolSize),
+          defaultPoolSize = t.defaultPoolSize,
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
@@ -785,10 +787,16 @@ class TournamentService[T](
     /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R — for a game
       * without roles, the players per match the request asks for.
       */
-    private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Int =
+    /* The pool size asked for, or else the model's suggestion, or else the game's R -- none, for a model whose pool is
+     * everyone entered, which `startIn` sets it to. */
+    private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Option[Int] =
         request.defaultPoolSize
             .orElse(model.poolSize)
-            .getOrElse(TournamentGame.of(game, request.settings.playersPerMatch).poolSeats)
+            .orElse(
+              Option.unless(model.hasPoolOfEveryone)(
+                TournamentGame.of(game, request.settings.playersPerMatch).poolSeats
+              )
+            )
 
     /* Everything wrong with a tournament's settings, as one refusal. `settings` are the request's as the model makes
      * them (`TournamentService.settingsFor`). */
@@ -797,13 +805,13 @@ class TournamentService[T](
         model: TournamentModel,
         request: TournamentRequest,
         settings: TournamentSettings,
-        poolSize: Int
+        poolSize: Option[Int]
     ): IO[Unit] = {
         val s = settings
         val problems =
             List(
               Option.when(request.name.trim.isEmpty)(ErrorText.tournament.blankName),
-              Option.when(poolSize < 1)(ErrorText.design.emptyPool),
+              Option.when(poolSize.exists(_ < 1))(ErrorText.design.emptyPool),
               Option.when(s.roundDuration.exists(d => d.isZero || d.isNegative))(ErrorText.tournament.roundNotPositive),
               Option.when(s.entriesPerPlayer < 1)(ErrorText.tournament.noEntriesAllowed),
               Option.when(s.minRating.zip(s.maxRating).exists((lo, hi) => lo > hi))(
@@ -814,9 +822,6 @@ class TournamentService[T](
               // A game with roles seats one player per role, which is not the owner's to change.
               Option.when(s.playersPerMatch.isDefined && !game.isRoleless)(
                 ErrorText.tournament.seatsByRole(game.displayName)
-              ),
-              Option.when(s.isAutoStarted && s.maxEntrants.isEmpty)(
-                ErrorText.tournament.autoStartUnlimited
               ),
               // The engine plays a live match against the clock it is given, which is the round's.
               Option.when(s.isLive && !s.roundDuration.exists(_.getSeconds >= 1))(
@@ -831,7 +836,8 @@ class TournamentService[T](
                       design = model.design,
                       game = TournamentGame.of(game, s.playersPerMatch),
                       maxTurns = s.maxTurns,
-                      defaultPoolSize = Some(poolSize)
+                      // A pool of everyone entered checked at the most it takes, and again as it starts.
+                      defaultPoolSize = poolSize.orElse(s.maxEntrants)
                     )
                     .filterNot(_.isWarning)
                     .map(_.describe)

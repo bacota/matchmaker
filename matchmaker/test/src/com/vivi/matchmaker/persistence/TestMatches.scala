@@ -99,7 +99,7 @@ object TestMatches {
                     description = "",
                     owner = owner,
                     tournamentModelId = holder,
-                    defaultPoolSize = 2,
+                    defaultPoolSize = Some(2),
                     settings = TournamentSettings(),
                     status = TournamentStatus.Running,
                     startedAt = Some(java.time.Instant.now())

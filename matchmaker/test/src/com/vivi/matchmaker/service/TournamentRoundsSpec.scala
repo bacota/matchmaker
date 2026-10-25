@@ -354,7 +354,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               roles = false,
               settings = TournamentSettings(
                 isInvitational = false,
-                hasAutomaticRounds = true,
+                isAutoStarted = true,
                 roundDuration = Some(Duration.ofHours(6))
               )
             )

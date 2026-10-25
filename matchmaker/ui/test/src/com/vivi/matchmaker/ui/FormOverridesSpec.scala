@@ -36,6 +36,14 @@ class FormOverridesSpec extends FunSuite {
         assertEquals(FormOverrides.label(overrides, "competition.live", "Live"), Some("Live"))
     }
 
+    test("a tip tips.properties leaves out is none, unless the format words one") {
+        assertEquals(FormOverrides.tip(overrides, "competition.isPublic", ""), None)
+        assertEquals(
+          FormOverrides.tip(overrides, "competition.playersPerMatchBetween", "", "fewest" -> "2", "most" -> "4"),
+          Some("From 2 to 4 a match, 2 at the least.")
+        )
+    }
+
     test("the name, the format and the time unit are shown though a format leaves them out") {
         val hiding = Map("labels.competition.name" -> None, "labels.competition.format" -> None)
         assertEquals(FormOverrides.label(hiding, "competition.name", "Name"), Some("Name"))

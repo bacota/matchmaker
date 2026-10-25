@@ -44,7 +44,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
           description = "description",
           owner = f.owner.playerId,
           tournamentModelId = f.model.tournamentModelId,
-          defaultPoolSize = 2,
+          defaultPoolSize = Some(2),
           settings =
               TournamentSettings(roundDuration = Some(Duration.ofHours(48)), minRating = Some(1200), maxTurns = Some(5))
         )
@@ -130,9 +130,8 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                 changed = created.copy(
                   name = "Autumn open",
                   status = TournamentStatus.Running,
-                  defaultPoolSize = 4,
-                  settings =
-                      created.settings.copy(hasAutomaticRounds = true, roundDuration = None, maxRating = Some(2000)),
+                  defaultPoolSize = Some(4),
+                  settings = created.settings.copy(isAutoStarted = true, roundDuration = None, maxRating = Some(2000)),
                   startedAt = Some(Instant.parse("2026-10-10T10:00:00Z"))
                 )
                 _ <- repo.update(changed)
@@ -143,7 +142,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         assertEquals(read, Some(created))
         assertEquals(updated.map(_.name), Some("Autumn open"))
         assertEquals(updated.map(_.status), Some(TournamentStatus.Running))
-        assertEquals(updated.map(_.defaultPoolSize), Some(4))
+        assertEquals(updated.flatMap(_.defaultPoolSize), Some(4))
         assertEquals(updated.map(_.settings.roundDuration), Some(None))
         assertEquals(design, Some(model))
     }

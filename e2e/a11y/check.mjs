@@ -334,7 +334,7 @@ try {
     async function challenge({ poolSize, isAutoStarted = false, isOpen, isPublic = false, invitations = [] }, sub = alice) {
         const t = (await call("POST", `${MM}/games/${gameId}/tournaments`, {
             name: "A challenge", tournamentModelId: "RR", defaultPoolSize: poolSize,
-            settings: { hasAutomaticRounds: true, isInvitational: !isOpen, isAutoStarted, isPublic, maxEntrants: poolSize },
+            settings: { isInvitational: !isOpen, isAutoStarted, isPublic, maxEntrants: poolSize },
             entry: {},
         }, sub)).tournamentId;
         for (const playerId of invitations)

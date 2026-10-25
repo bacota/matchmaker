@@ -99,7 +99,7 @@ class TournamentRounds[T](
                 due <- session.transaction.use { _ =>
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
                         case Some(t)
-                            if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds && !t.isStopped =>
+                            if t.status == TournamentStatus.Running && t.settings.isAutoStarted && !t.isStopped =>
                             stateRepo(session).isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
                                 if (isComplete) begin(session = session, t = t, duration = None).map(_._2)
                                 else IO.pure(Nil)
@@ -596,7 +596,7 @@ class TournamentRounds[T](
       */
     private def afterRecording(t: Tournament, roundDone: Option[Int]): IO[Unit] =
         roundDone.traverse_ { round =>
-            if (t.settings.hasAutomaticRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
+            if (t.settings.isAutoStarted) endings.tournamentRoundDue(t.gameId, t.tournamentId)
             else sessionPool.use(notifications.tournamentRoundDone(_, t, round))
         }
 
@@ -855,7 +855,7 @@ class TournamentRounds[T](
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings.map((id, r) => id.value -> r),
-          defaultPoolSize = Some(t.defaultPoolSize),
+          defaultPoolSize = t.defaultPoolSize,
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 

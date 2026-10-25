@@ -22,7 +22,8 @@ object Challenges {
     /** A challenge as the challenge form used to make one, now that it is a competition like any other: a tournament of
       * the round robin model, its owner entered as it is made unless `isPlaying` is false, and its invitations sent.
       * Its pool size is how many it seats and the most entries it takes, the game's R if not given. Invitational when
-      * it invites anybody. A rated one is made by a game's admin, which its owner is made first.
+      * it invites anybody. A rated one is made by a game's admin, which its owner is made first. `isAutoStarted` starts
+      * it as it fills, and begins its round; without it its owner starts it and begins its round.
       */
     def create(
         tournaments: TournamentService[String],
@@ -58,7 +59,6 @@ object Challenges {
                 tournamentModelId = RoundRobin.modelId,
                 defaultPoolSize = Some(pool),
                 settings = TournamentSettings(
-                  hasAutomaticRounds = true,
                   isFriendly = isFriendly,
                   isInvitational = invitations.nonEmpty || characterInvitations.nonEmpty,
                   roundDuration = roundDuration,
@@ -200,14 +200,17 @@ object Challenges {
         } yield t.tournamentId
     }
 
-    /** Starts an offered challenge and chooses its roles: its match, created once the last of them is chosen. */
+    /** Starts an offered challenge, begins its round and chooses its roles: its match, created once the last of them is
+      * chosen.
+      */
     def startAndChoose(services: Services[String], game: Game, t: TournamentId, seats: List[Seat]): IO[MatchId] =
-        services.tournaments.start(
-          gameId = game.gameId,
-          tournamentId = t,
-          callerExternalId = seats.head.player.externalId
-        ) *>
+        startAndBegin(services = services, game = game, t = t, owner = seats.head.player) *>
             choose(services = services, game = game, t = t, seats = seats, viewer = seats.head.player)
+
+    /** Starts an offered challenge and begins its one round, as its owner does one without automatic rounds. */
+    def startAndBegin(services: Services[String], game: Game, t: TournamentId, owner: Player): IO[Unit] =
+        services.tournaments.start(gameId = game.gameId, tournamentId = t, callerExternalId = owner.externalId) *>
+            services.rounds.startRound(gameId = game.gameId, tournamentId = t, callerExternalId = owner.externalId).void
 
     /** Chooses a started challenge's roles, each seat as it wants, as its turn comes. Its match, once it has been
       * created in the engine.
