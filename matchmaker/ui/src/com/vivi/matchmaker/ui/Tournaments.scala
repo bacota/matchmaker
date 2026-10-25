@@ -325,8 +325,6 @@ object Tournaments {
     /* The Edit button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
     private def actions(s: TournamentSummary): Seq[Modifier[HtmlElement]] = {
         val t = s.tournament
-        // One that starts by itself once full waits on nobody; one without a most is always started by its owner.
-        val isWaitingToStart = t.status == TournamentStatus.Open && !t.settings.isAutoStarted
         Seq(
           button(
             tpe := "button",
@@ -337,15 +335,21 @@ object Tournaments {
                 Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
             }
           ),
-          if (isWaitingToStart)
-              busyButton(label = "Start Competition", busy = stepBusy(t, "start"))(busy =>
-                  Store.runSignedIn(
-                    thenListed(
-                      ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
-                    ),
-                    busy
-                  )(_ => ())
-              ).amend(aria.label := s"Start Competition: ${t.name}")
+          // Offered once it has enough entries to start, which is when its owner may start it -- one that starts
+          // itself as well, before it is full or with no most to fill.
+          if (t.status == TournamentStatus.Open)
+              child <-- hasEnoughToStart(gameId = t.gameId, entered = s.entrants).map(isOffered =>
+                  if (!isOffered) emptyNode
+                  else
+                      busyButton(label = "Start Competition", busy = stepBusy(t, "start"))(busy =>
+                          Store.runSignedIn(
+                            thenListed(
+                              ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
+                            ),
+                            busy
+                          )(_ => ())
+                      ).amend(aria.label := s"Start Competition: ${t.name}")
+              )
           else if (isWaitingOnMe(s))
               busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
                   Store.runSignedIn(
@@ -356,6 +360,11 @@ object Tournaments {
           else emptyNode
         )
     }
+
+    /* Whether `entered` entries are enough to start a tournament of the game: false until the games list has
+     * arrived, since the game says how many a match seats. */
+    private def hasEnoughToStart(gameId: GameId, entered: Int): Signal[Boolean] =
+        Store.games.signal.map(_.find(_.gameId == gameId).exists(g => entered >= Tournament.leastToStart(g))).distinct
 
     /* The tournament whose page is to open with its Edit form open: set by a main-page Edit button, and taken by the
      * page as it is drawn. */
@@ -541,7 +550,11 @@ object Tournaments {
           div(
             cls := "row",
             t.status match {
-                case TournamentStatus.Open => step("Start Competition", "start")
+                case TournamentStatus.Open =>
+                    span(
+                      child <-- hasEnoughToStart(gameId = t.gameId, entered = d.entries.count(!_.isWithdrawn))
+                          .map(if (_) step("Start Competition", "start") else emptyNode)
+                    )
                 case TournamentStatus.Running =>
                     span(
                       if (roundOpen) emptyNode

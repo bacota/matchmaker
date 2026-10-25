@@ -125,6 +125,14 @@ case class Tournament(
     isStopped: Boolean = false
 )
 
+object Tournament {
+
+    /** The fewest entries, none withdrawn, that a tournament of `game` may start with: enough for one match, and never
+      * fewer than two. The start refuses fewer, and the Start Competition buttons are shown only from this many.
+      */
+    def leastToStart(game: Game): Int = math.max(2, game.requiredSeats)
+}
+
 /** An entry in a tournament: a player's in a plain game, a character's in a character game, the rating it entered at,
   * and whether it has withdrawn. `playerId` is who plays it now -- the player, or the character's current owner, and
   * `None` for a character nobody owns -- and `nickname` theirs. `characterName` is for showing a character entry by.
