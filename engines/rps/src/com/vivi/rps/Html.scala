@@ -3,7 +3,7 @@ package com.vivi.rps
 import com.vivi.engine.HtmlText.jsString
 import com.vivi.engine.ErrorText
 import upickle.default.write
-import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -70,6 +70,7 @@ object Html {
   button.throw[aria-pressed="true"] { border-color: seagreen; background: color-mix(in srgb, var(--paper) 70%, seagreen); opacity: 1; }
   button.throw:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
+${ButtonSpacing.css}
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}

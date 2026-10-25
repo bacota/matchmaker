@@ -3,7 +3,7 @@ package com.vivi.tictactoe
 import com.vivi.engine.HtmlText.jsString
 import com.vivi.engine.ErrorText
 import upickle.default.write
-import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -63,6 +63,7 @@ object Html {
   button.cell:focus-visible { outline: 3px solid seagreen; outline-offset: -3px; }
   button.cell:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   button.cell.win { background: color-mix(in srgb, var(--paper) 70%, seagreen); }
+${ButtonSpacing.css}
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}

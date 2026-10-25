@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{ErrorText, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{ButtonSpacing, ErrorText, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, jsObject, scriptSafe}
 import Protocol.given
 
@@ -101,6 +101,7 @@ object Html {
   /* The rules, a tap away, in a dialog over the page. */
 ${rulesDialogCss}
 $boardCss
+${ButtonSpacing.css}
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
@@ -325,6 +326,7 @@ ${rulesContent("h3")}  </dialog>
   /* The rules, a tap away, in a dialog over the page. */
 ${rulesDialogCss}
 $fightersCss
+${ButtonSpacing.css}
 ${SignIn.css}
 </style>
 </head>
