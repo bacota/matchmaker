@@ -91,8 +91,9 @@ The challenge model follows every tournament rule, and nothing special-cases it:
 - It is not seeded in SQL, which would state it a second time beside `standard.Challenge`. `/tournament-models/sync`
   writes it like any other model.
 - A game offers it as it offers any format, and `requireModel` has no exception for it.
-- `TournamentService.settingsFor` gives a Round Robin that `isAutoStarted` a `maxEntrants` of its pool size, which is
-  what lets a full challenge start by itself: the form leaves that field out.
+- Its pool is everyone entered (`StandardModel.hasPoolOfEveryone`): made with no pool size, a Round Robin has none
+  until it starts, when `startIn` sets it to how many have entered. Its form asks for the most entries instead, which
+  is what a challenge that starts itself fills up to.
 
 `isAutoStarted` is one flag for two things: a tournament with it begins each round as the last ends, its first as it
 starts, and starts by itself once it has `maxEntrants`. Its owner may still start it before then, and one without a

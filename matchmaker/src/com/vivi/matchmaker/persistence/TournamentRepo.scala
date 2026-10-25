@@ -39,7 +39,7 @@ class TournamentRepo(session: Session[IO]) {
         PlayerId,
         TournamentStatus,
         TournamentModelId,
-        Int,
+        Option[Int],
         Boolean,
         Boolean,
         Boolean,
@@ -63,7 +63,7 @@ class TournamentRepo(session: Session[IO]) {
     )
 
     private val written: Codec[Written] =
-        text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: int4.opt *: int4.opt *:
+        text *: text *: playerId *: status *: modelId *: int4.opt *: bool *: bool *: bool *: int4.opt *: int4.opt *:
             bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
             bool *: instant.opt *: bool *: int4.opt *: bool *: int4.opt
 
@@ -191,7 +191,7 @@ class TournamentRepo(session: Session[IO]) {
                                       is_public, entries_per_player, round_duration, max_turns, has_concurrent_rounds,
                                       started_at, ended_at, checked_at, settings, is_live, start, has_role_choice,
                                       max_entrants, is_auto_started, players_per_match, first_stage_id)
-          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, ${int4.opt},
+          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, ${int4.opt}, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
                   ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, ${int4.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
@@ -233,7 +233,7 @@ class TournamentRepo(session: Session[IO]) {
 
     private val updateRow: Command[Tuple.Concat[Written, (GameId, TournamentId)]] =
         sql"""UPDATE tournament SET name = $text, description = $text, owner = $playerId, status = $status,
-                 tournament_model_id = $modelId, default_pool_size = $int4, is_friendly = $bool,
+                 tournament_model_id = $modelId, default_pool_size = ${int4.opt}, is_friendly = $bool,
                  is_invitational = $bool, has_late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
                  is_public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
                  max_turns = ${int4.opt}, has_concurrent_rounds = $bool, started_at = ${instant.opt},

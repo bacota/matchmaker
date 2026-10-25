@@ -89,7 +89,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(detail.design, f.model("single-elimination").design)
         assertEquals(detail.gameType, GameType.Plain)
         // The model suggests no pool size, so the default is the game's R.
-        assertEquals(t.defaultPoolSize, f.game.poolSeats)
+        assertEquals(t.defaultPoolSize, Some(f.game.poolSeats))
     }
 
     test("a model the game does not offer, or a pool size that cannot be played, is refused") {
@@ -140,7 +140,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             )
         } yield (tooSmall, larger))
         assert(tooSmall.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("required roles")))
-        assertEquals(larger.defaultPoolSize, 3)
+        assertEquals(larger.defaultPoolSize, Some(3))
     }
 
     test("only an admin of the game may make a competition rated, whether creating one or editing a friendly one") {
@@ -535,14 +535,19 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     }
 
     test("players per match is refused for a game with roles, and outside a game without roles' range of players") {
-        def attempt(game: Option[Game], playersPerMatch: Option[Int], poolSize: Option[Int] = None) =
+        def attempt(
+            game: Option[Game],
+            playersPerMatch: Option[Int],
+            poolSize: Option[Int] = None,
+            standard: String = RoundRobin.id
+        ) =
             run(fixture(0, roleless = game).flatMap { f =>
                 tournaments
                     .create(
                       gameId = f.game.gameId,
                       request = request(
                         f = f,
-                        standard = RoundRobin.id,
+                        standard = standard,
                         settings = TournamentSettings(isInvitational = false, playersPerMatch = playersPerMatch)
                       ).copy(defaultPoolSize = poolSize),
                       callerExternalId = f.owner.externalId
@@ -558,8 +563,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(refused(attempt(game = Some(open), playersPerMatch = None, poolSize = Some(6))))
         val fine = attempt(game = Some(open), playersPerMatch = Some(3)).toOption.get
         assertEquals(fine.settings.playersPerMatch, Some(3))
-        // Its R is the players per match, which is the pool size the format suggests.
-        assertEquals(fine.defaultPoolSize, 3)
+        // A round robin's pool is everyone entered, so it has no size until it starts.
+        assertEquals(fine.defaultPoolSize, None)
+        // Elsewhere its R is the players per match, which is the pool size a format with no suggestion has.
+        val eliminating =
+            attempt(game = Some(open), playersPerMatch = Some(3), standard = "single-elimination").toOption.get
+        assertEquals(eliminating.defaultPoolSize, Some(3))
     }
 
     test("a game without roles, everyone in the pool, its pool set to the entries before the start, is one match") {
@@ -967,24 +976,25 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         step(200)
     }
 
-    test("a round robin that starts itself starts and begins its round as everybody its pool seats signs up") {
-        // As the competition form sends it: the format leaves out the most entries.
-        def roundRobin(f: Fixture, isAutoStarted: Boolean) =
+    test("a round robin's pool is everyone entered: one that starts itself starts and begins its round as it fills") {
+        // As the competition form sends it: the format leaves out the pool size.
+        def roundRobin(f: Fixture, maxEntrants: Option[Int]) =
             request(
               f = f,
               standard = RoundRobin.id,
               settings = TournamentSettings(
                 isInvitational = false,
                 roundDuration = Some(Duration.ofDays(2)),
-                isAutoStarted = isAutoStarted
+                isAutoStarted = maxEntrants.isDefined,
+                maxEntrants = maxEntrants
               )
-            ).copy(defaultPoolSize = Some(2), entry = Some(TournamentEntry()))
-        val (automatic, round, manual) = run(for {
+            ).copy(entry = Some(TournamentEntry()))
+        val (automatic, round, manual, started) = run(for {
             f <- fixture(2)
-            made <- List(true, false).traverse(isAutoStarted =>
+            made <- List(Some(2), None).traverse(maxEntrants =>
                 tournaments.create(
                   gameId = f.game.gameId,
-                  request = roundRobin(f, isAutoStarted = isAutoStarted),
+                  request = roundRobin(f, maxEntrants = maxEntrants),
                   callerExternalId = f.owner.externalId
                 )
             )
@@ -997,7 +1007,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   callerExternalId = p.externalId
                 )
             _ <- enter(automatic, f.players.head)
-            // Not starting itself, its owner may take more and make its pool everyone entered before starting.
+            // With no most, it takes everybody who comes until its owner starts it.
             _ <- f.players.traverse_(enter(manual, _))
             round <- begunRound(f, automatic)
             stood <- made.traverse(t =>
@@ -1009,12 +1019,19 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                     )
                     .map(_.summary.tournament)
             )
-        } yield (stood.head, round, stood(1)))
+            started <- tournaments.start(
+              gameId = f.game.gameId,
+              tournamentId = manual.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+        } yield (stood.head, round, stood(1), started))
         assertEquals(automatic.status, TournamentStatus.Running)
-        assertEquals(automatic.settings.maxEntrants, Some(2))
+        assertEquals(automatic.defaultPoolSize, Some(2))
         assertEquals(round.size, 1, "its round was not begun")
         assertEquals(manual.status, TournamentStatus.Open)
-        assertEquals(manual.settings.maxEntrants, None)
+        assertEquals(manual.defaultPoolSize, None)
+        // Its owner and both players.
+        assertEquals(started.defaultPoolSize, Some(3))
     }
 
     test("a tournament that starts itself may be started before it is full, or without a most, and begins its round") {

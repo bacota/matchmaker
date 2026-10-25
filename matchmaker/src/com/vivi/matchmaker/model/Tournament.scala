@@ -65,11 +65,12 @@ case class TournamentSettings(
   * the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
   * wrote it, at `version`. `isRoot` is whether a tournament can be made from it; a model that is not is never listed or
   * offered, being the inner design of another's nesting stage. `classification` is the heading it is listed under where
-  * a tournament is created, if any. `poolSize` is the default pool size to suggest, `None` for the game's R.
-  * `hasRoleChoice` is what a tournament made from it starts with: every match's seats choose their roles. A model that
-  * is not `isActive` is one the code no longer defines, kept for the tournaments made from it. `formOverrides` is the
-  * model's own wording of the competition form's captions and tips, by `labels.<key>` or `tips.<key>`, `None` for one
-  * the form leaves out ([[com.vivi.matchmaker.model.tournament.standard.StandardModel]] says more).
+  * a tournament is created, if any. `poolSize` is the default pool size to suggest, `None` for the game's R -- or, with
+  * `hasPoolOfEveryone`, for one pool of everyone entered when the tournament starts. `hasRoleChoice` is what a
+  * tournament made from it starts with: every match's seats choose their roles. A model that is not `isActive` is one
+  * the code no longer defines, kept for the tournaments made from it. `formOverrides` is the model's own wording of the
+  * competition form's captions and tips, by `labels.<key>` or `tips.<key>`, `None` for one the form leaves out
+  * ([[com.vivi.matchmaker.model.tournament.standard.StandardModel]] says more).
   */
 case class TournamentModel(
     tournamentModelId: TournamentModelId,
@@ -83,7 +84,8 @@ case class TournamentModel(
     isActive: Boolean = true,
     hasRoleChoice: Boolean = false,
     isRoot: Boolean = false,
-    formOverrides: Map[String, Option[String]] = Map.empty
+    formOverrides: Map[String, Option[String]] = Map.empty,
+    hasPoolOfEveryone: Boolean = false
 )
 
 /** What a site admin's sync of the models with the code did: the models it `added`, those it `updated` to a newer
@@ -100,9 +102,10 @@ case class TournamentModelSync(
 /** A tournament, without its design or its state: those are rows of their own.
   *
   * `owner` may edit it and run its rounds. `tournamentModelId` is the model it was made from, whose stages were copied
-  * into it. `defaultPoolSize` is the size of a pool of any stage that sets none. `roundStartedAt` and `roundDeadline`
-  * are the round being played. `isStopped` is its owner having stopped it while under way: no further round is begun,
-  * and it finishes once the round being played is over.
+  * into it. `defaultPoolSize` is the size of a pool of any stage that sets none; `None` until it starts for one made
+  * from a model that `hasPoolOfEveryone` with no size asked for, when it becomes how many have entered.
+  * `roundStartedAt` and `roundDeadline` are the round being played. `isStopped` is its owner having stopped it while
+  * under way: no further round is begun, and it finishes once the round being played is over.
   */
 case class Tournament(
     gameId: GameId,
@@ -111,7 +114,7 @@ case class Tournament(
     description: String,
     owner: PlayerId,
     tournamentModelId: TournamentModelId,
-    defaultPoolSize: Int,
+    defaultPoolSize: Option[Int],
     settings: TournamentSettings,
     status: TournamentStatus = TournamentStatus.Open,
     startedAt: Option[Instant] = None,

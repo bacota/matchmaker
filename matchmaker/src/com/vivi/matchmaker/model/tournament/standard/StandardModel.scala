@@ -14,7 +14,8 @@ package standard
   * unset, to be the tournament's default pool size -- the game's R unless whoever creates it says otherwise -- and a
   * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `hasRoleChoice` is what a
   * tournament made from it starts with: every match's seats choose their roles. `classification` is the heading it is
-  * listed under where a tournament is created, if any.
+  * listed under where a tournament is created, if any. `hasPoolOfEveryone` makes a tournament made from it with no pool
+  * size one pool of everyone entered, however many that is when it starts, rather than pools of the game's R.
   *
   * `formOverrides` rewords the competition form while it is the format chosen: a key is a key of the UI's
   * `labels.properties` or `tips.properties` prefixed with the file's name -- `labels.competition.poolSize` for the pool
@@ -32,7 +33,8 @@ abstract class StandardModel(
     val poolSize: Option[Int] = None,
     val hasLateEntries: Boolean = false,
     val hasRoleChoice: Boolean = false,
-    val formOverrides: Map[String, Option[String]] = Map.empty
+    val formOverrides: Map[String, Option[String]] = Map.empty,
+    val hasPoolOfEveryone: Boolean = false
 ) {
     def design: TournamentDesign
 
@@ -49,7 +51,8 @@ abstract class StandardModel(
           design = design,
           hasRoleChoice = hasRoleChoice,
           isRoot = true,
-          formOverrides = formOverrides
+          formOverrides = formOverrides,
+          hasPoolOfEveryone = hasPoolOfEveryone
         )
 }
 

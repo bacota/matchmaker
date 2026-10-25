@@ -79,7 +79,7 @@ object TournamentFixtures {
                 description = "",
                 owner = owner,
                 tournamentModelId = m.tournamentModelId,
-                defaultPoolSize = m.poolSize.getOrElse(game.poolSeats),
+                defaultPoolSize = m.poolSize.orElse(Some(game.poolSeats)),
                 settings = TournamentSettings()
               )
             )

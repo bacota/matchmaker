@@ -192,7 +192,7 @@ class TournamentService[T](
         request: TournamentRequest
     ): IO[Tournament] = {
         val poolSize = defaultPoolSize(game = game, model = model, request = request)
-        val settings = TournamentService.settingsFor(model = model, settings = request.settings, poolSize = poolSize)
+        val settings = TournamentService.settingsFor(model, request.settings)
         for {
             _ <- checkSettings(game = game, model = model, request = request, settings = settings, poolSize = poolSize)
             made <- new TournamentRepo(session).create(
@@ -258,11 +258,7 @@ class TournamentService[T](
                                   kept = Some(t.tournamentModelId)
                                 )
                                 poolSize = defaultPoolSize(game = game, model = model, request = request)
-                                settings = TournamentService.settingsFor(
-                                  model = model,
-                                  settings = request.settings,
-                                  poolSize = poolSize
-                                )
+                                settings = TournamentService.settingsFor(model, request.settings)
                                 _ <- IO.whenA(t.settings.isFriendly && !settings.isFriendly)(
                                   requireGameAdmin(session = session, player = caller, game = game)
                                 )
@@ -713,22 +709,24 @@ class TournamentService[T](
               )
             )
             design <- requireDesign(session, t)
+            // A pool of everyone entered is as many as have.
+            sized = t.copy(defaultPoolSize = t.defaultPoolSize.orElse(Some(entries.size)))
             problems = Validation
                 .validate(
                   design = design,
                   game = TournamentGame.of(game, t.settings.playersPerMatch),
                   maxTurns = t.settings.maxTurns,
-                  defaultPoolSize = Some(t.defaultPoolSize)
+                  defaultPoolSize = sized.defaultPoolSize
                 )
                 .filterNot(_.isWarning)
             _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
             ratings <- currentRatings(session = session, gameId = t.gameId, entries = entries)
             state = Progress.start(
               entrants = entries.map(_.entrantId.value),
-              env = env(t = t, design = design, game = game, ratings = ratings),
+              env = env(t = sized, design = design, game = game, ratings = ratings),
               firstPoolId = TournamentStateRepo.NewPoolIds
             )
-            running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
+            running = sized.copy(status = TournamentStatus.Running, startedAt = Some(now()))
             _ <- new TournamentRepo(session).update(running)
             _ <- new TournamentRepo(session).writeState(game = t.gameId, id = t.tournamentId, state = state)
         } yield running
@@ -750,7 +748,7 @@ class TournamentService[T](
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings,
-          defaultPoolSize = Some(t.defaultPoolSize),
+          defaultPoolSize = t.defaultPoolSize,
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
@@ -789,10 +787,16 @@ class TournamentService[T](
     /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R — for a game
       * without roles, the players per match the request asks for.
       */
-    private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Int =
+    /* The pool size asked for, or else the model's suggestion, or else the game's R -- none, for a model whose pool is
+     * everyone entered, which `startIn` sets it to. */
+    private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Option[Int] =
         request.defaultPoolSize
             .orElse(model.poolSize)
-            .getOrElse(TournamentGame.of(game, request.settings.playersPerMatch).poolSeats)
+            .orElse(
+              Option.unless(model.hasPoolOfEveryone)(
+                TournamentGame.of(game, request.settings.playersPerMatch).poolSeats
+              )
+            )
 
     /* Everything wrong with a tournament's settings, as one refusal. `settings` are the request's as the model makes
      * them (`TournamentService.settingsFor`). */
@@ -801,13 +805,13 @@ class TournamentService[T](
         model: TournamentModel,
         request: TournamentRequest,
         settings: TournamentSettings,
-        poolSize: Int
+        poolSize: Option[Int]
     ): IO[Unit] = {
         val s = settings
         val problems =
             List(
               Option.when(request.name.trim.isEmpty)(ErrorText.tournament.blankName),
-              Option.when(poolSize < 1)(ErrorText.design.emptyPool),
+              Option.when(poolSize.exists(_ < 1))(ErrorText.design.emptyPool),
               Option.when(s.roundDuration.exists(d => d.isZero || d.isNegative))(ErrorText.tournament.roundNotPositive),
               Option.when(s.entriesPerPlayer < 1)(ErrorText.tournament.noEntriesAllowed),
               Option.when(s.minRating.zip(s.maxRating).exists((lo, hi) => lo > hi))(
@@ -832,7 +836,8 @@ class TournamentService[T](
                       design = model.design,
                       game = TournamentGame.of(game, s.playersPerMatch),
                       maxTurns = s.maxTurns,
-                      defaultPoolSize = Some(poolSize)
+                      // A pool of everyone entered checked at the most it takes, and again as it starts.
+                      defaultPoolSize = poolSize.orElse(s.maxEntrants)
                     )
                     .filterNot(_.isWarning)
                     .map(_.describe)
@@ -978,15 +983,10 @@ class TournamentService[T](
 object TournamentService {
 
     /** A request's settings as its model makes them: a model whose seats choose their roles makes every tournament of
-      * it choose them. A Round Robin that starts itself does so as soon as everybody signs up -- the participants its
-      * pool seats, which are then the most entries it takes -- for its form leaves out the most entries. Otherwise its
-      * owner starts it, and may first make its pool everyone entered.
+      * it choose them.
       */
-    def settingsFor(model: TournamentModel, settings: TournamentSettings, poolSize: Int): TournamentSettings = {
-        val roles = settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
-        if (model.tournamentModelId != RoundRobin.modelId || !settings.isAutoStarted) roles
-        else roles.copy(maxEntrants = Some(poolSize))
-    }
+    def settingsFor(model: TournamentModel, settings: TournamentSettings): TournamentSettings =
+        settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
 
     /** What a tournament is called in a refusal: a challenge, or a tournament. */
     def noun(t: Tournament): String = if (t.tournamentModelId == RoundRobin.modelId) "challenge" else "tournament"

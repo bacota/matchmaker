@@ -106,7 +106,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
                 owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                 made <- TournamentFixtures.tournament(session = session, game = game, owner = owner.playerId, key = key)
-                t = poolSize.fold(made)(p => made.copy(defaultPoolSize = p))
+                t = poolSize.fold(made)(p => made.copy(defaultPoolSize = Some(p)))
                 _ <- new TournamentRepo(session).update(
                   t.copy(status = TournamentStatus.Running, startedAt = Some(java.time.Instant.now()))
                 )
@@ -133,7 +133,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 design = design,
                 game = TournamentGame.of(game),
                 ratings = entrants.map(_.entrantId.value -> 1500).toMap,
-                defaultPoolSize = Some(t.defaultPoolSize)
+                defaultPoolSize = t.defaultPoolSize
               ),
               entrants = entrants.map(_.entrantId.value)
             )

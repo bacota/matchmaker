@@ -855,7 +855,7 @@ class TournamentRounds[T](
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
           ratings = ratings.map((id, r) => id.value -> r),
-          defaultPoolSize = Some(t.defaultPoolSize),
+          defaultPoolSize = t.defaultPoolSize,
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
