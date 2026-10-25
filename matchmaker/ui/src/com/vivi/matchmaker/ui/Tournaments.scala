@@ -61,6 +61,7 @@ object Tournaments {
           )(
             button(
               tpe := "button",
+              cls := "new-competition",
               htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
               aria.expanded <-- Store.showTournamentForm.signal,
               "Issue Challenge or Create Tournament",
@@ -570,6 +571,7 @@ object Tournaments {
           if (d.entries.isEmpty) p(cls := "empty", "Nobody has entered yet.")
           else
               ul(
+                cls := "entries",
                 d.entries.map { e =>
                     li(
                       cls := "row",

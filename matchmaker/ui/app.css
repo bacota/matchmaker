@@ -344,6 +344,17 @@ ul {
   font-size: 0.9rem;
 }
 
+/* A competition's entries: the name, its rating and a Withdraw button on one line, with nothing
+   between them -- Laminar emits no whitespace -- so the button is set off from the rating. */
+.entries .row > button {
+  margin-left: 0.75rem;
+}
+
+/* "Issue Challenge or Create Tournament", set off from the first competition listed under it. */
+.new-competition {
+  margin-bottom: 0.75rem;
+}
+
 /* A match's parameter values, one per line under the lines that name it: a list for a screen
    reader, but set like the .detail lines around it. */
 .parameters {
