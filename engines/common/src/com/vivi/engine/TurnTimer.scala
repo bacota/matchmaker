@@ -42,7 +42,7 @@ object TurnTimer {
                    clip: rect(0 0 0 0); white-space: nowrap; border: 0; }"""
 
     val script: String =
-        """  /* A live match's turn clock; see TurnTimer. Answers the function render() calls with the state's
+        s"""  /* A live match's turn clock; see TurnTimer. Answers the function render() calls with the state's
    * clock and the viewer's participant id. */
   function turnClock(refresh) {
     const face = document.getElementById("turn-clock");
@@ -92,7 +92,7 @@ object TurnTimer {
       face.classList.toggle("short", left <= 10000);
       if (yours && !warned && left > 0 && left <= 10000) {
         warned = true;
-        warning.textContent = "Ten seconds left on your clock.";
+        warning.textContent = ${HtmlText.jsString(ErrorText.clock.tenSeconds)};
       }
     }
 

@@ -163,7 +163,7 @@
       if (token) clearSession();
       forget();
       render();
-      show(login ? "Sign in to see your fighters." : "Say who you are with ?as=<cognito sub>.");
+      show(login ? errors.signIn : errors.sayWho);
       return null;
     }
     return response;
@@ -190,7 +190,7 @@
       if (!response.ok) { note.textContent = answer.error || response.statusText; return; }
       showMine(answer);
     } catch (err) {
-      if (ticket === loads) note.textContent = "Could not reach the engine.";
+      if (ticket === loads) note.textContent = errors.unreachable;
     }
   }
 
@@ -246,7 +246,7 @@
     } else {
       const unbuilt = document.createElement("p");
       unbuilt.className = "detail";
-      unbuilt.textContent = "Not a built fighter, so it cannot box.";
+      unbuilt.textContent = errors.notBuilt;
       item.appendChild(unbuilt);
     }
 
@@ -314,7 +314,7 @@
         await loadMine();
         if (asked === session) announce(done(answer));
       } catch (err) {
-        if (asked === session) show("Could not reach the engine.");
+        if (asked === session) show(errors.unreachable);
       } finally {
         sendingForms.delete(key);
         // The form now on the page, which is a newer one than this if the list was drawn meanwhile.
@@ -375,7 +375,7 @@
       if (asked === session) announce(answer.name + " is built. Back in matchmaker, choose “I’ve made one — check again”" +
         " and offer or accept a bout with them.");
     } catch (err) {
-      if (asked === session) show("Could not reach the engine.");
+      if (asked === session) show(errors.unreachable);
     } finally {
       building = false;
       left();

@@ -88,6 +88,10 @@ result lines and user-facing error messages. Use the human name — the game's n
 nickname or character name — and where there is none, a plain phrase ("an unnamed match"), never the id. Ids in URLs,
 log lines and API paths are fine. Fix an id fallback such as `s"match ${matchId.value}"` when you come across one.
 
+The text of an error or warning a person can read lives in `matchmaker/errors.properties` (generated into
+`com.vivi.matchmaker.ErrorText`, for the server and the UI) or, for the engines, `engines/common/errors.properties`
+(`com.vivi.engine.ErrorText`), not in the code. A new one adds a key there; each file's header gives its rules.
+
 ## Boolean names
 
 The is/has/can rule was applied across the code in PR #152; `design/boolean-names.md` has the rewordings of the

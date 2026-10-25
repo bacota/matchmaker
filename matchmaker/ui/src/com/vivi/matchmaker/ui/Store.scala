@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success, Try}
@@ -685,8 +686,8 @@ object Store {
     }
 
     private def messageOf(error: Throwable): String = error match {
-        case ApiError(401, _) => "Your session has expired. Sign in again."
-        case ApiError(403, m) => s"Not allowed: $m"
+        case ApiError(401, _) => ErrorText.session.expired
+        case ApiError(403, m) => ErrorText.session.notAllowed(m)
         case ApiError(_, m)   => m
         case other            => Option(other.getMessage).getOrElse(other.toString)
     }

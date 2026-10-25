@@ -1,5 +1,6 @@
 package com.vivi.stratego
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
@@ -36,14 +37,14 @@ class Engine(
     ): Either[Refusal, MoveApplied[StrategoMatch, Seat, MoveRecord]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.matches.over))
                 _ <- Either.cond(
                   !current.hasDeployed(seat.side),
                   (),
-                  Refusal.Invalid("you have already deployed; a setup cannot be changed")
+                  Refusal.Invalid(ErrorText.stratego.alreadyDeployed)
                 )
                 parsed <- ranks
-                    .map(r => Rank.parse(r).toRight(Refusal.Invalid(s"'$r' is not a rank")))
+                    .map(r => Rank.parse(r).toRight(Refusal.Invalid(ErrorText.stratego.notARank(r))))
                     .partitionMap(identity) match {
                     case (Nil, valid) => Right(valid)
                     case (wrong, _)   => Left(wrong.head)
@@ -77,19 +78,21 @@ class Engine(
     ): Either[Refusal, MoveApplied[StrategoMatch, Seat, MoveRecord]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.matches.over))
                 _ <- Either.cond(
                   current.isInPlay,
                   (),
                   Refusal.Invalid(
-                    if (current.hasDeployed(seat.side)) s"${seat.side.other} has not deployed yet"
-                    else "deploy your army before moving"
+                    if (current.hasDeployed(seat.side)) ErrorText.stratego.otherNotDeployed(seat.side.other.toString)
+                    else ErrorText.stratego.deployFirst
                   )
                 )
                 _ <- Either.cond(
                   current.toMove == seat.side,
                   (),
-                  Refusal.Invalid(s"it is ${current.toMove}'s turn, not ${seat.side}'s")
+                  Refusal.Invalid(
+                    ErrorText.stratego.notYourTurn(turn = current.toMove.toString, side = seat.side.toString)
+                  )
                 )
                 // Checked before the board's own rules so that it is only ever said of a move the board allows. A
                 // square off the board finds no piece here, and is refused by `Board.move` below.
@@ -98,9 +101,7 @@ class Engine(
                         if current.board.targets(seat.side, from).contains(to) &&
                             Rules.isShuttling(current.history(seat.side), Step(pieceId = p.id, from = from, to = to)) =>
                         Left(
-                          Refusal.Invalid(
-                            s"that would be a fourth move in a row between ${Board.name(from)} and ${Board.name(to)}"
-                          )
+                          Refusal.Invalid(ErrorText.stratego.shuttling(from = Board.name(from), to = Board.name(to)))
                         )
                     case _ => Right(())
                 }
@@ -144,7 +145,7 @@ class Engine(
                   )
                   (current.copy(turns = current.turns :+ record), record)
               },
-              Refusal.Invalid("this match is already over")
+              Refusal.Invalid(ErrorText.matches.over)
             )
         }
 

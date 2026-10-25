@@ -1,5 +1,6 @@
 package com.vivi.rps
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
@@ -43,14 +44,14 @@ class Engine(
     ): Either[Refusal, MoveApplied[RpsMatch, Seat, ThrowRecord]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.matches.over))
                 // No "it is not your turn" here: it is always both players' turn. The only move a
                 // player cannot make is a second one — changing a throw once it is in would let
                 // whoever moved last win every match.
                 _ <- Either.cond(
                   !current.hasThrown(seat),
                   (),
-                  Refusal.Invalid("you have already thrown; a throw cannot be taken back")
+                  Refusal.Invalid(ErrorText.rps.alreadyThrown)
                 )
             } yield {
                 // Both clocks started when the round did — the match's creation, unless a tie started

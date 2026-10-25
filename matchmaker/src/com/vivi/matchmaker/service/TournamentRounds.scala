@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
@@ -73,13 +74,13 @@ class TournamentRounds[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
-                          UnauthorizedError("only the tournament's owner may start a round")
+                          UnauthorizedError(ErrorText.round.startNotOwner)
                         )
                         _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
-                          ConflictError(s"this tournament is not under way; it is ${t.status.label.toLowerCase}")
+                          ConflictError(ErrorText.round.notUnderWayIs(t.status.label.toLowerCase))
                         )
                         _ <- IO.raiseWhen(duration.exists(d => d.isZero || d.isNegative))(
-                          ValidationError("a round duration must be positive")
+                          ValidationError(ErrorText.tournament.roundNotPositive)
                         )
                         begun <- begin(session = session, t = t, duration = duration)
                     } yield begun
@@ -121,11 +122,11 @@ class TournamentRounds[T](
         duration: Option[Duration]
     ): IO[(Option[Int], List[MatchId])] =
         for {
-            _ <- IO.raiseWhen(t.isStopped)(ConflictError("this tournament has been stopped, and begins no more rounds"))
+            _ <- IO.raiseWhen(t.isStopped)(ConflictError(ErrorText.round.stopped))
             game <- requireGame(session, t.gameId)
             open <- requireOpenLoaded(session, t)
             _ <- IO.raiseUnless(Progress.isRoundComplete(open.state))(
-              ConflictError("the round being played is not finished")
+              ConflictError(ErrorText.round.unfinished)
             )
             env <- envFor(session = session, t = t, game = game, design = open.design)
             worked <- workedOut(session = session, t = t, open = open)(Progress.nextRound(_, env)._1)
@@ -227,7 +228,7 @@ class TournamentRounds[T](
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(tm.status == TournamentMatchStatus.Choosing)(
-                          ConflictError("this match is not choosing roles")
+                          ConflictError(ErrorText.round.notChoosingRoles)
                         )
                         game <- requireGame(session, gameId)
                         players <- new EntrantRepo(session).players(gameId, tournamentId)
@@ -235,12 +236,12 @@ class TournamentRounds[T](
                         seat <- turn match {
                             case Some(s) if players.get(s.entrantId).flatten.contains(caller.playerId) => IO.pure(s)
                             case _ =>
-                                IO.raiseError(UnauthorizedError("it is not your turn to choose a role in this match"))
+                                IO.raiseError(UnauthorizedError(ErrorText.round.notYourChoice))
                         }
                         allowed = allowedRoles(game, tm.seats.size)
                         taken = tm.seats.flatMap(_.gameRoleId).toSet
                         _ <- IO.raiseUnless(allowed.contains(role) && !taken(role))(
-                          ValidationError("that role is not one left to choose in this match")
+                          ValidationError(ErrorText.round.roleTaken)
                         )
                         at = now()
                         picked = tm.seats.map(s =>
@@ -456,7 +457,7 @@ class TournamentRounds[T](
             }
             saved <- new MatchRepo(session).read(t.gameId, tm.matchId).flatMap {
                 case Some(m) => IO.pure(m)
-                case None    => IO.raiseError(NotFoundError(s"no match ${tm.matchId.value}"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.matches.notFound))
             }
             seated <- new ParticipantRepo(session).listForMatch(t.gameId, tm.matchId)
             enginePlayers <- active.traverse { s =>
@@ -470,7 +471,7 @@ class TournamentRounds[T](
                           roleName = s.gameRoleId.map(roleName),
                           characterId = characterOf.get(s.entrantId).flatten
                         )
-                    case None => IO.raiseError(NotFoundError(s"no player ${participant.playerId}"))
+                    case None => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                 }
             }
         } yield Prepared.Launch(saved = saved, game = game, players = enginePlayers, canTie = tm.canTie)
@@ -617,14 +618,14 @@ class TournamentRounds[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
-                          UnauthorizedError("only the tournament's owner may check a round")
+                          UnauthorizedError(ErrorText.round.checkNotOwner)
                         )
                         _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
-                          ConflictError("this tournament is not under way")
+                          ConflictError(ErrorText.round.notUnderWay)
                         )
                         at = now()
                         _ <- IO.raiseWhen(t.checkedAt.exists(c => at.isBefore(c.plus(checkInterval))))(
-                          ConflictError("this round was checked moments ago; its matches are still being looked at")
+                          ConflictError(ErrorText.round.justChecked)
                         )
                         _ <- new TournamentRepo(session).update(t.copy(checkedAt = Some(at)))
                     } yield at
@@ -720,13 +721,13 @@ class TournamentRounds[T](
                     caller <- requireCaller(session, callerExternalId)
                     t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
-                      UnauthorizedError("only the tournament's owner may stop it")
+                      UnauthorizedError(ErrorText.round.stopNotOwner)
                     )
                     _ <- t.status match {
                         case TournamentStatus.Open =>
                             new TournamentRepo(session).delete(gameId, tournamentId)
                         case TournamentStatus.Running if t.isStopped =>
-                            IO.raiseError(ConflictError("this tournament has been stopped already"))
+                            IO.raiseError(ConflictError(ErrorText.round.alreadyStopped))
                         case TournamentStatus.Running =>
                             new TournamentRepo(session).stop(gameId, tournamentId) *>
                                 requireLoaded(session, t).flatMap { loaded =>
@@ -745,7 +746,7 @@ class TournamentRounds[T](
                                           )
                                     )
                                 }
-                        case _ => IO.raiseError(ConflictError("this tournament is already over"))
+                        case _ => IO.raiseError(ConflictError(ErrorText.round.alreadyOver))
                     }
                 } yield ()
             }
@@ -759,10 +760,10 @@ class TournamentRounds[T](
                     caller <- requireCaller(session, callerExternalId)
                     t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
-                      UnauthorizedError("only the tournament's owner may stop it")
+                      UnauthorizedError(ErrorText.round.stopNotOwner)
                     )
                     _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
-                      ConflictError("this tournament is not under way")
+                      ConflictError(ErrorText.round.notUnderWay)
                     )
                     loaded <- requireLoaded(session, t)
                     _ <- stateRepo(session).save(
@@ -794,18 +795,18 @@ class TournamentRounds[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
-                          UnauthorizedError("only the tournament's owner may decide a match")
+                          UnauthorizedError(ErrorText.round.decideNotOwner)
                         )
                         tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(
                           ranks.keySet == tm.seats.map(_.entrantId).toSet && ranks.values.forall(_ >= 1)
                         )(
-                          ValidationError("give every seat of the match a rank of 1 or more, and no one else")
+                          ValidationError(ErrorText.round.badRanks)
                         )
                         game <- requireGame(session, gameId)
                         m <- new MatchRepo(session).readForUpdate(gameId, matchId)
                         _ <- IO.raiseWhen(m.exists(_.isCompleted))(
-                          ConflictError("this match was played to an end; its result stands")
+                          ConflictError(ErrorText.round.playedToEnd)
                         )
                         resultRepo = new ResultRepo(session)
                         byParticipant <- resultRepo.forMatch(gameId, matchId).map(_.map(r => r.participantId -> r).toMap)
@@ -814,7 +815,7 @@ class TournamentRounds[T](
                         cancelForfeit = (r: ResultRepo.RatedResultRow) => m.exists(_.isCancelled) && r.isForfeit
                         recorded = found.map(_.filterNot(cancelForfeit))
                         _ <- IO.raiseWhen(m.exists(_.isCancelled) && recorded.forall(_.isDefined))(
-                          ConflictError("this match's result is in, and stands")
+                          ConflictError(ErrorText.round.resultIn)
                         )
                         best = ranks.values.min
                         alone = ranks.values.count(_ == best) == 1
@@ -867,10 +868,10 @@ class TournamentRounds[T](
         requireState(t)(stateRepo(session).loadOpen(t.gameId, t.tournamentId))
 
     private def requireState(t: Tournament)(read: IO[Option[Loaded]]): IO[Loaded] =
-        IO.raiseWhen(t.startedAt.isEmpty)(ConflictError("this tournament has not started")) *>
+        IO.raiseWhen(t.startedAt.isEmpty)(ConflictError(ErrorText.round.notStarted)) *>
             read.flatMap {
                 case Some(l) => IO.pure(l)
-                case None    => IO.raiseError(NotFoundError(s"no tournament ${t.tournamentId} in game ${t.gameId}"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
             }
 
     /* The rules' next state worked out from `open`, and the state to save it against -- or, where that finished a part
@@ -887,26 +888,26 @@ class TournamentRounds[T](
     private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {
             case Some(p) => IO.pure(p)
-            case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$externalId'"))
+            case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     // Read plainly, as a reference table on the way to writes elsewhere: see the class's note.
     private def requireGame(session: Session[IO], gameId: GameId): IO[Game] =
         new GameRepo[T](session).read(gameId).flatMap {
             case Some(g) => IO.pure(g)
-            case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
         }
 
     private def requireTournamentForUpdate(session: Session[IO], gameId: GameId, id: TournamentId): IO[Tournament] =
         new TournamentRepo(session).readForUpdate(gameId, id).flatMap {
             case Some(t) => IO.pure(t)
-            case None    => IO.raiseError(NotFoundError(s"no tournament $id in game $gameId"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
         }
 
     private def requireMatchForUpdate(session: Session[IO], t: Tournament, matchId: MatchId): IO[TournamentMatch] =
         new TournamentMatchRepo(session).readForUpdate(t.gameId, matchId).flatMap {
             case Some(m) if m.tournamentId == t.tournamentId => IO.pure(m)
-            case _ => IO.raiseError(NotFoundError(s"no match ${matchId.value} in a round of this tournament"))
+            case _ => IO.raiseError(NotFoundError(ErrorText.round.noSuchMatch))
         }
 }
 

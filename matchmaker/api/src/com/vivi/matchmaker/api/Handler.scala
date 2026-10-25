@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.ErrorText
 import java.io.{InputStream, OutputStream}
 import java.nio.charset.StandardCharsets
 import cats.effect.unsafe.implicits.global
@@ -51,7 +52,7 @@ class Handler extends RequestStreamHandler {
                 case error: Throwable =>
                     Errors.log(error, where)
                     log(s"handled $where -> 500")
-                    Errors.response(500, "internal error")
+                    Errors.response(500, ErrorText.request.internal)
             }
 
         output.write(ApiGateway.encodeResponse(response).getBytes(StandardCharsets.UTF_8))

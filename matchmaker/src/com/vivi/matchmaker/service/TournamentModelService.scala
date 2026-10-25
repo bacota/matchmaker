@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import skunk.Session
@@ -47,7 +48,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                     model <- if (found) repo.read(id) else IO.pure(None)
                     _ <- model match {
                         case Some(m) if m.isActive && m.isRoot => repo.offer(gameId, id)
-                        case _ => IO.raiseError(NotFoundError(s"there is no tournament model $id to offer"))
+                        case _ => IO.raiseError(NotFoundError(ErrorText.model.noneToOffer))
                     }
                     offered <- repo.listOffered(gameId)
                 } yield offered
@@ -76,7 +77,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                 for {
                     caller <- requireCaller(session, callerExternalId)
                     _ <- IO.raiseUnless(caller.isAdmin)(
-                      UnauthorizedError("only a site admin may sync the tournament models")
+                      UnauthorizedError(ErrorText.model.syncNotAdmin)
                     )
                     done <- TournamentModelService.sync(session)
                 } yield done
@@ -86,7 +87,7 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
     private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {
             case Some(p) => IO.pure(p)
-            case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$externalId'"))
+            case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     // Read plainly: see the class's note on the game.
@@ -95,13 +96,13 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             caller <- requireCaller(session, callerExternalId)
             game <- new GameRepo[T](session).read(gameId).flatMap {
                 case Some(g) => IO.pure(g)
-                case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
             }
             _ <- GameAdmins.require(
               session = session,
               caller = caller.playerId,
               gameId = gameId,
-              refusal = s"only an admin of ${game.displayName} may do that"
+              refusal = ErrorText.game.notItsAdmin(game.displayName)
             )
         } yield game
 }

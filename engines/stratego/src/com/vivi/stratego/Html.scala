@@ -1,8 +1,8 @@
 package com.vivi.stratego
 
 import upickle.default.write
-import com.vivi.engine.{Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.{ErrorText, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.HtmlText.{escape, jsObject, scriptSafe}
 import Protocol.given
 
 /** The play page: the setup, the board, and the shell every engine's page has around them.
@@ -195,6 +195,12 @@ ${TurnTimer.script}
 ${Finale.script(victory, defeat)}
 $replayScript
 
+  // What play.js says when something goes wrong, from the engines' errors file.
+  const errors = ${jsObject(
+              "notAnswered" -> ErrorText.page.notAnswered,
+              "noSeat" -> ErrorText.page.noSeat,
+              "unreachable" -> ErrorText.page.unreachable
+            )};
 $script
 </script>
 </body>

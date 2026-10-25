@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
@@ -531,5 +532,5 @@ object ApiClient {
       * rather than replaced with something vaguer.
       */
     private def messageOf(body: String): String =
-        Try(ujson.read(body)("error").str).getOrElse(if (body.isEmpty) "no response body" else body)
+        Try(ujson.read(body)("error").str).getOrElse(if (body.isEmpty) ErrorText.request.noBody else body)
 }

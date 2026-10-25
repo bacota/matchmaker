@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, TextCodec}
@@ -31,7 +32,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             for {
                 player <- playerRepo.readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
-                    case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+                    case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
                 characters <- characterRepo.listForPlayerAndGame(player.playerId, gameId)
             } yield characters
@@ -48,7 +49,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             for {
                 _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
-                    case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+                    case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
                 names <- new CharacterRepo[T](session).listNamesForPlayerAndGame(playerId, gameId)
             } yield names
@@ -62,13 +63,13 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             for {
                 _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
-                    case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+                    case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
                 characters = new CharacterRepo[T](session)
                 found <- characters.readProfile(gameId, characterId)
                 profile <- found match {
                     case Some(p) => IO.pure(p)
-                    case None    => IO.raiseError(NotFoundError(s"no character $characterId in game $gameId"))
+                    case None    => IO.raiseError(NotFoundError(ErrorText.character.notFound))
                 }
                 // Worked out from the results each time it is asked for, not kept: see `ratedRecord`.
                 record <- characters.ratedRecord(gameId, characterId)
@@ -100,7 +101,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             // transaction as the insert keeps that decision from going stale before it lands.
             session.transaction.use { _ =>
                 for {
-                    _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError("a character needs a name"))
+                    _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError(ErrorText.character.blankName))
                     // Locked, not just read: the insert below references the game, and without the lock it
                     // could be deleted, or given to another engine, between the check and the insert.
                     gameId <- callersGame(gameRepo.lockForShareByExternalId(callerExternalId))
@@ -109,14 +110,14 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     // holds at the insert.
                     game <- gameRepo.read(gameId).flatMap {
                         case Some(g) => IO.pure(g)
-                        case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                        case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                     }
                     _ <- IO.raiseUnless(game.gameType == GameType.Character)(
-                      ValidationError(s"${game.displayName} is not played with characters")
+                      ValidationError(ErrorText.character.notACharacterGame(game.displayName))
                     )
                     owner <- playerRepo.readByExternalIdForShare(ownerExternalId).flatMap {
                         case Some(p) => IO.pure(p)
-                        case None    => IO.raiseError(NotFoundError(s"no player with externalId '$ownerExternalId'"))
+                        case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                     }
                     character <- characterRepo.create(
                       Character(
@@ -143,7 +144,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 gameId <- callersGame(new GameRepo[T](session).readIdsByExternalId(callerExternalId))
                 owner <- new PlayerRepo(session).readByExternalId(ownerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
-                    case None    => IO.raiseError(NotFoundError(s"no player with externalId '$ownerExternalId'"))
+                    case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                 }
                 characters <- new CharacterRepo[T](session).listForPlayerAndGame(owner.playerId, gameId)
             } yield characters
@@ -167,7 +168,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             val characterRepo = new CharacterRepo[T](session)
             session.transaction.use { _ =>
                 for {
-                    _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError("a character needs a name"))
+                    _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError(ErrorText.character.blankName))
                     existing <- ownedForUpdate(
                       characterRepo = characterRepo,
                       characterId = characterId,
@@ -204,10 +205,10 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     // For share: the character is about to reference this player, who must still exist when it does.
                     recipient <- new PlayerRepo(session).readByNicknameForShare(toNickname.trim).flatMap {
                         case Some(p) => IO.pure(p)
-                        case None    => IO.raiseError(ValidationError(s"no player is called '${toNickname.trim}'"))
+                        case None    => IO.raiseError(ValidationError(ErrorText.player.noneCalled(toNickname.trim)))
                     }
                     _ <- IO.raiseWhen(recipient.externalId == ownerExternalId)(
-                      ValidationError(s"${existing.name} is already yours")
+                      ValidationError(ErrorText.character.alreadyYours(existing.name))
                     )
                     handed = existing.copy(playerId = Some(recipient.playerId))
                     _ <- characterRepo.update(handed)
@@ -227,13 +228,13 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             // For update: the game and owner checked below are those of the row the caller overwrites.
             joined <- characterRepo.readWithOwnerAndGameForUpdate(characterId).flatMap {
                 case Some(t) => IO.pure(t)
-                case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.character.notFound))
             }
             _ <- IO.raiseUnless(callerExternalId == joined.game.externalId)(
-              UnauthorizedError(s"only character ${characterId.value}'s own game may change it")
+              UnauthorizedError(ErrorText.character.notThisGames)
             )
             _ <- IO.raiseUnless(ownerExternalId == joined.owner.externalId)(
-              NotFoundError(s"no character with id ${characterId.value}")
+              NotFoundError(ErrorText.character.notFound)
             )
         } yield joined.character
 
@@ -241,14 +242,8 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     private def callersGame(found: IO[List[GameId]]): IO[GameId] =
         found.flatMap {
             case List(id) => IO.pure(id)
-            case Nil      => IO.raiseError(UnauthorizedError("only a game may manage its characters"))
-            case several =>
-                IO.raiseError(
-                  ConflictError(
-                    s"games ${several.map(_.value).mkString(", ")} share this engine's identity, " +
-                        "so which one is meant cannot be told"
-                  )
-                )
+            case Nil      => IO.raiseError(UnauthorizedError(ErrorText.character.onlyItsGame))
+            case _        => IO.raiseError(ConflictError(ErrorText.engine.sharedIdentity))
         }
 
     def updateState(
@@ -264,12 +259,12 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     // Same as update: read, authorize and write the same row without releasing it.
                     joined <- characterRepo.readWithGameForUpdate(characterId).flatMap {
                         case Some(t) => IO.pure(t)
-                        case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+                        case None    => IO.raiseError(NotFoundError(ErrorText.character.notFound))
                     }
                     existing = joined.character
                     game = joined.game
                     _ <- IO.raiseUnless(callerExternalId == game.externalId)(
-                      UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
+                      UnauthorizedError(ErrorText.character.notThisGames)
                     )
                     updated = existing.copy(state = state)
                     _ <- characterRepo.update(updated)

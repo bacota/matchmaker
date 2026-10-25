@@ -1,5 +1,6 @@
 package com.vivi.stratego
 
+import com.vivi.engine.ErrorText
 import scala.util.Random
 
 /** Which army a seat commands. The engine's `role` names are these, spelled exactly as matchmaker's `game_role.name`
@@ -142,16 +143,20 @@ case class Board(cells: Vector[Option[Piece]]) {
       * tapped the wrong square — that is a 400, not a failure of the engine.
       */
     def move(side: Side, from: Int, to: Int): Either[String, Moved] =
-        if (!Board.isOnBoard(from)) Left(s"square $from is not on the board; squares are numbered 0 to 99")
-        else if (!Board.isOnBoard(to)) Left(s"square $to is not on the board; squares are numbered 0 to 99")
+        if (!Board.isOnBoard(from)) Left(ErrorText.stratego.offBoard(from.toString))
+        else if (!Board.isOnBoard(to)) Left(ErrorText.stratego.offBoard(to.toString))
         else
             cells(from) match {
-                case None                         => Left(s"there is no piece on ${Board.name(from)}")
-                case Some(p) if p.side != side    => Left(s"the piece on ${Board.name(from)} is not yours")
-                case Some(p) if !p.rank.isMovable => Left(s"a ${p.rank.toString.toLowerCase} cannot move")
+                case None                         => Left(ErrorText.stratego.noPiece(Board.name(from)))
+                case Some(p) if p.side != side    => Left(ErrorText.stratego.notYourPiece(Board.name(from)))
+                case Some(p) if !p.rank.isMovable => Left(ErrorText.stratego.immovable(p.rank.toString.toLowerCase))
                 case Some(p) if !targets(side, from).contains(to) =>
                     Left(
-                      s"your ${p.rank.toString.toLowerCase} cannot move from ${Board.name(from)} to ${Board.name(to)}"
+                      ErrorText.stratego.cannotMoveThere(
+                        rank = p.rank.toString.toLowerCase,
+                        from = Board.name(from),
+                        to = Board.name(to)
+                      )
                     )
                 case Some(p) =>
                     // A scout that crossed more than one square has shown what it is.
@@ -217,13 +222,20 @@ object Board {
     def validateSetup(ranks: List[Rank]): Either[String, List[Rank]] = {
         val counts = ranks.groupMapReduce(identity)(_ => 1)(_ + _)
         val wrong = Rank.values.toList.filter(r => counts.getOrElse(r, 0) != r.count)
-        if (ranks.sizeIs != 40) Left(s"a setup places 40 pieces, not ${ranks.size}")
+        if (ranks.sizeIs != 40) Left(ErrorText.stratego.setupSize(ranks.size.toString))
         else if (wrong.nonEmpty)
             Left(
-              "a setup has the wrong number of " +
-                  wrong
-                      .map(r => s"${r.toString.toLowerCase} (${counts.getOrElse(r, 0)}, not ${r.count})")
-                      .mkString(", ")
+              ErrorText.stratego.setupCounts(
+                wrong
+                    .map(r =>
+                        ErrorText.stratego.setupCount(
+                          rank = r.toString.toLowerCase,
+                          placed = counts.getOrElse(r, 0).toString,
+                          count = r.count.toString
+                        )
+                    )
+                    .mkString(", ")
+              )
             )
         else Right(ranks)
     }

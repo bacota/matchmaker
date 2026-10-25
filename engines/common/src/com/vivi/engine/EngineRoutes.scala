@@ -99,7 +99,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         case ("GET", "matches" :: _ :: ("play" | "board") :: Nil) =>
                             EngineResponse(
                               status = 410,
-                              body = ArchiveExpiredPage(e.matchId),
+                              body = ArchiveExpiredPage(),
                               contentType = "text/html; charset=utf-8"
                             )
                         case _ => error(410, e.getMessage)
@@ -241,7 +241,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case ("GET", "auth" :: "callback" :: Nil) =>
                 playAuth.login match {
                     case Some(login) => html(signIn.authCallback(login))
-                    case None        => error(404, "this engine has no sign-in configured")
+                    case None        => error(404, ErrorText.request.noSignIn)
                 }
 
             // The public board, for a match created public. Nobody's seat, so no token, no moves, and
@@ -280,7 +280,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             case key if extra.isDefinedAt(key) => extra(key)(request)
 
-            case _ => error(404, s"no route for ${request.method} ${request.path}")
+            case _ => error(404, ErrorText.request.noRoute(method = request.method, path = request.path))
         }
 
     /** A move that was made, answered with the state it left the mover looking at. */
@@ -300,7 +300,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       */
     private def connect(request: EngineRequest, connectionId: String): EngineResponse =
         live match {
-            case None => error(404, "this engine does not offer Play Live")
+            case None => error(404, ErrorText.request.noPlayLive)
             case Some(l) =>
                 val withToken = request.query.get("token").filter(_.nonEmpty) match {
                     case Some(token) => request.copy(headers = request.headers + ("authorization" -> s"Bearer $token"))
@@ -311,11 +311,11 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         matchId <- request.query
                             .get("match")
                             .filter(_.nonEmpty)
-                            .toRight(Refusal.Invalid("say which match to watch with ?match="))
+                            .toRight(Refusal.Invalid(ErrorText.request.noMatchToWatch))
                         m <- currentMatch(matchId)
                         _ <-
                             if (request.query.get("board").contains("1"))
-                                Either.cond(m.isPublic, (), Refusal.NotYours(s"match '$matchId' is not public"))
+                                Either.cond(m.isPublic, (), Refusal.NotYours(ErrorText.matches.notPublic))
                             else l.auth.callerOf(withToken).flatMap(engine.seatOf(m, _))
                     } yield l.subscribe(Subscription(connectionId, matchId))
 
@@ -344,20 +344,20 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case Left(refusal) => error(refusal)
             // Not 404: the match exists, and saying so tells a would-be watcher nothing they could not
             // learn by being in it. What they may not do is watch.
-            case Right(m) if !m.isPublic => error(403, s"match '$matchId' is not public")
+            case Right(m) if !m.isPublic => error(403, ErrorText.matches.notPublic)
             case Right(m)                => f(m)
         }
 
     protected def parse[A: Reader](body: String): Either[String, A] =
         try Right(read[A](body))
-        catch { case NonFatal(e) => Left(s"unreadable request body: ${e.getMessage}") }
+        catch { case NonFatal(e) => Left(ErrorText.request.unreadableBody(e.getMessage)) }
 
     /** Whether matchmaker's link said the match is archived (`archived=1`): a hint about where to look first, and
       * nothing more. A link without it still finds an archived match.
       */
     private def hasArchivedHint(request: EngineRequest): Boolean = request.query.get("archived").contains("1")
 
-    private def unauthenticated: EngineResponse = error(401, "this route is matchmaker's; a valid API key is required")
+    private def unauthenticated: EngineResponse = error(401, ErrorText.request.needsApiKey)
 
     /* The `since` of a status call: an ISO-8601 instant, or nothing at all. */
     private def parseSince(request: EngineRequest): Either[String, Option[java.time.Instant]] =
@@ -365,7 +365,9 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case None => Right(None)
             case Some(raw) =>
                 try Right(Some(java.time.Instant.parse(raw)))
-                catch { case _: java.time.format.DateTimeParseException => Left(s"unreadable 'since': $raw") }
+                catch {
+                    case _: java.time.format.DateTimeParseException => Left(ErrorText.request.unreadableSince(raw))
+                }
         }
 
     private def html(body: String): EngineResponse =

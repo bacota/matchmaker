@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import skunk.SqlState
 import com.vivi.matchmaker.model.{Player, PlayerSearchResult}
@@ -27,7 +28,7 @@ class PlayerService(sessionPool: SessionPool) {
         sessionPool.use { session =>
             new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
                 case Some(player) => IO.pure(player)
-                case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
             }
         }
 
@@ -50,7 +51,7 @@ class PlayerService(sessionPool: SessionPool) {
       */
     def search(callerExternalId: String, prefix: String): IO[PlayerSearchResult] = {
         val trimmed = prefix.trim
-        IO.raiseWhen(trimmed.isEmpty)(ValidationError("search prefix must not be blank")) *>
+        IO.raiseWhen(trimmed.isEmpty)(ValidationError(ErrorText.search.blankPrefix)) *>
             sessionPool.use { session =>
                 val repo = new PlayerRepo(session)
                 for {
@@ -74,7 +75,7 @@ class PlayerService(sessionPool: SessionPool) {
       * unregistered caller gets the same `UnauthorizedError` `me` gives.
       */
     def updateNickname(callerExternalId: String, nickname: String): IO[Player] =
-        IO.raiseWhen(nickname.trim.isEmpty)(ValidationError("nickname must not be blank")) *>
+        IO.raiseWhen(nickname.trim.isEmpty)(ValidationError(ErrorText.player.blankNickname)) *>
             sessionPool.use { session =>
                 val repo = new PlayerRepo(session)
                 /* Read and write in one transaction, and the read takes the row's lock: `update`
@@ -86,7 +87,7 @@ class PlayerService(sessionPool: SessionPool) {
                         player <- requireCaller(repo, callerExternalId)
                         renamed = player.copy(nickname = nickname.trim)
                         _ <- repo.update(renamed).recoverWith { case SqlState.UniqueViolation(_) =>
-                            IO.raiseError(ConflictError(s"nickname '${renamed.nickname}' is already taken"))
+                            IO.raiseError(ConflictError(ErrorText.player.nicknameTaken(renamed.nickname)))
                         }
                     } yield renamed
                 }
@@ -139,7 +140,7 @@ class PlayerService(sessionPool: SessionPool) {
     private def requireRegistered(repo: PlayerRepo, callerExternalId: String): IO[Player] =
         repo.readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     /* The caller's own row, locked, for the two calls that rewrite it. Unauthorized rather than
@@ -147,7 +148,7 @@ class PlayerService(sessionPool: SessionPool) {
     private def requireCaller(repo: PlayerRepo, callerExternalId: String): IO[Player] =
         repo.readByExternalIdForUpdate(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     /* Enough of a check to catch a blank field or an obvious mistype, and no more.
@@ -159,7 +160,7 @@ class PlayerService(sessionPool: SessionPool) {
         val trimmed = email.trim
         val plausible = trimmed.count(_ == '@') == 1 && !trimmed.startsWith("@") && !trimmed.endsWith("@") &&
             !trimmed.exists(_.isWhitespace)
-        IO.raiseUnless(plausible)(ValidationError(s"'$email' is not an email address")).as(trimmed)
+        IO.raiseUnless(plausible)(ValidationError(ErrorText.email.notAnAddress(email))).as(trimmed)
     }
 }
 

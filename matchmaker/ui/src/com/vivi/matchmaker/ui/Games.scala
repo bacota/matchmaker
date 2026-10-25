@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
@@ -29,7 +30,7 @@ object Games {
 
         val message = state.map {
             case (None, true)  => "Loading…"
-            case (None, false) => "That game is not available. It may have been withdrawn."
+            case (None, false) => ErrorText.loading.gameUnavailable
             case (Some(_), _)  => ""
         }
 
@@ -254,7 +255,7 @@ object Games {
             // Announced when it arrives, rather than left for a reader to find has changed.
             aria.live := "polite",
             child <-- Store.disabledGames.signal.combineWith(Store.failed(Store.Fetch.DisabledGames)).map {
-                case (_, true)        => p(cls := "error", "Could not load them just now.")
+                case (_, true)        => p(cls := "error", ErrorText.loading.disabledGames)
                 case (None, _)        => p(cls := "detail", "Loading…")
                 case (Some(Seq()), _) => p(cls := "empty", "None.")
                 case (Some(games), _) =>

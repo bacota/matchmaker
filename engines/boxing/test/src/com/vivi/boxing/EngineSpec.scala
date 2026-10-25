@@ -159,7 +159,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val (_, recorder, store, _, unbuilt) = fixture(createRequest(blue = None))
         assertEquals(
           unbuilt,
-          Left(Refusal.Invalid("every fighter must be built before a bout; character(s) 202 are not"))
+          Left(Refusal.Invalid("every fighter must be built before a bout, and these are not: Sugar Ray"))
         )
         assertEquals(store.get("m-1"), None)
         assertEquals(recorder.characterStates, Nil)
@@ -170,7 +170,7 @@ class EngineSpec extends FunSuite with QuietTests {
         )
         assertEquals(
           overBudget,
-          Left(Refusal.Invalid("every fighter must be built before a bout; character(s) 101 are not"))
+          Left(Refusal.Invalid("every fighter must be built before a bout, and these are not: Iron Mike"))
         )
     }
 

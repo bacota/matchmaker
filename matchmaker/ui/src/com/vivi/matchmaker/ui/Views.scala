@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
@@ -313,9 +314,9 @@ object Views {
     private def unavailable(reason: String): HtmlElement =
         div(
           cls := "card",
-          h2("Could Not Load Your Account"),
+          h2(ErrorText.loading.accountHeading),
           p(reason),
-          p(cls := "detail", "This is a problem reaching the server, not a problem with your sign-in."),
+          p(cls := "detail", ErrorText.loading.accountDetail),
           button("Try again", onClick --> (_ => Store.loadAll()))
         )
 

@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
@@ -253,7 +254,7 @@ object MatchSections {
             onMountCallback(context => statusLine = Some(context.thisNode.ref)),
             onUnmountCallback(_ => statusLine = None),
             child.text <-- view.combineWith(failed).map {
-                case (None, true)                      => "These matches could not be loaded."
+                case (None, true)                      => ErrorText.loading.matches
                 case (None, false)                     => "Loading…"
                 case (Some(page), _) if page.page == 0 => s"Finished in the ${page.frame.label.toLowerCase}"
                 case (Some(page), _) =>

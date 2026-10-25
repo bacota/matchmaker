@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
@@ -335,7 +336,7 @@ object Auth {
             case Some(error) =>
                 val description = Option(params.get("error_description")).getOrElse(error)
                 stripQuery()
-                Some(Future.failed(new IllegalStateException(s"hosted login failed: $description")))
+                Some(Future.failed(new IllegalStateException(ErrorText.signIn.hostedFailed(description))))
 
             case None =>
                 Option(params.get("code")).map { code =>
@@ -348,12 +349,12 @@ object Auth {
                     stripQuery()
 
                     if (returnedState.isEmpty || returnedState != expectedState)
-                        Future.failed(new IllegalStateException("sign-in state did not match; ignoring this callback"))
+                        Future.failed(new IllegalStateException(ErrorText.signIn.stateMismatch))
                     else
                         verifier match {
                             case None =>
                                 Future.failed(
-                                  new IllegalStateException("no PKCE verifier for this callback; start sign-in again")
+                                  new IllegalStateException(ErrorText.signIn.noVerifier)
                                 )
                             case Some(v) => exchange(code, v)
                         }

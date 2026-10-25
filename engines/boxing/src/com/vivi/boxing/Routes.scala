@@ -1,5 +1,6 @@
 package com.vivi.boxing
 
+import com.vivi.engine.ErrorText
 import upickle.default.write
 import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given
@@ -129,7 +130,7 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         f: (String, Long, A) => Either[com.vivi.engine.Refusal, EngineResponse]
     ): EngineResponse =
         (characterId.toLongOption, body) match {
-            case (None, _)            => error(400, s"'$characterId' is not a fighter id")
+            case (None, _)            => error(400, ErrorText.request.notAFighterId(characterId))
             case (_, Left(why))       => error(400, why)
             case (Some(id), Right(a)) => asPlayer(request)(caller => f(caller, id, a))
         }

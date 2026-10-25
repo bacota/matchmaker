@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import skunk.Session
 import com.vivi.matchmaker.model._
@@ -15,7 +16,7 @@ object GameAdmins {
         for {
             player <- new PlayerRepo(session).readForShare(caller).flatMap {
                 case Some(p) => IO.pure(p)
-                case None    => IO.raiseError(NotFoundError(s"no player with id ${caller.value}"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
             }
             allowed <-
                 if (player.isAdmin) IO.pure(true)

@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
 import com.vivi.matchmaker.model._
@@ -42,10 +43,8 @@ object MatchTables {
                         case Some(url) => openSignedIn(url)
                         // Found expired by this very request: the list was read before it was.
                         case None if m.isArchiveExpired =>
-                            Store.reportProblem(
-                              "This match's archive has expired: friendly matches are kept for 30 days."
-                            )
-                        case None => Store.reportProblem("This match has no url to view.")
+                            Store.reportProblem(ErrorText.matchView.archiveExpired)
+                        case None => Store.reportProblem(ErrorText.matchView.noViewUrl)
                     }
                 }
             }
@@ -358,7 +357,7 @@ object MatchTables {
               Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                   m.playUrl match {
                       case Some(url) => openSignedIn(url)
-                      case None      => Store.reportProblem("This match has no play url yet.")
+                      case None      => Store.reportProblem(ErrorText.matchView.noPlayUrl)
                   }
               }
           },

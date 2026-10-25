@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import com.vivi.matchmaker.model.{GameAdmin, GameId, Player, PlayerId}
 import com.vivi.matchmaker.persistence.{GameAdminRepo, GameRepo, PlayerRepo, TextCodec}
@@ -27,7 +28,7 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                 // nothing for a lock to protect.
                 admins <- new GameAdminRepo(session).listForGame(gameId).flatMap {
                     case Some(admins) => IO.pure(admins)
-                    case None         => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                    case None         => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                 }
             } yield admins
         }
@@ -48,11 +49,11 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                     _ <- requireGame(new GameRepo[T](session).lockForShare(gameId), gameId)
                     allowed <- if (caller.isAdmin) IO.pure(true) else adminRepo.isAdminForShare(caller.playerId, gameId)
                     _ <- IO.raiseUnless(allowed)(
-                      UnauthorizedError("only an admin, or an admin of this game, may make a player its admin")
+                      UnauthorizedError(ErrorText.gameAdmin.grantNotAllowed)
                     )
                     _ <- playerRepo.readForShare(playerId).flatMap {
                         case Some(_) => IO.unit
-                        case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
+                        case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                     }
                     _ <- adminRepo.grant(player = playerId, game = gameId, grantedBy = caller.playerId)
                 } yield ()
@@ -77,9 +78,7 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                     grantedBy <- adminRepo.grantedByForUpdate(playerId, gameId).flatMap {
                         case Some(by) => IO.pure(by)
                         case None =>
-                            IO.raiseError(
-                              NotFoundError(s"player ${playerId.value} is not an admin of game ${gameId.value}")
-                            )
+                            IO.raiseError(NotFoundError(ErrorText.gameAdmin.notAnAdmin))
                     }
                     // A game's admin who made this one, and is still an admin of the game themselves — FOR SHARE,
                     // so that losing it waits for this revoke rather than landing in the middle of it.
@@ -88,7 +87,7 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                         else if (grantedBy != caller.playerId) IO.pure(false)
                         else adminRepo.isAdminForShare(caller.playerId, gameId)
                     _ <- IO.raiseUnless(allowed)(
-                      UnauthorizedError("only an admin, or the admin of this game who made this one, may take it away")
+                      UnauthorizedError(ErrorText.gameAdmin.revokeNotAllowed)
                     )
                     _ <- adminRepo.revoke(playerId, gameId)
                 } yield ()
@@ -98,12 +97,12 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
     private def requireCaller(read: IO[Option[Player]], callerExternalId: String): IO[Player] =
         read.flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     private def requireGame(read: IO[Option[GameId]], gameId: GameId): IO[Unit] =
         read.flatMap {
             case Some(_) => IO.unit
-            case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
         }
 }

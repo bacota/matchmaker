@@ -1,5 +1,6 @@
 package com.vivi.wavinghands
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
@@ -33,15 +34,15 @@ class Engine(
     ): Either[Refusal, MoveApplied[Duel, Wizard, Orders]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this duel is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.wavinghands.over))
                 w <- current.battle
                     .wizard(seat.participantId)
                     .filter(_.isActive)
-                    .toRight(Refusal.Invalid("you are out of this duel"))
+                    .toRight(Refusal.Invalid(ErrorText.wavinghands.out))
                 _ <- Either.cond(
                   !current.hasOrdered(seat),
                   (),
-                  Refusal.Invalid("you have already given your orders for this turn")
+                  Refusal.Invalid(ErrorText.wavinghands.alreadyOrdered)
                 )
                 order <- Engine
                     .orders(current, w, request, at)
@@ -111,9 +112,9 @@ object Engine {
                 case Some(g) => Right(g)
                 case None =>
                     Gesture.parse(raw) match {
-                        case None => Left(s"'$raw' is not a gesture; expected F, P, S, W, D, C, stab or nothing")
+                        case None => Left(ErrorText.wavinghands.notAGesture(raw))
                         case Some(g) if !Rules.allowed(w, hand).contains(g) =>
-                            Left(s"you are afraid, and cannot make a ${g.label} with your ${hand.code} hand")
+                            Left(ErrorText.wavinghands.afraid(gesture = g.label, hand = hand.code))
                         case Some(g) => Right(g)
                     }
             }
@@ -122,7 +123,7 @@ object Engine {
                 case Some(t @ Target.Wizard(id)) if battle.wizard(id).exists(_.isActive)  => Right(t)
                 case Some(t @ Target.Monster(id)) if battle.monster(id).exists(!_.isDead) => Right(t)
                 case Some(Target.Nobody)                                                  => Right(Target.Nobody)
-                case _ => Left(s"there is no '$raw' to aim at")
+                case _ => Left(ErrorText.wavinghands.noTarget)
             }
         def optional(raw: Option[String]): Either[String, Option[Target]] =
             raw.map(_.trim).filter(_.nonEmpty) match {
@@ -136,7 +137,7 @@ object Engine {
             _ <- Either.cond(
               !(left == Gesture.Stab && right == Gesture.Stab),
               (),
-              "a wizard has only one knife, and cannot stab with both hands"
+              ErrorText.wavinghands.oneKnife
             )
             options = Rules.castingsFor(w, left, right)
             casting = request.casting.flatMap(k => options.find(_.key == k)).getOrElse(Rules.defaultCasting(options))
@@ -164,8 +165,8 @@ object Engine {
                     optional(request.stab).flatMap { aimed =>
                         aimed.orElse(Rules.soleOpponent(battle, w.participantId)) match {
                             case Some(Target.Wizard(id)) if id == w.participantId =>
-                                Left("a wizard may not stab themselves")
-                            case Some(Target.Nobody) | None => Left("choose whom to stab")
+                                Left(ErrorText.wavinghands.selfStab)
+                            case Some(Target.Nobody) | None => Left(ErrorText.wavinghands.stabWhom)
                             case Some(t)                    => Right(Some(StabOrder(hand, t)))
                         }
                     }

@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import com.raquo.laminar.api.L.{*, given}
 import com.vivi.matchmaker.model._
 
@@ -231,12 +232,12 @@ object GameForm {
         // delete a role, which it refuses, so it is answered here as what it is.
         val (blank, named) = all.partition(_._2.isEmpty)
         if (blank.exists(_._1 != GameRoleId.unassigned))
-            Left("A role that already exists cannot be left without a name.")
-        else if (named.isEmpty) Left("A game needs at least one role: every player accepting a challenge takes one.")
-        else if (named.map(_._2).distinct.sizeIs != named.size) Left("Two roles cannot have the same name.")
-        else if (named.map(_._4).distinct.sizeIs != named.size) Left("Two roles cannot be shown under the same name.")
+            Left(ErrorText.gameForm.unnamedRole)
+        else if (named.isEmpty) Left(ErrorText.gameForm.noRoles)
+        else if (named.map(_._2).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameRoleName)
+        else if (named.map(_._4).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameRoleDisplayName)
         else if (named.exists((_, _, _, _, p) => p.nonEmpty && p.toIntOption.isEmpty))
-            Left("A role's preference level has to be a whole number, or blank.")
+            Left(ErrorText.gameForm.badPreference)
         else
             Right(
               named.map((id, name, roleType, displayName, preference) =>
@@ -260,14 +261,14 @@ object GameForm {
         for {
             fewest <- least.trim.toIntOption
                 .filter(_ > 0)
-                .toRight("Fewest players has to be a whole number above 0.")
+                .toRight(ErrorText.gameForm.badFewest)
             limit <- most.trim match {
                 case "" => Right(None)
                 case trimmed =>
                     trimmed.toIntOption
                         .filter(_ >= fewest)
                         .map(Some(_))
-                        .toRight("Most players has to be a whole number no smaller than fewest players, or blank.")
+                        .toRight(ErrorText.gameForm.badMost)
             }
         } yield (fewest, limit)
 
@@ -278,7 +279,7 @@ object GameForm {
                 trimmed.toIntOption
                     .filter(_ > 0)
                     .map(Some(_))
-                    .toRight("Maximum turns has to be a whole number above 0, or blank.")
+                    .toRight(ErrorText.gameForm.badMaxTurns)
         }
 
     private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
@@ -299,13 +300,13 @@ object GameForm {
             }
             .filter(_.name.nonEmpty)
         val badDefault = named.find(p => p.defaultValue.exists(d => !p.values.exists(_.value == d)))
-        if (named.map(_.name).distinct.sizeIs != named.size) Left("Two parameters cannot have the same name.")
+        if (named.map(_.name).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameParameterName)
         else if (named.map(_.displayName).distinct.sizeIs != named.size)
-            Left("Two parameters cannot be shown under the same name.")
+            Left(ErrorText.gameForm.sameParameterDisplayName)
         else
             badDefault match {
                 case Some(p) =>
-                    Left(s"Parameter '${p.name}' has default '${p.defaultValue.get}', which is not one of its values.")
+                    Left(ErrorText.gameForm.defaultNotAValue(parameter = p.name, default = p.defaultValue.get))
                 case None => Right(named)
             }
     }

@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
@@ -232,7 +233,7 @@ object Ratings {
                               s"You have no rating as ${r.displayName} yet."
                           )
                         )
-                    case error => Left(s"Your standing could not be loaded: ${error.getMessage}")
+                    case error => Left(ErrorText.loading.standing(error.getMessage))
                 }
                 .foreach(answer =>
                     if (askedMine == mineRequest && Store.isStillSignedInAs(signIn)) mine.set(Some(answer))
@@ -251,8 +252,13 @@ object Ratings {
                     if (current) {
                         // "Refreshed" when an older page is still on screen: it is still there, and
                         // still what it was.
-                        val what = if (board.now().isDefined) "refreshed" else "loaded"
-                        loadError.set(Some(s"The leaderboard could not be $what: ${error.getMessage}"))
+                        val reason = error.getMessage
+                        loadError.set(
+                          Some(
+                            if (board.now().isDefined) ErrorText.loading.leaderboardRefresh(reason)
+                            else ErrorText.loading.leaderboard(reason)
+                          )
+                        )
                     }
                 }
                 .andThen(_ => if (asked == request) busy.set(false))

@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import skunk.SqlState
@@ -42,8 +43,8 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     _ <- newKey.traverse_(key =>
                         IO.raiseWhen(key.length < GameService.MinApiKeyLength)(
                           ValidationError(
-                            s"an API key must be at least ${GameService.MinApiKeyLength} characters; " +
-                                s"this one is ${key.length}"
+                            ErrorText.game
+                                .shortApiKey(least = GameService.MinApiKeyLength.toString, length = key.length.toString)
                           )
                         )
                     )
@@ -55,13 +56,13 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                             // was checked against. Two admins saving the same game at once would
                             // otherwise both diff against the state before either of them wrote.
                             gameRepo.lockForUpdate(trimmed.gameId) *> gameRepo.read(trimmed.gameId).flatMap {
-                                case None => IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
+                                case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                                 case Some(existing) =>
                                     checkRoles(existing, trimmed) *> gameRepo
                                         .update(trimmed) *> gameRepo.read(trimmed.gameId).flatMap {
                                         case Some(updated) => IO.pure(updated)
                                         case None =>
-                                            IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
+                                            IO.raiseError(NotFoundError(ErrorText.game.notFound))
                                     }
                             }
                     // A new game offers every tournament model it can play but the challenge, which its admins may then change.
@@ -72,9 +73,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     _ <- newKey.traverse_(key =>
                         new GameApiKeyRepo(session).set(result.gameId, key).recoverWith {
                             case SqlState.UniqueViolation(_) =>
-                                IO.raiseError(
-                                  ConflictError("that API key is another game's; every game needs a key of its own")
-                                )
+                                IO.raiseError(ConflictError(ErrorText.game.apiKeyTaken))
                         }
                     )
                 } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
@@ -99,7 +98,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             for {
                 _ <- playerRepo.readByExternalId(callerExternalId).flatMap {
                     case Some(player) => IO.pure(player)
-                    case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                    case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
                 games <- new GameRepo[T](session).list(activeOnly)
             } yield games
@@ -122,14 +121,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         val removed = existing.roles.filterNot(role => incomingIds.contains(role.gameRoleId))
         for {
             _ <- IO.raiseUnless(unknown.isEmpty)(
-              ValidationError(
-                s"game ${existing.gameId.value} has no role(s) ${unknown.map(_.value).mkString(", ")}"
-              )
+              ValidationError(ErrorText.game.unknownRoles(existing.name))
             )
             _ <- IO.raiseUnless(removed.isEmpty)(
               ValidationError(
-                s"role(s) ${removed.map(r => s"'${r.name}'").mkString(", ")} cannot be deleted from game " +
-                    s"${existing.gameId.value}: past matches name them. Make a role optional instead."
+                ErrorText.game
+                    .rolesPlayed(roles = removed.map(r => s"'${r.name}'").mkString(", "), game = existing.name)
               )
             )
         } yield ()
@@ -187,72 +184,66 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     private def validate(game: Game): IO[Unit] =
         for {
             _ <- IO.raiseWhen(game.roles.isEmpty && !game.isRoleless)(
-              ValidationError(
-                s"game '${game.name}' defines no roles and no number of players; it needs one or the other"
-              )
+              ValidationError(ErrorText.game.noRolesNoPlayers(game.name))
             )
             _ <- IO.raiseWhen(game.roles.nonEmpty && game.isRoleless)(
-              ValidationError(
-                s"game '${game.name}' has roles and a number of players; a game without roles has the number instead"
-              )
+              ValidationError(ErrorText.game.rolesAndPlayers(game.name))
             )
             _ <- IO.raiseWhen(game.maxPlayers.isDefined && !game.isRoleless)(
-              ValidationError(s"game '${game.name}' has a most players but no fewest")
+              ValidationError(ErrorText.game.mostButNoFewest(game.name))
             )
             _ <- IO.raiseWhen(game.minPlayers.exists(_ < 1))(
-              ValidationError(s"game '${game.name}' needs at least one player a match")
+              ValidationError(ErrorText.game.noPlayers(game.name))
             )
             _ <- IO.raiseWhen(game.minPlayers.zip(game.maxPlayers).exists((least, most) => most < least))(
-              ValidationError(s"game '${game.name}' has fewer most players than fewest")
+              ValidationError(ErrorText.game.mostBelowFewest(game.name))
             )
             // Nobody goes first in a game without roles: everyone moves at once.
             _ <- IO.raiseWhen(game.isRoleless && game.moveType != MoveType.Simultaneous)(
-              ValidationError(s"game '${game.name}' has no roles, so its players must move at once")
+              ValidationError(ErrorText.game.rolelessTakesTurns(game.name))
             )
             // Its display name falls back to it, and a blank one is a constraint violation rather
             // than an explanation.
-            _ <- IO.raiseWhen(game.name.isEmpty)(ValidationError("a game needs a name"))
+            _ <- IO.raiseWhen(game.name.isEmpty)(ValidationError(ErrorText.game.blankName))
             // The engine's identity: what its callbacks are matched against. A game without one can be
             // started but never heard from again.
             _ <- IO.raiseWhen(game.externalId.isEmpty)(
-              ValidationError(
-                s"game '${game.name}' names no engine identity; it is the name the engine's API key is filed under"
-              )
+              ValidationError(ErrorText.game.noEngineIdentity(game.name))
             )
             _ <- IO.raiseWhen(game.roles.exists(_.name.trim.isEmpty))(
-              ValidationError(s"game '${game.name}' has a role with no name")
+              ValidationError(ErrorText.game.unnamedRole(game.name))
             )
             _ <- IO.raiseWhen(game.roles.map(_.name).distinct.sizeIs != game.roles.size)(
-              ValidationError(s"game '${game.name}' has two roles with the same name")
+              ValidationError(ErrorText.game.sameRoleName(game.name))
             )
             // A player picking a seat by its display name could not tell two seats shown alike apart.
             _ <- IO.raiseWhen(game.roles.map(_.displayName).distinct.sizeIs != game.roles.size)(
-              ValidationError(s"game '${game.name}' shows two roles under the same name")
+              ValidationError(ErrorText.game.sameRoleDisplayName(game.name))
             )
             _ <- IO.raiseWhen(game.parameters.exists(_.name.trim.isEmpty))(
-              ValidationError(s"game '${game.name}' has a parameter with no name")
+              ValidationError(ErrorText.game.unnamedParameter(game.name))
             )
             _ <- IO.raiseWhen(game.parameters.map(_.name).distinct.sizeIs != game.parameters.size)(
-              ValidationError(s"game '${game.name}' has two parameters with the same name")
+              ValidationError(ErrorText.game.sameParameterName(game.name))
             )
             // Distinct names can still be shown alike — `rounds` captioned "Length" beside a `length`
             // shown as it is — and a player choosing between two pickers with one caption cannot
             // tell which is which.
             _ <- IO.raiseWhen(game.parameters.map(_.displayName).distinct.sizeIs != game.parameters.size)(
-              ValidationError(s"game '${game.name}' shows two parameters under the same name")
+              ValidationError(ErrorText.game.sameParameterDisplayName(game.name))
             )
             _ <- game.parameters.toList.traverse_ { parameter =>
                 val values = parameter.values.map(_.value)
                 for {
                     _ <- IO.raiseWhen(values.distinct.sizeIs != values.size)(
-                      ValidationError(s"parameter '${parameter.name}' lists the same value twice")
+                      ValidationError(ErrorText.game.repeatedValue(parameter.name))
                     )
                     // game_parameter.default_value is a foreign key to game_parameter_value, so a default
                     // that is not one of the parameter's values cannot be stored at all.
                     _ <- parameter.defaultValue.traverse_ { default =>
                         IO.raiseUnless(values.contains(default))(
                           ValidationError(
-                            s"parameter '${parameter.name}' has default '$default', which is not one of its values"
+                            ErrorText.game.defaultNotAValue(parameter = parameter.name, default = default.toString)
                           )
                         )
                     }
@@ -262,9 +253,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
     private def authorize(playerRepo: PlayerRepo, externalUserId: String): IO[Player] =
         playerRepo.readByExternalId(externalUserId).flatMap {
-            case None => IO.raiseError(UnauthorizedError(s"no such user '$externalUserId'"))
+            case None => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
             case Some(player) if !player.isAdmin =>
-                IO.raiseError(UnauthorizedError(s"user '$externalUserId' is not an admin"))
+                IO.raiseError(UnauthorizedError(ErrorText.caller.notSiteAdmin))
             case Some(player) => IO.pure(player)
         }
 }

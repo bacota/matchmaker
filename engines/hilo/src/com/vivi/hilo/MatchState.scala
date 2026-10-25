@@ -1,5 +1,6 @@
 package com.vivi.hilo
 
+import com.vivi.engine.ErrorText
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
@@ -88,9 +89,9 @@ case class HiloMatch(
 object HiloMatch extends Game[HiloMatch, Player, Pick] {
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, HiloMatch] =
-        if (request.players.sizeIs < 2) Left(s"hilo needs at least two players; ${request.players.size} were sent")
+        if (request.players.sizeIs < 2) Left(ErrorText.hilo.tooFewPlayers(request.players.size.toString))
         else if (request.players.map(_.cognitoId).distinct.sizeIs != request.players.size)
-            Left("every place must belong to a different player")
+            Left(ErrorText.hilo.samePlayer)
         else
             Right(
               HiloMatch(

@@ -7,7 +7,7 @@ import upickle.default.{read, write, ReadWriter}
 /** Raised when a match cannot be saved because someone else saved it first. The move that lost the race is retried
   * against the state that won it — see [[MatchStore.modify]].
   */
-class ConcurrentModification(matchId: String) extends RuntimeException(s"match $matchId changed underneath this update")
+class ConcurrentModification(matchId: String) extends RuntimeException(ErrorText.matches.changedUnderneath)
 
 /** What a store needs of a match: the key it is kept under.
   *

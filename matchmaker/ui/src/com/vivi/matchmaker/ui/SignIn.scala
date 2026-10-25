@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
@@ -145,7 +146,7 @@ object SignIn {
       * `username` is threaded through because Cognito does not echo it and every subsequent response has to carry it.
       */
     private def run(username: String)(step: => Future[CognitoIdp.AuthOutcome]): Unit = {
-        if (username.isEmpty) say(Some("Enter your email address."), Set(Field.Email))
+        if (username.isEmpty) say(Some(ErrorText.signIn.noEmail), Set(Field.Email))
         else if (busy.now()) ()
         else {
             busy.set(true)
@@ -217,9 +218,7 @@ object SignIn {
 
                 case other =>
                     problem.set(
-                      Some(
-                        s"This account needs a sign-in step this page does not support ($other). Try resetting your password."
-                      )
+                      Some(ErrorText.signIn.unsupportedStep(other.toString))
                     )
             }
     }
@@ -257,25 +256,25 @@ object SignIn {
         // Deliberately does not distinguish a bad address from a bad password: the pool client sets
         // `prevent_user_existence_errors`, and saying more here would undo it on the client side.
         case CognitoIdp.IdpError("NotAuthorizedException", _) =>
-            "Incorrect email or password."
+            ErrorText.signIn.incorrect
         case CognitoIdp.IdpError("UserNotFoundException", _) =>
-            "Incorrect email or password."
+            ErrorText.signIn.incorrect
         case CognitoIdp.IdpError("UserNotConfirmedException", _) =>
-            "This account has not been confirmed yet. Check your email for the confirmation link."
+            ErrorText.signIn.unconfirmed
         case CognitoIdp.IdpError("PasswordResetRequiredException", _) =>
-            "This account needs a new password. Use “Forgot your password?” below."
+            ErrorText.signIn.resetRequired
         case CognitoIdp.IdpError("CodeMismatchException", _) =>
-            "That code is not right. Check it and try again."
+            ErrorText.signIn.wrongCode
         case CognitoIdp.IdpError("ExpiredCodeException", _) =>
-            "That code has expired. Start again to have a new one sent."
+            ErrorText.signIn.codeExpired
         // The message field, not getMessage: IdpError's own message prefixes the exception type,
         // and "InvalidPasswordException: Password did not conform..." is not a sentence to show a
         // user. Cognito's message on its own is written to be read.
         case CognitoIdp.IdpError("InvalidPasswordException", message) =>
-            s"That password does not meet the pool's requirements: $message"
+            ErrorText.signIn.weakPassword(message)
         case CognitoIdp.IdpError(_, message) => message
         case _: CognitoIdp.IdpUnavailable =>
-            "Could not reach the sign-in service. Check your connection and try again."
+            ErrorText.signIn.unreachable
         case other => other.getMessage
     }
 

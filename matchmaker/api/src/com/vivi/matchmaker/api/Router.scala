@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import upickle.default.{ReadWriter, read, write}
@@ -120,11 +121,7 @@ object Router {
                 withGameId(gameId) { id =>
                     body[Json.PreferencesRequest](request).flatMap { r =>
                         if (r.isAppliedToGames)
-                            IO.pure(
-                              Errors.badRequest(
-                                "applyToGames is not supported for one game's settings; it belongs to PUT /me/notifications"
-                              )
-                            )
+                            IO.pure(Errors.badRequest(ErrorText.request.applyToGamesHere))
                         else
                             noContent(
                               services.notifications.updateForGame(
@@ -234,7 +231,8 @@ object Router {
                                             role = role
                                           )
                                         )
-                                    case None => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
+                                    case None =>
+                                        IO.pure(Errors.badRequest(ErrorText.request.invalid(raw = raw, what = "page")))
                                 }
                         }
                     )
@@ -329,7 +327,7 @@ object Router {
             // keeps none of its own. The engine's, like the two below.
             case ("GET", "characters" :: Nil) =>
                 request.query.get("owner").filter(_.nonEmpty) match {
-                    case None        => IO.pure(Errors.badRequest("say whose characters with ?owner="))
+                    case None        => IO.pure(Errors.badRequest(ErrorText.request.noOwner))
                     case Some(owner) => ok(services.characters.listForOwner(owner, caller))
                 }
 
@@ -438,7 +436,8 @@ object Router {
                                         player = Some(PlayerId(id))
                                       )
                                     )
-                                case None => IO.pure(Errors.badRequest(s"'$raw' is not a player id"))
+                                case None =>
+                                    IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "player")))
                             }
                     }
                 )
@@ -549,8 +548,8 @@ object Router {
                     case Some(raw) =>
                         CompletedFrame
                             .fromCode(raw)
-                            .fold(IO.pure(Errors.badRequest(s"'$raw' is not a valid frame")))(frame =>
-                                ok(services.tournaments.endedOwned(caller, frame))
+                            .fold(IO.pure(Errors.badRequest(ErrorText.request.invalid(raw = raw, what = "frame"))))(
+                              frame => ok(services.tournaments.endedOwned(caller, frame))
                             )
                 }
 
@@ -689,15 +688,16 @@ object Router {
 
             case ("DELETE", "games" :: gameId :: "tournaments" :: tid :: "entries" :: entrantId :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    entrantId.toLongOption.fold(IO.pure(Errors.badRequest(s"'$entrantId' is not an entry id")))(e =>
-                        noContent(
-                          services.tournaments.withdraw(
-                            gameId = gid,
-                            tournamentId = t,
-                            entrantId = EntrantId(e),
-                            callerExternalId = caller
+                    entrantId.toLongOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnEntryId(entrantId))))(
+                      e =>
+                          noContent(
+                            services.tournaments.withdraw(
+                              gameId = gid,
+                              tournamentId = t,
+                              entrantId = EntrantId(e),
+                              callerExternalId = caller
+                            )
                           )
-                        )
                     )
                 )
 
@@ -834,14 +834,16 @@ object Router {
 
     private def body[A: ReadWriter](request: Request): IO[A] =
         IO(read[A](request.body)).handleErrorWith(e =>
-            IO.raiseError(ValidationError(s"malformed request body: ${e.getMessage}"))
+            IO.raiseError(ValidationError(ErrorText.request.malformedBody(e.getMessage)))
         )
 
     private def withGameId(raw: String)(f: GameId => IO[Response]): IO[Response] =
-        raw.toIntOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a game id")))(id => f(GameId(id)))
+        raw.toIntOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "game"))))(id =>
+            f(GameId(id))
+        )
 
     private def withMatchId(raw: String)(f: MatchId => IO[Response]): IO[Response] =
-        MatchId.parse(raw).fold(IO.pure(Errors.badRequest(s"'$raw' is not a match id")))(f)
+        MatchId.parse(raw).fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "match"))))(f)
 
     private def withMatch(rawGame: String, rawMatch: String)(f: (GameId, MatchId) => IO[Response]): IO[Response] =
         withGameId(rawGame)(gid => withMatchId(rawMatch)(mid => f(gid, mid)))
@@ -852,7 +854,9 @@ object Router {
         withTournament(rawGame, rawTournament)((gid, t) => withMatchId(rawMatch)(mid => f(gid, t, mid)))
 
     private def withCharacterId(raw: String)(f: CharacterId => IO[Response]): IO[Response] =
-        raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a character id")))(id => f(CharacterId(id)))
+        raw.toLongOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "character"))))(
+          id => f(CharacterId(id))
+        )
 
     /* The window a completed list is asked for: every parameter optional, each one that is given
      * well formed, and the window they name one that can be computed and stored -- or the request is
@@ -861,7 +865,7 @@ object Router {
         def param[A](name: String)(parse: String => Option[A]): Either[String, Option[A]] =
             request.query.get(name) match {
                 case None      => Right(None)
-                case Some(raw) => parse(raw).map(Some(_)).toRight(s"'$raw' is not a valid $name")
+                case Some(raw) => parse(raw).map(Some(_)).toRight(ErrorText.request.invalid(raw = raw, what = name))
             }
         val query = for {
             frame <- param("frame")(CompletedFrame.fromCode)
@@ -880,7 +884,7 @@ object Router {
             inRange <- Either.cond(
               window.isInRange(java.time.Instant.now()),
               window,
-              "that window of completed matches is out of range"
+              ErrorText.request.windowOutOfRange
             )
         } yield inRange
         query.fold(message => IO.pure(Errors.badRequest(message)), f)
@@ -893,8 +897,8 @@ object Router {
         request.query.get("role") match {
             case None => f(None)
             case Some(raw) =>
-                raw.toIntOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a role id")))(id =>
-                    f(Some(GameRoleId(id)))
+                raw.toIntOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "role"))))(
+                  id => f(Some(GameRoleId(id)))
                 )
         }
 
@@ -902,19 +906,21 @@ object Router {
         f: (GameId, TournamentId) => IO[Response]
     ): IO[Response] =
         withGameId(rawGame)(gid =>
-            rawTournament.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawTournament' is not a tournament id")))(t =>
-                f(gid, TournamentId(t))
-            )
+            rawTournament.toLongOption.fold(
+              IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = rawTournament, what = "tournament")))
+            )(t => f(gid, TournamentId(t)))
         )
 
     private def withTournamentModel(rawGame: String, rawModel: String)(
         f: (GameId, TournamentModelId) => IO[Response]
     ): IO[Response] =
         withGameId(rawGame)(gid =>
-            if (rawModel.isEmpty) IO.pure(Errors.badRequest("a tournament model id is needed"))
+            if (rawModel.isEmpty) IO.pure(Errors.badRequest(ErrorText.request.noModel))
             else f(gid, TournamentModelId(rawModel))
         )
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =
-        raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a player id")))(id => f(PlayerId(id)))
+        raw.toLongOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "player"))))(id =>
+            f(PlayerId(id))
+        )
 }

@@ -1,5 +1,6 @@
 package com.vivi.rps
 
+import com.vivi.engine.ErrorText
 import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given
 
@@ -41,7 +42,7 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         // second is spelled out because "scissor" and "rocks" are what a hand-written client
         // sends.
         parse[Protocol.MoveRequest](request.body).flatMap(move =>
-            Shape.parse(move.shape).toRight(s"'${move.shape}' is not a throw; expected rock, paper or scissors")
+            Shape.parse(move.shape).toRight(ErrorText.rps.notAThrow(move.shape))
         ) match {
             case Left(why) => error(400, why)
             case Right(shape) =>

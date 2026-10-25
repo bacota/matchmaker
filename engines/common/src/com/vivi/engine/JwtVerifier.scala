@@ -50,7 +50,7 @@ class JwtVerifier(
     def verify(token: String): Either[String, String] =
         try {
             val parts = token.split('.')
-            if (parts.length != 3) Left("malformed token")
+            if (parts.length != 3) Left(ErrorText.token.malformed)
             else {
                 val header = ujson.read(decode(parts(0)))
                 val claims = ujson.read(decode(parts(1)))
@@ -60,31 +60,35 @@ class JwtVerifier(
                     _ <- Either.cond(
                       header.obj.get("alg").map(_.str).contains("RS256"),
                       (),
-                      "unsupported token algorithm"
+                      ErrorText.token.algorithm
                     )
-                    kid <- header.obj.get("kid").map(_.str).toRight("token names no key")
-                    key <- keyFor(kid).toRight("token names an unknown key")
+                    kid <- header.obj.get("kid").map(_.str).toRight(ErrorText.token.noKey)
+                    key <- keyFor(kid).toRight(ErrorText.token.unknownKey)
                     _ <- Either.cond(
                       isVerified(key = key, header = parts(0), payload = parts(1), signature = signature),
                       (),
-                      "bad token signature"
+                      ErrorText.token.badSignature
                     )
                     _ <- Either.cond(
                       claims.obj.get("iss").map(_.str).contains(issuer),
                       (),
-                      "token is from another issuer"
+                      ErrorText.token.otherIssuer
                     )
-                    _ <- Either.cond(claims.obj.get("token_use").map(_.str).contains("id"), (), "not an id token")
-                    _ <- Either.cond(audienceOf(claims).contains(audience), (), "token is for another application")
+                    _ <- Either.cond(
+                      claims.obj.get("token_use").map(_.str).contains("id"),
+                      (),
+                      ErrorText.token.notAnIdToken
+                    )
+                    _ <- Either.cond(audienceOf(claims).contains(audience), (), ErrorText.token.otherApplication)
                     _ <- Either.cond(
                       claims.obj.get("exp").map(_.num).exists(exp => now().minus(skew).getEpochSecond < exp.toLong),
                       (),
-                      "token has expired"
+                      ErrorText.token.expired
                     )
-                    sub <- claims.obj.get("sub").map(_.str).filter(_.nonEmpty).toRight("token names no subject")
+                    sub <- claims.obj.get("sub").map(_.str).filter(_.nonEmpty).toRight(ErrorText.token.noSubject)
                 } yield sub
             }
-        } catch { case NonFatal(_) => Left("malformed token") }
+        } catch { case NonFatal(_) => Left(ErrorText.token.malformed) }
 
     private def audienceOf(claims: ujson.Value): Set[String] =
         claims.obj.get("aud") match {

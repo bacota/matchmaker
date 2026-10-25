@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.ErrorText
 import com.vivi.matchmaker.service._
 import ApiGateway.Response
 
@@ -34,7 +35,7 @@ object Errors {
         case e: ServiceError => response(statusFor(e), e.getMessage)
         case e =>
             log(e, where)
-            response(500, "internal error")
+            response(500, ErrorText.request.internal)
     }
 
     /** Writes a failure to stderr, with its cause chain, as one record.
@@ -52,15 +53,15 @@ object Errors {
     }
 
     val unauthenticated: Response =
-        response(401, s"missing ${ApiGateway.ExternalIdHeader} header")
+        response(401, ErrorText.request.noIdentityHeader(ApiGateway.ExternalIdHeader))
 
     /** No verified `sub` reached the function. Deployed, the gateway's authorizer answers 401 long before this, so
       * seeing it means a request arrived without passing one.
       */
     val unauthenticatedToken: Response =
-        response(401, "no verified identity in request")
+        response(401, ErrorText.request.unverified)
 
-    val notFound: Response = response(404, "no such endpoint")
+    val notFound: Response = response(404, ErrorText.request.noSuchEndpoint)
 
     def badRequest(message: String): Response = response(400, message)
 }

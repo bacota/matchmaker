@@ -297,12 +297,12 @@
         noCorner = true;
         state = null;
         render();
-        tell(ticket, "you have no corner in this bout");
+        tell(ticket, errors.noCorner);
         return null;
       }
       return response;
     } catch (e) {
-      if (!overtaken(ticket)) tell(ticket, "could not reach the engine");
+      if (!overtaken(ticket)) tell(ticket, errors.unreachable);
       return null;
     }
   }

@@ -1,5 +1,6 @@
 package com.vivi.hilo
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
@@ -26,16 +27,16 @@ class Engine(
     def move(matchId: String, cognitoId: String, number: Int): Either[Refusal, MoveApplied[HiloMatch, Player, Pick]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.matches.over))
                 _ <- Either.cond(
                   !current.hasPicked(seat),
                   (),
-                  Refusal.Invalid("you have already picked this round; a pick cannot be taken back")
+                  Refusal.Invalid(ErrorText.hilo.alreadyPicked)
                 )
                 _ <- Either.cond(
                   number >= 1 && number <= current.highest,
                   (),
-                  Refusal.Invalid(s"pick a number from 1 to ${current.highest}")
+                  Refusal.Invalid(ErrorText.hilo.outOfRange(current.highest.toString))
                 )
             } yield {
                 val pick = Pick(

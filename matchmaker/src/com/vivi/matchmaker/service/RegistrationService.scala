@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import skunk.SqlState
 import com.vivi.matchmaker.model.{Player, PlayerId}
@@ -18,8 +19,8 @@ class RegistrationService(sessionPool: SessionPool) {
       */
     def register(nickname: String, externalId: String, email: Option[String] = None): IO[Player] =
         for {
-            _ <- IO.raiseWhen(nickname.trim.isEmpty)(ValidationError("nickname must not be blank"))
-            _ <- IO.raiseWhen(externalId.trim.isEmpty)(ValidationError("externalId must not be blank"))
+            _ <- IO.raiseWhen(nickname.trim.isEmpty)(ValidationError(ErrorText.player.blankNickname))
+            _ <- IO.raiseWhen(externalId.trim.isEmpty)(ValidationError(ErrorText.registration.blankExternalId))
             player <- sessionPool.use { session =>
                 new PlayerRepo(session)
                     .create(
@@ -32,9 +33,7 @@ class RegistrationService(sessionPool: SessionPool) {
                       )
                     )
                     .recoverWith { case SqlState.UniqueViolation(_) =>
-                        IO.raiseError(
-                          ConflictError(s"nickname '$nickname' or externalId '$externalId' is already registered")
-                        )
+                        IO.raiseError(ConflictError(ErrorText.registration.taken(nickname)))
                     }
             }
         } yield player

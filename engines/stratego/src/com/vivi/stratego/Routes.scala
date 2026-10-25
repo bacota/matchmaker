@@ -1,5 +1,6 @@
 package com.vivi.stratego
 
+import com.vivi.engine.ErrorText
 import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given
 
@@ -51,7 +52,12 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
             case Right(_) =>
                 error(
                   400,
-                  """a move is {"setup":[40 ranks]}, {"from":square,"to":square} or {"concede":true}"""
+                  // The shapes are JSON, whose braces the errors file keeps for its own {names}.
+                  ErrorText.stratego.badMove(
+                    setup = """{"setup":[40 ranks]}""",
+                    step = """{"from":square,"to":square}""",
+                    concede = """{"concede":true}"""
+                  )
                 )
         }
 }

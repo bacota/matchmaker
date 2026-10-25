@@ -1,5 +1,7 @@
 package com.vivi.tictactoe
 
+import com.vivi.engine.ErrorText
+
 /** Which of the two marks a seat plays. The engine's `role` names are these, spelled exactly as matchmaker's
   * `game_role.name` rows should be — see the README's setup section.
   */
@@ -52,8 +54,9 @@ case class Board(cells: Vector[Option[Mark]]) {
       * clicked a taken cell — that is a 400, not a failure of the engine.
       */
     def place(cell: Int, mark: Mark): Either[String, Board] =
-        if (cell < 0 || cell > 8) Left(s"cell $cell is not on the board; cells are numbered 0 to 8")
-        else if (cells(cell).isDefined) Left(s"cell $cell is already taken by ${cells(cell).get}")
+        if (cell < 0 || cell > 8) Left(ErrorText.tictactoe.offBoard(cell.toString))
+        else if (cells(cell).isDefined)
+            Left(ErrorText.tictactoe.taken(cell = cell.toString, mark = cells(cell).get.toString))
         else Right(Board(cells.updated(cell, Some(mark))))
 
     /** The position as nine characters, `.` for an empty cell — how a board is stored and how the tests state one.
