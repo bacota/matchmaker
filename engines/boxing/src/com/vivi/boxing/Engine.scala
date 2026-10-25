@@ -1,6 +1,5 @@
 package com.vivi.boxing
 
-import com.vivi.engine.ErrorText
 import java.time.Instant
 import scala.util.control.NonFatal
 import com.vivi.engine.{GameEngine, Log, MatchStore, MatchmakerRefusal, Matchmaker, MoveApplied, Refusal, TurnClock}

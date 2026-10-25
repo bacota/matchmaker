@@ -1,6 +1,5 @@
 package com.vivi.boxing
 
-import com.vivi.engine.ErrorText
 import upickle.default.write
 import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given

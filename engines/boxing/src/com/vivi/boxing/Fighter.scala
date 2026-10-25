@@ -1,6 +1,5 @@
 package com.vivi.boxing
 
-import com.vivi.engine.ErrorText
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW, read, write}
 

@@ -1,6 +1,5 @@
 package com.vivi.stratego
 
-import com.vivi.engine.ErrorText
 import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given
 

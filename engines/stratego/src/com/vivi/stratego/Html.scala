@@ -1,7 +1,7 @@
 package com.vivi.stratego
 
 import upickle.default.write
-import com.vivi.engine.{ButtonSpacing, ErrorText, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, jsObject, scriptSafe}
 import Protocol.given
 

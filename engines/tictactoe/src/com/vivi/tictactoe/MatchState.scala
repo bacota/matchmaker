@@ -1,6 +1,5 @@
 package com.vivi.tictactoe
 
-import com.vivi.engine.ErrorText
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}

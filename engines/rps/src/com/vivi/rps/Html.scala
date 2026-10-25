@@ -1,7 +1,6 @@
 package com.vivi.rps
 
 import com.vivi.engine.HtmlText.jsString
-import com.vivi.engine.ErrorText
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
