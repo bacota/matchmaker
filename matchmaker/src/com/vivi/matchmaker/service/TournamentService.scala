@@ -723,7 +723,7 @@ class TournamentService[T](
               ConflictError(ErrorText.tournament.cannotStart(t.status.label.toLowerCase))
             )
             entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn))
-            least = math.max(2, game.requiredSeats)
+            least = Tournament.leastToStart(game)
             _ <- IO.raiseWhen(entries.sizeIs < least)(
               ConflictError(
                 ErrorText.tournament.tooFewToStart(noun = TournamentService.noun(t), least = least.toString)
