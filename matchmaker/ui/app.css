@@ -863,6 +863,30 @@ button:disabled {
   cursor: default;
 }
 
+/* Raised, so a button reads as something to press rather than a box of text: lit from above, a
+   darker lower edge and a shadow under it, and pushed in while it is held. Only the buttons drawn as
+   buttons -- the link-buttons, the refresh glyph, the menu entries and the "?" tips have no box to
+   raise. A disabled or busy one lies flat, which says it will not press as well as its dimming does.
+   Forced-colors mode drops the gradient and shadows by itself and keeps the border. */
+button:not(.link, .toggle, .refresh, .menu-item, .tip-toggle) {
+  background: linear-gradient(#fff, #ececec);
+  border-color: #c8c8c8 #c8c8c8 #a6a6a6;
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+button:not(.link, .toggle, .refresh, .menu-item, .tip-toggle):active:not(:disabled, [aria-disabled="true"]) {
+  background: linear-gradient(#e4e4e4, #f0f0f0);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+  transform: translateY(1px);
+}
+
+button:not(.link, .toggle, .refresh, .menu-item, .tip-toggle):is(:disabled, [aria-disabled="true"]) {
+  background: #f4f4f4;
+  box-shadow: none;
+}
+
 /* The spinner a button shows while its request is in flight. Inline rather than an overlay so
    that a button in a row keeps its place, and sized in `em` so it matches whatever text it sits
    beside — the row links are smaller than the form buttons. */
