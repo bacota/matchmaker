@@ -1,6 +1,5 @@
 package com.vivi.stratego
 
-import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._

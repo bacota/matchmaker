@@ -90,7 +90,10 @@ log lines and API paths are fine. Fix an id fallback such as `s"match ${matchId.
 
 The text of an error or warning a person can read lives in `matchmaker/errors.properties` (generated into
 `com.vivi.matchmaker.ErrorText`, for the server and the UI) or, for the engines, `engines/common/errors.properties`
-(`com.vivi.engine.ErrorText`), not in the code. A new one adds a key there; each file's header gives its rules.
+(`com.vivi.engine.ErrorText`) for what every engine says alike and `engines/<game>/errors.properties` for a game's own,
+not in the code. A game's file is merged with common's into an `ErrorText` in the game's package, which its code uses
+in place of common's, and a common key it gives overrides common's text in that engine, common's code included;
+`headings.properties` works the same way. A new one adds a key there; each file's header gives its rules.
 
 ## Boolean names
 

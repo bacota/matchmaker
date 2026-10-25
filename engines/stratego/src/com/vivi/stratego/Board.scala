@@ -1,6 +1,5 @@
 package com.vivi.stratego
 
-import com.vivi.engine.ErrorText
 import scala.util.Random
 
 /** Which army a seat commands. The engine's `role` names are these, spelled exactly as matchmaker's `game_role.name`

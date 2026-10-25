@@ -23,6 +23,13 @@ def sharedSources(moduleDir: os.Path): Seq[os.Path] = {
   *
   * With `canBeMissing`, a key the code asks for and the file lacks is `""` instead, whatever it would be given to fill:
   * for the tips, where a tip the file leaves out is not shown.
+  *
+  * `overrides` is a second file, an engine's own, whose keys add to `file`'s and replace the ones it shares with it.
+  * A replacement keeps the original's parameters, so it may leave a placeholder out but not add one.
+  *
+  * With `runtimeOverrides`, the path of a classpath resource, the object takes the text of a key that resource has
+  * from it when it is first used, and its own only where the resource has none: for engines.common, whose code is
+  * compiled once and says what the engine it runs in has its file say instead.
   */
 def textObject(
     file: os.Path,
@@ -30,15 +37,29 @@ def textObject(
     example: String,
     pkg: String = "com.vivi.matchmaker.ui",
     modifier: String = "private[ui] ",
-    canBeMissing: Boolean = false
+    canBeMissing: Boolean = false,
+    overrides: Option[os.Path] = None,
+    runtimeOverrides: Option[String] = None
 ): String = {
-  val props = new java.util.Properties
-  val in = java.nio.file.Files.newBufferedReader(file.toNIO, java.nio.charset.StandardCharsets.UTF_8)
-  try props.load(in)
-  finally in.close()
-  val fileName = file.last
   val name = "[a-z][A-Za-z0-9]*"
   val placeholder = ("\\{(" + name + ")\\}").r
+  def named(file: os.Path) = file.relativeTo(mill.api.BuildCtx.workspaceRoot).toString
+  def load(file: os.Path): Map[String, String] = {
+    val props = new java.util.Properties
+    val in = java.nio.file.Files.newBufferedReader(file.toNIO, java.nio.charset.StandardCharsets.UTF_8)
+    try props.load(in)
+    finally in.close()
+    val entries = props.stringPropertyNames().toArray(Array.empty[String]).toSeq.map(k => k -> props.getProperty(k))
+    entries.foreach { (key, text) =>
+      if (!key.matches(name + "\\." + name))
+        throw new Exception(s"${named(file)}: '$key' is not two names joined by a dot, such as $example")
+      if (key.startsWith("keys.")) throw new Exception(s"${named(file)}: 'keys' is taken, by the list of every key")
+      if (placeholder.replaceAllIn(text, "").exists(c => c == '{' || c == '}'))
+        throw new Exception(s"${named(file)}: $key has a brace that is not part of a {name}")
+    }
+    entries.toMap
+  }
+  def placeholders(text: String) = placeholder.findAllMatchIn(text).map(_.group(1)).toSeq.distinct
   def literal(s: String) =
     "\"" + s.flatMap {
       case '\\' => "\\\\"
@@ -46,24 +67,37 @@ def textObject(
       case '\n' => "\\n"
       case c    => c.toString
     } + "\""
-  val keys = props.stringPropertyNames().toArray(Array.empty[String]).toSeq.sorted
-  keys.filterNot(_.matches(name + "\\." + name)).foreach { key =>
-    throw new Exception(s"$fileName: '$key' is not two names joined by a dot, such as $example")
+  val base = load(file)
+  val over = overrides.map(load).getOrElse(Map.empty)
+  over.foreach { (key, text) =>
+    base.get(key).foreach { original =>
+      placeholders(text).filterNot(placeholders(original).contains).foreach { added =>
+        throw new Exception(
+          s"${named(overrides.get)}: $key uses {$added}, which ${named(file)}'s $key is not given to fill"
+        )
+      }
+    }
   }
-  if (keys.exists(_.startsWith("keys."))) throw new Exception(s"$fileName: 'keys' is taken, by the list of every key")
+  val texts = base ++ over
+  val keys = texts.keys.toSeq.sorted
   val objects = keys.groupBy(_.takeWhile(_ != '.')).toSeq.sortBy(_._1).map { (screen, inScreen) =>
     val members = inScreen.map { key =>
       val member = key.drop(screen.length + 1)
-      val text = props.getProperty(key)
-      if (placeholder.replaceAllIn(text, "").exists(c => c == '{' || c == '}'))
-        throw new Exception(s"$fileName: $key has a brace that is not part of a {name}")
-      val params = placeholder.findAllMatchIn(text).map(_.group(1)).toSeq.distinct
-      if (params.isEmpty) s"    val `$member`: String = ${literal(text)}"
+      val text = texts(key)
+      val params = placeholders(base.getOrElse(key, text))
+      val signature = params.map(p => s"`$p`: String").mkString(", ")
+      if (runtimeOverrides.nonEmpty) {
+        if (params.isEmpty) s"    val `$member`: String = Overrides.text(${literal(key)}, ${literal(text)})"
+        else {
+          val fills = params.map(p => s"${literal(p)} -> `$p`").mkString(", ")
+          s"    def `$member`($signature): String = Overrides.fill(${literal(key)}, ${literal(text)}, Map($fills))"
+        }
+      } else if (params.isEmpty) s"    val `$member`: String = ${literal(text)}"
       else {
         val pieces = placeholder.split(text).toSeq.map(literal)
         val names = placeholder.findAllMatchIn(text).map(_.group(1)).toSeq
         val body = pieces.zipAll(names, "\"\"", "").flatMap((p, n) => Seq(p) ++ Option.when(n.nonEmpty)(s"`$n`"))
-        s"    def `$member`(${params.map(p => s"`$p`: String").mkString(", ")}): String = ${body.mkString(" + ")}"
+        s"    def `$member`($signature): String = ${body.mkString(" + ")}"
       }
     }
     val parent = if (canBeMissing) " extends Missing" else ""
@@ -81,14 +115,31 @@ def textObject(
           "  }",
         "  def selectDynamic(screen: String): Missing = new Missing {}"
       )
+  // The text the engine's own file gives instead, read once; a screen's name starts in lower case, so none is this.
+  val lookup = runtimeOverrides.toSeq.map { resource =>
+    "  private object Overrides {\n" +
+      "    private val props = new java.util.Properties\n" +
+      s"    Option(getClass.getResourceAsStream(${literal("/" + resource)})).foreach { in =>\n" +
+      "      val reader = new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8)\n" +
+      "      try props.load(reader)\n" +
+      "      finally reader.close()\n" +
+      "    }\n" +
+      "    def text(key: String, default: String): String = props.getProperty(key, default)\n" +
+      "    def fill(key: String, default: String, fills: Map[String, String]): String =\n" +
+      "      \"\\\\{([a-z][A-Za-z0-9]*)\\\\}\".r.replaceAllIn(\n" +
+      "        text(key, default),\n" +
+      "        m => java.util.regex.Matcher.quoteReplacement(fills(m.group(1)))\n" +
+      "      )\n" +
+      "  }"
+  }
   // Every key, for checking a format's form overrides (`StandardModel.formOverrides`) name one there is.
   val keySet = s"  val keys: Set[String] = Set(\n${keys.map(k => "    " + literal(k)).mkString(",\n")}\n  )"
-  val source = file.relativeTo(mill.api.BuildCtx.workspaceRoot)
+  val sources = (file +: overrides.toSeq).map(named).mkString(" and ")
   s"package $pkg\n\n" +
     (if (canBeMissing) "import scala.language.dynamics\n\n" else "") +
-    s"/** Generated from $source by build.mill: edit that, not this. */\n" +
+    s"/** Generated from $sources by build.mill: edit that, not this. */\n" +
     s"${modifier}object $objectName${if (canBeMissing) " extends Dynamic" else ""} {\n" +
-    s"${(missing ++ objects :+ keySet).mkString("\n\n")}\n}\n"
+    s"${(missing ++ lookup ++ objects :+ keySet).mkString("\n\n")}\n}\n"
 }
 
 /** Matchmaker's `errors.properties` as `com.vivi.matchmaker.ErrorText`, for the JVM modules and the UI alike. */
@@ -419,6 +470,66 @@ object engines extends Module {
     }
   }
 
+  /** Where on an engine's classpath its own `errors.properties` or `headings.properties` is, for engines.common to
+    * read the keys it overrides from.
+    */
+  def textOverrides(fileName: String): String = s"com/vivi/engine/overrides/$fileName"
+
+  /** A game's engine, on engines.common, with its own text.
+    *
+    * Its `errors.properties` holds the game's errors and warnings, and its `headings.properties`, if it has one, the
+    * headings it gives the pages every engine serves. Either may also give a key of common's file, to say it
+    * differently in this game. Each is generated, merged with common's, into an `ErrorText` and a `Headings` in the
+    * engine's own package, which its code uses in place of common's; and each is put on the classpath at
+    * [[textOverrides]], from which common's own objects take what the engine overrides.
+    */
+  trait GameModule extends EngineModule {
+    def moduleDeps = Seq(common)
+
+    def errorsFile = Task.Source(moduleDir / "errors.properties")
+    def headingsFile = Task.Source(moduleDir / "headings.properties")
+
+    /** The engine's package, `com.vivi.<module>`. */
+    def textPackage = s"com.vivi.${moduleDir.last}"
+
+    /** The engine's files merged with common's, as its own `ErrorText` and `Headings`; see [[textObject]]. */
+    def generatedSources = Task {
+      os.write(
+        Task.dest / "ErrorText.scala",
+        textObject(
+          file = common.errorsFile().path,
+          objectName = "ErrorText",
+          example = "matches.notFound",
+          pkg = textPackage,
+          modifier = "",
+          overrides = Option.when(os.exists(errorsFile().path))(errorsFile().path)
+        )
+      )
+      os.write(
+        Task.dest / "Headings.scala",
+        textObject(
+          file = common.headingsFile().path,
+          objectName = "Headings",
+          example = "signIn.signIn",
+          pkg = textPackage,
+          modifier = "",
+          overrides = Option.when(os.exists(headingsFile().path))(headingsFile().path)
+        )
+      )
+      super.generatedSources() ++ Seq(PathRef(Task.dest))
+    }
+
+    /** The engine's own files, where engines.common looks for them. */
+    def textResources = Task {
+      Seq(errorsFile(), headingsFile()).map(_.path).filter(os.exists).foreach { file =>
+        os.copy(file, Task.dest / os.RelPath(textOverrides(file.last)), createFolders = true)
+      }
+      PathRef(Task.dest)
+    }
+
+    def resources = Task { super.resources() ++ Seq(textResources()) }
+  }
+
   /** What every engine has in common and no game decides: the wire format to and from matchmaker,
     * the Lambda event, signed HTTP, the player sign-in, the match store and the callbacks.
     *
@@ -427,8 +538,8 @@ object engines extends Module {
     */
   object common extends EngineModule {
 
-    /** The text of every error and warning the engines give, every game's included: matchmaker's file is not theirs
-      * to depend on, any more than its code is.
+    /** The text of every error and warning the engines give alike: matchmaker's file is not theirs to depend on, any
+      * more than its code is. A game's own are in its own `errors.properties`; see [[GameModule]].
       */
     def errorsFile = Task.Source(moduleDir / "errors.properties")
 
@@ -436,7 +547,8 @@ object engines extends Module {
     def headingsFile = Task.Source(moduleDir / "headings.properties")
 
     /** `errors.properties` as `com.vivi.engine.ErrorText`, and `headings.properties` as `com.vivi.engine.Headings`;
-      * see [[textObject]].
+      * see [[textObject]]. Each takes a key the engine it runs in says otherwise from that engine's file, which
+      * [[GameModule]] puts on the classpath at [[textOverrides]].
       */
     def generatedSources = Task {
       os.write(
@@ -446,7 +558,8 @@ object engines extends Module {
           objectName = "ErrorText",
           example = "matches.notFound",
           pkg = "com.vivi.engine",
-          modifier = ""
+          modifier = "",
+          runtimeOverrides = Some(textOverrides("errors.properties"))
         )
       )
       os.write(
@@ -456,7 +569,8 @@ object engines extends Module {
           objectName = "Headings",
           example = "signIn.signIn",
           pkg = "com.vivi.engine",
-          modifier = ""
+          modifier = "",
+          runtimeOverrides = Some(textOverrides("headings.properties"))
         )
       )
       super.generatedSources() ++ Seq(PathRef(Task.dest))
@@ -485,8 +599,7 @@ object engines extends Module {
     * locally; `mill -j 4 --ticker false engines.tictactoe.assembly` builds the Lambda jar, whose
     * handler is `com.vivi.tictactoe.Handler::handleRequest`.
     */
-  object tictactoe extends EngineModule {
-    def moduleDeps = Seq(common)
+  object tictactoe extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
@@ -503,8 +616,7 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.rps.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.rps.Handler::handleRequest`.
     */
-  object rps extends EngineModule {
-    def moduleDeps = Seq(common)
+  object rps extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
@@ -520,8 +632,7 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.boxing.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.boxing.Handler::handleRequest`.
     */
-  object boxing extends EngineModule {
-    def moduleDeps = Seq(common)
+  object boxing extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
@@ -537,8 +648,7 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.stratego.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.stratego.Handler::handleRequest`.
     */
-  object stratego extends EngineModule {
-    def moduleDeps = Seq(common)
+  object stratego extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
@@ -551,8 +661,7 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.wavinghands.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.wavinghands.Handler::handleRequest`.
     */
-  object wavinghands extends EngineModule {
-    def moduleDeps = Seq(common)
+  object wavinghands extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
@@ -565,8 +674,7 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.hilo.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.hilo.Handler::handleRequest`.
     */
-  object hilo extends EngineModule {
-    def moduleDeps = Seq(common)
+  object hilo extends GameModule {
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
