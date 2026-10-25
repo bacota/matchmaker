@@ -1089,11 +1089,27 @@ object Store {
       * Success and failure are dealt with exactly as `run` deals with them — the list is set or the error is reported —
       * and the result is always a success, because the only caller is a section waiting to stop showing that it is
       * reloading. A failure there is not a second thing to handle; it is a banner that has already been raised.
+      *
+      * Settled once the list holds an answer asked for no earlier than this, which a button held busy through it relies
+      * on (`Tournaments.thenShown`). An answer dropped as superseded is not that: the list still shows what it did
+      * before, and the button would be offered again for the second or so until the newer answer lands.
       */
     private def reload[A](action: => Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
         val stamp = ask(fetches)
-        gated(fetches)(() => reloadAs(action = action, stamp = stamp, fetches = fetches)(onSuccess))
+        val settled = gated(fetches)(() => reloadAs(action = action, stamp = stamp, fetches = fetches)(onSuccess))
+        fetches.foreach(newestReload.update(_, settled))
+        settled.flatMap(_ => answered(fetches))
     }
+
+    /* The settling of the newest `reload` of each list. A plain `Map`, like `latestAsk`: nothing renders it. */
+    private val newestReload = scala.collection.mutable.Map.empty[Fetch, Future[Unit]]
+
+    /* Once no reload of `fetches` is still out: the one that superseded this one, and any that superseded that. */
+    private def answered(fetches: Seq[Fetch]): Future[Unit] =
+        fetches.flatMap(newestReload.get).distinct.filterNot(_.isCompleted) match {
+            case Seq()   => Future.unit
+            case pending => Future.sequence(pending).flatMap(_ => answered(fetches))
+        }
 
     /** `reload`, against a stamp already taken rather than one of its own.
       *
