@@ -208,7 +208,8 @@ case class TournamentEntry(characterId: Option[CharacterId] = None)
 
 /** A tournament as a list shows it: the tournament, its game's name, its owner's nickname, how many have entered,
   * whether the viewer owns it, has entered it, or is invited, and whether it is under way with every match of its round
-  * over — so that, unless its rounds start themselves, it waits on its owner to start the next.
+  * over — so that, unless its rounds start themselves, it waits on its owner to start the next. `formatName` is the
+  * name of the model it was made from, and `round` the round being played, `None` before it starts.
   */
 case class TournamentSummary(
     tournament: Tournament,
@@ -218,7 +219,9 @@ case class TournamentSummary(
     isOwner: Boolean,
     isEntered: Boolean,
     isInvited: Boolean,
-    isRoundOver: Boolean = false
+    isRoundOver: Boolean = false,
+    formatName: String = "",
+    round: Option[Int] = None
 )
 
 /** A seat of a match being played in a tournament's round, as its page shows it: the entrant, the role (once chosen),

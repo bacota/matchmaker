@@ -14,7 +14,7 @@ import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.standard.RoundRobin
+import com.vivi.matchmaker.model.tournament.standard.{RoundRobin, SingleElimination}
 import com.vivi.matchmaker.notify.RecordingNotifier
 import com.vivi.matchmaker.persistence.{
     GameRepo,
@@ -298,6 +298,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(afterFirst.map(_.recipient), ownerAddress.toList)
         assertEquals(afterFirst.map(_.subject), List("Round 1 of Cup is over"))
         assert(summaryAfterFirst.isRoundOver)
+        assertEquals(summaryAfterFirst.round, Some(1))
+        assertEquals(summaryAfterFirst.formatName, SingleElimination.name)
         // The last round finished the tournament, which waits on nobody.
         assertEquals(afterLast, afterFirst)
     }
