@@ -342,7 +342,7 @@ object SignIn {
           // managers to offer to fill and to save. preventDefault, or the page reloads.
           onSubmit.preventDefault --> (_ => withPassword()),
           focusFirstField,
-          h2("Sign In"),
+          h2(Headings.signIn.signIn),
           label(
             Labels.signIn.email,
             input(
@@ -394,7 +394,7 @@ object SignIn {
         form(
           onSubmit.preventDefault --> (_ => answerCode(stageNow)),
           focusFirstField,
-          h2("Enter Your Code"),
+          h2(Headings.signIn.code),
           p(
             stageNow.deliveredTo match {
                 case Some(destination) => s"We sent a sign-in code to $destination."
@@ -424,7 +424,7 @@ object SignIn {
         form(
           onSubmit.preventDefault --> (_ => answerNewPassword(stageNow)),
           focusFirstField,
-          h2("Choose a Password"),
+          h2(Headings.signIn.newPassword),
           p("This account is signed in with a temporary password. Pick a permanent one to continue."),
           label(
             Labels.signIn.newPassword,

@@ -26,7 +26,7 @@ object Players {
     private[ui] def findPlayersPage: HtmlElement =
         sectionTag(
           cls := "refreshable",
-          div(cls := "section-head", h2("Find Players")),
+          div(cls := "section-head", h2(Headings.players.find)),
           div(
             cls := "section-body",
             form(
@@ -142,7 +142,7 @@ object Players {
           // Their matches in every game, as the main page lists the reader's own -- but only the ones
           // they made public. One reload fills both, so both are marked as reloading by it.
           refreshableSection(
-            heading = "Current Matches",
+            heading = Headings.matches.current,
             refreshing = refreshingPublicMatches,
             reload = () => Store.reloadPublicMatches(player.playerId),
             subsection = false
@@ -163,7 +163,7 @@ object Players {
             )
           ),
           refreshableSection(
-            heading = "Recently Completed",
+            heading = Headings.matches.recentlyCompleted,
             refreshing = refreshingPublicMatches,
             reload = () => Store.reloadPublicMatches(player.playerId),
             subsection = false
@@ -182,7 +182,7 @@ object Players {
           // A game at a time, for what is about one game: the challenges the reader has offered them in
           // it, and an admin's view of their matches there.
           sectionTag(
-            h2("Games"),
+            h2(Headings.players.games),
             listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
                 ul(games.map(publicGameRow(player, _)))
             )
@@ -225,7 +225,7 @@ object Players {
               case _         => emptyNode
           },
           refreshableSection(
-            heading = "Current Matches",
+            heading = Headings.matches.current,
             refreshing = refreshingPublicMatches,
             reload = () => Store.reloadCharacterMatches(character),
             subsection = false
@@ -247,7 +247,7 @@ object Players {
             )
           ),
           refreshableSection(
-            heading = "Recently Completed",
+            heading = Headings.matches.recentlyCompleted,
             refreshing = refreshingPublicMatches,
             reload = () => Store.reloadCharacterMatches(character),
             subsection = false
@@ -283,7 +283,7 @@ object Players {
                   if (chosen.now().isEmpty) chosen.set(games.headOption.map(_.gameId))
                   div(
                     cls := "card",
-                    h3(s"Invite ${invitee.nickname}"),
+                    h3(Headings.players.invite(invitee.nickname)),
                     field(
                       "Game",
                       select(

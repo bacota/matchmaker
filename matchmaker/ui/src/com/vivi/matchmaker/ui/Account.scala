@@ -374,7 +374,7 @@ object Account {
           inContext(node => onMountCallback(_ => node.ref.focus())),
           // Focusable so that focus can be moved to it, but not a tab stop of its own.
           tabIndex := -1,
-          h2(idAttr := "account-menu-heading", "Your Account"),
+          h2(idAttr := "account-menu-heading", Headings.account.menu),
           nicknameForm,
           notificationForms,
           // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
@@ -463,7 +463,7 @@ object Account {
         val oneGame: HtmlElement =
             div(
               cls := "account-section",
-              h3("One Game"),
+              h3(Headings.account.oneGame),
               p(
                 cls := "detail",
                 "Answers for a single game, which win over the ones above. " +
@@ -495,7 +495,11 @@ object Account {
                         detail = "Only the questions you change. Matches you have already finished are left alone."
                       )
                       Notifications.form(
-                        heading = Store.games.now().find(_.gameId == gameId).map(_.displayName).getOrElse("This game"),
+                        heading = Store.games
+                            .now()
+                            .find(_.gameId == gameId)
+                            .map(_.displayName)
+                            .getOrElse(Headings.account.thisGame),
                         explanation = "Leave a question on \"Use Default\" to answer it from your settings above.",
                         preferences = forGame,
                         saveLabel = "Save for this game",
@@ -529,7 +533,7 @@ object Account {
         div(
           suppressionNotice(Store.notificationSettings.signal.map(_.flatMap(_.suppressed)).distinct),
           Notifications.form(
-            heading = "Notification Preferences",
+            heading = Headings.account.notifications,
             explanation = "What we email you about, unless you say otherwise for a particular game or match. " +
                 "Anything left on \"Use Default\" is sent.",
             preferences = overall,
@@ -583,7 +587,7 @@ object Account {
         form(
           cls := "account-section",
           onSubmit.preventDefault --> (_ => if (!busy.now()) saveNickname(busy)),
-          h3("Nickname"),
+          h3(Headings.account.nickname),
           p(
             cls := "detail",
             child.text <-- Store.currentPlayer.map(_.map(p => s"Other players see you as ${p.nickname}.").getOrElse(""))
@@ -637,7 +641,7 @@ object Account {
           // Read on mount rather than once at startup: the panel is built fresh each time it opens,
           // so this is also how a change made earlier in the session is still shown afterwards.
           onMountCallback(_ => currentEmail.set(Auth.email)),
-          h3("Email Address"),
+          h3(Headings.account.email),
           // What the nickname form says above its own field, and for the same reason: a player
           // changing an address should be able to see which one they are changing. Nothing at all
           // when the token does not carry it — an empty line saying "you sign in as" would be worse
@@ -738,7 +742,7 @@ object Account {
         form(
           cls := "account-section",
           onSubmit.preventDefault --> (_ => if (!busy.now()) savePassword(busy)),
-          h3("Password"),
+          h3(Headings.account.password),
           label(
             Labels.account.currentPassword,
             input(

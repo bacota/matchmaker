@@ -66,7 +66,7 @@ object Ratings {
               case None => emptyNode
               case Some(found) =>
                   refreshableSection(
-                    heading = "Friendly or Rated",
+                    heading = Headings.ratings.friendlyOrRated,
                     refreshing = refreshing,
                     reload = () => fetch(mount),
                     subsection = true,
@@ -314,7 +314,7 @@ object Ratings {
           onMountCallback(_ => fetch(0)),
           onUnmountCallback(_ => request += 1),
           refreshableSection(
-            heading = role.fold("Player Rankings")(r => s"${r.displayName} Rankings"),
+            heading = role.fold(Headings.ratings.players)(r => Headings.ratings.role(r.displayName)),
             refreshing = refreshing,
             reload = () => fetch(),
             subsection = role.isDefined,

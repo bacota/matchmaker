@@ -56,7 +56,7 @@ object MatchSections {
       */
     private[ui] def dueSection(game: Option[Game] = None): HtmlElement =
         refreshableSection(
-          heading = "Your Turn",
+          heading = Headings.matches.yourTurn,
           refreshing = refreshingDue,
           reload = () => Store.reloadDue(),
           subsection = false
@@ -79,7 +79,7 @@ object MatchSections {
       */
     private[ui] def myMatchesSection(game: Option[Game] = None): HtmlElement =
         refreshableSection(
-          heading = "Current Matches",
+          heading = Headings.matches.current,
           refreshing = refreshingActive,
           reload = () => Store.reloadActive(),
           subsection = false
@@ -108,7 +108,7 @@ object MatchSections {
     /** The caller's finished matches in every game, a window of time at a time. */
     private[ui] def recentlyCompletedSection: HtmlElement =
         refreshableSection(
-          heading = "Recently Completed",
+          heading = Headings.matches.recentlyCompleted,
           refreshing = refreshingCompleted,
           reload = () => Store.reloadCompleted(),
           subsection = false

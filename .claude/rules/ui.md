@@ -59,6 +59,11 @@ A caption's text lives in `matchmaker/ui/labels.properties`, generated into `Lab
 there is `Labels.game.name`. A field with a tip uses the same key in both files. A new field adds a key there. A
 caption that comes from data, such as a game parameter's display name, stays in the code.
 
+A heading's text -- a page's, a section's, a card's or a dialog's -- lives in `matchmaker/ui/headings.properties`,
+generated into `Headings` the same way: `account.nickname` there is `Headings.account.nickname`. A new heading adds a key
+there. A heading that comes from data, such as a game's or a competition's name, stays in the code, and one that heads
+an error stays with the error in `errors.properties`.
+
 A competition format can reword the competition form's captions and tips while it is the one chosen, or leave them
 out: `StandardModel.formOverrides`, keyed `labels.<key>` or `tips.<key>`, reaches the form on the stored model, and a
 caption's `None` leaves out its field, a tip's `None` the tip. So a caption or tip on that form goes through the form's
