@@ -36,12 +36,12 @@ object TournamentStatus {
   * `gameSettings` is the owner's choice of each game parameter, as JSON, copied to every match and so to the engine;
   * `isLive` makes every match live, its turns and clock the engine's to run. `start` is when it is meant to be played,
   * shown and nothing more. `hasRoleChoice` has every match's seats choose their roles, whatever the game's preference
-  * levels. `maxEntrants` is the most entries it takes, and with `isAutoStarted` it starts by itself when they are
-  * reached. `playersPerMatch` is for a game without roles: how many players each match seats, `None` for every member
-  * of a pool in one match. Always `None` for a game with roles, whose roles decide.
+  * levels. `maxEntrants` is the most entries it takes. `isAutoStarted` has it begin each round as the last ends, its
+  * first as it starts, and start by itself once it has `maxEntrants` -- or before, by its owner, who alone starts one
+  * without a most. `playersPerMatch` is for a game without roles: how many players each match seats, `None` for every
+  * member of a pool in one match. Always `None` for a game with roles, whose roles decide.
   */
 case class TournamentSettings(
-    hasAutomaticRounds: Boolean = false,
     isFriendly: Boolean = true,
     isInvitational: Boolean = true,
     hasLateEntries: Boolean = false,

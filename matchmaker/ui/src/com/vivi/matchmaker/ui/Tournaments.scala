@@ -296,7 +296,7 @@ object Tournaments {
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
-        s.isOwner && s.isRoundOver && !s.tournament.settings.hasAutomaticRounds
+        s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
@@ -838,7 +838,7 @@ object Tournaments {
                   p(
                     cls := "detail",
                     "Every match of this round is over." +
-                        (if (t.settings.hasAutomaticRounds) ""
+                        (if (t.settings.isAutoStarted) ""
                          else if (d.summary.isOwner) " Start the next round when you are ready."
                          else s" The next starts when ${d.summary.ownerNickname} starts it.")
                   )
@@ -1136,7 +1136,6 @@ object Tournaments {
         // page opens with them found, ready to invite.
         val asked = if (existing.isEmpty) Store.invitee.now() else None
         val invitational = Var(s0.isInvitational || asked.isDefined)
-        val autoRounds = Var(s0.hasAutomaticRounds)
         // Unticked for a new competition: an admin's is rated unless they tick it.
         val friendly = Var(existing.fold(false)(_.settings.isFriendly))
         // Whether the creator of a new competition enters it as it is made: ticked unless they administer the game, who
@@ -1234,11 +1233,6 @@ object Tournaments {
         def maxEntrantsAsked: Option[Int] =
             unlessLeftOut(key = "competition.maxEntrants", value = int(maxEntrants), default = fresh.maxEntrants)
         def settings = TournamentSettings(
-          hasAutomaticRounds = unlessLeftOut(
-            key = "competition.autoRounds",
-            value = autoRounds.now(),
-            default = fresh.hasAutomaticRounds
-          ),
           // Anybody else, who is not shown the box, keeps what it was -- friendly, for a new competition.
           isFriendly = unlessLeftOut(
             key = "competition.friendly",
@@ -1284,8 +1278,7 @@ object Tournaments {
           ),
           maxEntrants = maxEntrantsAsked,
           isAutoStarted =
-              unlessLeftOut(key = "competition.autoStart", value = autoStart.now(), default = fresh.isAutoStarted) &&
-                  maxEntrantsAsked.isDefined,
+              unlessLeftOut(key = "competition.autoStart", value = autoStart.now(), default = fresh.isAutoStarted),
           playersPerMatch = playersPerMatch
         )
         /* "A number of players" with no number is not "everyone in the pool", though both leave `playersPerMatch`
@@ -1569,11 +1562,6 @@ object Tournaments {
             caption = labelOf("competition.invitational", Labels.competition.invitational),
             v = invitational,
             tip = tipOf("competition.invitational", Tips.competition.invitational)
-          ),
-          checkbox(
-            caption = labelOf("competition.autoRounds", Labels.competition.autoRounds),
-            v = autoRounds,
-            tip = tipOf("competition.autoRounds", Tips.competition.autoRounds)
           ),
           // Only for an admin of the game, who alone may make a competition rated.
           child <-- Store.currentPlayer.flatMapSwitch {

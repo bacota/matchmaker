@@ -43,7 +43,6 @@ class TournamentRepo(session: Session[IO]) {
         Boolean,
         Boolean,
         Boolean,
-        Boolean,
         Option[Int],
         Option[Int],
         Boolean,
@@ -64,7 +63,7 @@ class TournamentRepo(session: Session[IO]) {
     )
 
     private val written: Codec[Written] =
-        text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: bool *: int4.opt *: int4.opt *:
+        text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: int4.opt *: int4.opt *:
             bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
             bool *: instant.opt *: bool *: int4.opt *: bool *: int4.opt
 
@@ -75,7 +74,7 @@ class TournamentRepo(session: Session[IO]) {
 
     private def columnsOf(t: String): Fragment[Void] =
         sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
-              #$t.has_automatic_rounds, #$t.is_friendly, #$t.is_invitational, #$t.has_late_entries, #$t.min_rating, #$t.max_rating,
+              #$t.is_friendly, #$t.is_invitational, #$t.has_late_entries, #$t.min_rating, #$t.max_rating,
               #$t.is_public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
               #$t.has_concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.is_live, #$t.start,
               #$t.has_role_choice, #$t.max_entrants, #$t.is_auto_started, #$t.players_per_match,
@@ -95,7 +94,6 @@ class TournamentRepo(session: Session[IO]) {
           t.status,
           t.tournamentModelId,
           t.defaultPoolSize,
-          t.settings.hasAutomaticRounds,
           t.settings.isFriendly,
           t.settings.isInvitational,
           t.settings.hasLateEntries,
@@ -127,7 +125,6 @@ class TournamentRepo(session: Session[IO]) {
           st,
           model,
           defaultPoolSize,
-          auto,
           friendly,
           invitational,
           late,
@@ -158,7 +155,6 @@ class TournamentRepo(session: Session[IO]) {
           tournamentModelId = model,
           defaultPoolSize = defaultPoolSize,
           settings = TournamentSettings(
-            hasAutomaticRounds = auto,
             isFriendly = friendly,
             isInvitational = invitational,
             hasLateEntries = late,
@@ -191,11 +187,11 @@ class TournamentRepo(session: Session[IO]) {
     // reference each other, and the key between them is deferred.
     private val insert: Query[GameId *: Written, TournamentId] =
         sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
-                                      has_automatic_rounds, is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
+                                      is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
                                       is_public, entries_per_player, round_duration, max_turns, has_concurrent_rounds,
                                       started_at, ended_at, checked_at, settings, is_live, start, has_role_choice,
                                       max_entrants, is_auto_started, players_per_match, first_stage_id)
-          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, $bool, ${int4.opt},
+          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
                   ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, ${int4.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
@@ -237,7 +233,7 @@ class TournamentRepo(session: Session[IO]) {
 
     private val updateRow: Command[Tuple.Concat[Written, (GameId, TournamentId)]] =
         sql"""UPDATE tournament SET name = $text, description = $text, owner = $playerId, status = $status,
-                 tournament_model_id = $modelId, default_pool_size = $int4, has_automatic_rounds = $bool, is_friendly = $bool,
+                 tournament_model_id = $modelId, default_pool_size = $int4, is_friendly = $bool,
                  is_invitational = $bool, has_late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
                  is_public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
                  max_turns = ${int4.opt}, has_concurrent_rounds = $bool, started_at = ${instant.opt},

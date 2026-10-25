@@ -178,7 +178,7 @@ class TournamentService[T](
                 }
             }
             .flatTap(t =>
-                IO.whenA(t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds)(
+                IO.whenA(t.status == TournamentStatus.Running && t.settings.isAutoStarted)(
                   started(t.gameId, t.tournamentId)
                 )
             )
@@ -307,7 +307,7 @@ class TournamentService[T](
                               name = request.name.trim,
                               description = request.description.trim,
                               settings = t.settings.copy(
-                                hasAutomaticRounds = s.hasAutomaticRounds,
+                                isAutoStarted = s.isAutoStarted,
                                 hasLateEntries = s.hasLateEntries,
                                 roundDuration = roundDuration
                               )
@@ -500,7 +500,7 @@ class TournamentService[T](
                 .flatMap { (t, caller, entrant, wasInvited, startedNow) =>
                     notifications.entered(session = session, tournament = t, actor = caller, wasInvited = wasInvited) *>
                         startedNow.traverse_(running =>
-                            IO.whenA(running.settings.hasAutomaticRounds)(started(running.gameId, running.tournamentId))
+                            IO.whenA(running.settings.isAutoStarted)(started(running.gameId, running.tournamentId))
                         ) *>
                         IO.pure(entrant)
                 }
@@ -696,7 +696,7 @@ class TournamentService[T](
                     } yield running
                 }
             }
-            .flatTap(t => IO.whenA(t.settings.hasAutomaticRounds)(started(t.gameId, t.tournamentId)))
+            .flatTap(t => IO.whenA(t.settings.isAutoStarted)(started(t.gameId, t.tournamentId)))
 
     /* A start, under the tournament's lock, which the caller holds: by its owner, or by the entry that filled one that
      * starts itself. */
@@ -818,9 +818,6 @@ class TournamentService[T](
               // A game with roles seats one player per role, which is not the owner's to change.
               Option.when(s.playersPerMatch.isDefined && !game.isRoleless)(
                 ErrorText.tournament.seatsByRole(game.displayName)
-              ),
-              Option.when(s.isAutoStarted && s.maxEntrants.isEmpty)(
-                ErrorText.tournament.autoStartUnlimited
               ),
               // The engine plays a live match against the clock it is given, which is the round's.
               Option.when(s.isLive && !s.roundDuration.exists(_.getSeconds >= 1))(
@@ -981,14 +978,14 @@ class TournamentService[T](
 object TournamentService {
 
     /** A request's settings as its model makes them: a model whose seats choose their roles makes every tournament of
-      * it choose them. A Round Robin with automatic rounds starts as soon as everybody signs up -- the participants its
-      * pool seats, which are then the most entries it takes -- for its form leaves out both of those settings. Without
-      * them its owner starts it, and may first make its pool everyone entered.
+      * it choose them. A Round Robin that starts itself does so as soon as everybody signs up -- the participants its
+      * pool seats, which are then the most entries it takes -- for its form leaves out the most entries. Otherwise its
+      * owner starts it, and may first make its pool everyone entered.
       */
     def settingsFor(model: TournamentModel, settings: TournamentSettings, poolSize: Int): TournamentSettings = {
         val roles = settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
-        if (model.tournamentModelId != RoundRobin.modelId || !settings.hasAutomaticRounds) roles
-        else roles.copy(maxEntrants = Some(poolSize), isAutoStarted = true)
+        if (model.tournamentModelId != RoundRobin.modelId || !settings.isAutoStarted) roles
+        else roles.copy(maxEntrants = Some(poolSize))
     }
 
     /** What a tournament is called in a refusal: a challenge, or a tournament. */

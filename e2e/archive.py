@@ -142,7 +142,7 @@ try:
         # and it starts as bob enters.
         status, made = call("POST", f"{MM}/games/{game_id}/tournaments",
                             {"name": "A challenge", "tournamentModelId": "RR", "defaultPoolSize": 2,
-                             "settings": {"hasAutomaticRounds": True, "isInvitational": True, "isAutoStarted": True,
+                             "settings": {"isInvitational": True, "isAutoStarted": True,
                                           "maxEntrants": 2}},
                             as_player(alice))
         assert status in (200, 201), (status, made)

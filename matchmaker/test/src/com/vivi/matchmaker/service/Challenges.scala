@@ -22,9 +22,8 @@ object Challenges {
     /** A challenge as the challenge form used to make one, now that it is a competition like any other: a tournament of
       * the round robin model, its owner entered as it is made unless `isPlaying` is false, and its invitations sent.
       * Its pool size is how many it seats and the most entries it takes, the game's R if not given. Invitational when
-      * it invites anybody. A rated one is made by a game's admin, which its owner is made first. `isAutoStarted` asks
-      * for automatic rounds, which start a round robin as it fills; without them its owner starts it and begins its
-      * round.
+      * it invites anybody. A rated one is made by a game's admin, which its owner is made first. `isAutoStarted` starts
+      * it as it fills, and begins its round; without it its owner starts it and begins its round.
       */
     def create(
         tournaments: TournamentService[String],
@@ -60,7 +59,6 @@ object Challenges {
                 tournamentModelId = RoundRobin.modelId,
                 defaultPoolSize = Some(pool),
                 settings = TournamentSettings(
-                  hasAutomaticRounds = isAutoStarted,
                   isFriendly = isFriendly,
                   isInvitational = invitations.nonEmpty || characterInvitations.nonEmpty,
                   roundDuration = roundDuration,
