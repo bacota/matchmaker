@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.archive
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import java.net.{URI, URLEncoder}
 import java.nio.charset.StandardCharsets
@@ -105,7 +106,7 @@ object ArchiveStore {
       * told archiving is off rather than that it did something wrong, and keeps its live copy.
       */
     object Unavailable extends ArchiveStore {
-        private def off[A]: IO[A] = IO.raiseError(UnavailableError("archiving is not configured on this matchmaker"))
+        private def off[A]: IO[A] = IO.raiseError(UnavailableError(ErrorText.archive.notConfigured))
 
         def signUpload(b: ArchiveBucket, k: String, s: Long, sha: String, v: Option[String]): IO[SignedUpload] = off
         def signDownload(bucket: ArchiveBucket, key: String): IO[SignedDownload] = off

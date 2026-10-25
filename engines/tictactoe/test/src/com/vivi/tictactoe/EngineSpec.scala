@@ -114,7 +114,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         assertEquals(
           engine.createGame(other),
-          Left(Refusal.Conflict("match 'm-1' already exists with other players"))
+          Left(Refusal.Conflict("this match already exists with other players"))
         )
         assertEquals(store.get("m-1").get, m)
     }
@@ -193,7 +193,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, _, _) = fixture()
         assertEquals(
           engine.move(matchId = "m-1", cognitoId = "sub-carol", cell = 0),
-          Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
+          Left(Refusal.NotYours("you have no seat in this match"))
         )
         assertEquals(engine.move(matchId = "m-1", cognitoId = "", cell = 0).isLeft, true)
         assertEquals(recorder.moves, Nil)
@@ -338,10 +338,10 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("an unknown match is a 404 to matchmaker and to a player alike") {
         val (engine, _, _, _, _) = fixture()
-        assertEquals(engine.status("nope"), Left(Refusal.NotFound("no match 'nope'")))
+        assertEquals(engine.status("nope"), Left(Refusal.NotFound("there is no such match")))
         assertEquals(
           engine.move(matchId = "nope", cognitoId = "sub-alice", cell = 0),
-          Left(Refusal.NotFound("no match 'nope'"))
+          Left(Refusal.NotFound("there is no such match"))
         )
     }
 

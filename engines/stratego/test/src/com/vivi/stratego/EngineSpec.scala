@@ -220,7 +220,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val f = Fixture()
         assertEquals(
           f.engine.deploy(matchId = "m-1", cognitoId = "sub-carol", ranks = names(setup(Side.Red))),
-          Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
+          Left(Refusal.NotYours("you have no seat in this match"))
         )
         assertEquals(f.recorder.moves, Nil)
     }

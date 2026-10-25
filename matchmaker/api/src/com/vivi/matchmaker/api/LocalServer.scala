@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.ErrorText
 import java.io.OutputStream
 import java.net.{InetSocketAddress, URLDecoder}
 import java.nio.charset.StandardCharsets
@@ -151,7 +152,7 @@ object LocalServer {
                                 exchange.getResponseBody.write(bytes)
                             case None => sendText(exchange = exchange, status = 404, text = "NoSuchKey")
                         }
-                    case _ => sendText(exchange = exchange, status = 405, text = "method not allowed")
+                    case _ => sendText(exchange = exchange, status = 405, text = ErrorText.request.methodNotAllowed)
                 }
             } finally exchange.close()
 
@@ -192,7 +193,7 @@ object LocalServer {
                     catch {
                         case error: Throwable =>
                             Errors.log(error, where)
-                            Errors.response(500, "internal error")
+                            Errors.response(500, ErrorText.request.internal)
                     }
 
                 send(exchange, response)

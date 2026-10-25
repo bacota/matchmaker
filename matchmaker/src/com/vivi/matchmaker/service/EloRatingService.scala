@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.ending.MatchEndings
@@ -39,9 +40,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
       */
     /* A board that is not there: the game, or the role in it when one is named. */
     private def noBoard(gameId: GameId, role: Option[GameRoleId]): NotFoundError =
-        NotFoundError(
-          role.fold(s"no game with id ${gameId.value}")(r => s"no role ${r.value} in a game with id ${gameId.value}")
-        )
+        NotFoundError(role.fold(ErrorText.game.notFound)(_ => ErrorText.rating.noSuchRole))
 
     def leaderboard(
         gameId: GameId,
@@ -53,7 +52,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
             for {
                 // Capped so that the last place a page covers is still a number.
                 _ <- IO.raiseWhen(page < 0 || page >= Int.MaxValue / Leaderboard.pageSize)(
-                  ValidationError(s"there is no page $page of the leaderboard")
+                  ValidationError(ErrorText.rating.noSuchPage(page.toString))
                 )
                 _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
                 // Read plainly: nothing is written.
@@ -81,7 +80,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
         callerExternalId: String,
         role: Option[GameRoleId] = None
     ): IO[Leaderboard] =
-        IO.raiseWhen(prefix.trim.isEmpty)(ValidationError("search prefix must not be blank")) *>
+        IO.raiseWhen(prefix.trim.isEmpty)(ValidationError(ErrorText.search.blankPrefix)) *>
             sessionPool.use { session =>
                 for {
                     _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
@@ -122,10 +121,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                     case Some(rating) => IO.pure(rating)
                     case None =>
                         IO.raiseError(
-                          NotFoundError(
-                            s"player ${playerId.value} has no rating in game ${gameId.value}" +
-                                role.fold("")(r => s" in role ${r.value}")
-                          )
+                          NotFoundError(role.fold(ErrorText.rating.none)(_ => ErrorText.rating.noneInRole))
                         )
                 }
             } yield rating
@@ -147,23 +143,27 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
                     for {
                         _ <- IO.raiseUnless(rating >= EloRating.minimum && rating <= EloRating.maximum)(
                           ValidationError(
-                            s"an Elo rating is between ${EloRating.minimum} and ${EloRating.maximum}, not $rating"
+                            ErrorText.rating.outOfRange(
+                              least = EloRating.minimum.toString,
+                              most = EloRating.maximum.toString,
+                              rating = rating.toString
+                            )
                           )
                         )
                         caller <- requireCaller(playerRepo.readByExternalIdForShare(callerExternalId), callerExternalId)
                         _ <- new GameRepo[T](session).lockForShare(gameId).flatMap {
                             case Some(_) => IO.unit
-                            case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                            case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                         }
                         allowed <-
                             if (caller.isAdmin) IO.pure(true)
                             else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
                         _ <- IO.raiseUnless(allowed)(
-                          UnauthorizedError("only an admin of this game may set a player's Elo rating in it")
+                          UnauthorizedError(ErrorText.rating.setNotAdmin)
                         )
                         _ <- playerRepo.readForShare(playerId).flatMap {
                             case Some(_) => IO.unit
-                            case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
+                            case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                         }
                         _ <- ratingRepo.set(game = gameId, player = playerId, rating = rating, setBy = caller.playerId)
                         saved <- ratingRepo.read(game = gameId, player = playerId).map(_.get)
@@ -176,7 +176,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
     private def requireCaller(read: IO[Option[Player]], callerExternalId: String): IO[Player] =
         read.flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 }
 
@@ -363,10 +363,7 @@ object EloRatingService {
         def refuseIfCascading(players: List[PlayerId]): IO[Unit] =
             participantRepo.laterCompleted(gameId = gameId, matchId = matchId, players = players).flatMap { later =>
                 IO.raiseWhen(later)(
-                  ConflictError(
-                    "a player in this match has played another of this game's matches since it finished, so whether " +
-                        "it was friendly can no longer change"
-                  )
+                  ConflictError(ErrorText.matches.friendlySettled)
                 )
             }
 
@@ -381,7 +378,7 @@ object EloRatingService {
                 if (friendly) IO.pure(Map.empty[ParticipantId, Int])
                 else
                     IO.raiseUnless(EloRating.hasDistinctPlayers(seats.map(_.playerId)))(
-                      ConflictError("a player holds more than one seat in this match, so it can only be friendly")
+                      ConflictError(ErrorText.matches.mustBeFriendly)
                     ) *> IO.pure(
                       EloRating.deltas(
                         seats.flatMap(seat =>
@@ -449,7 +446,7 @@ object EloRatingService {
                 .lockLaterSeats(gameId = gameId, matchId = matchId, players = players, noWait = true)
                 .adaptError {
                     case e: skunk.exception.PostgresErrorException if e.code == "55P03" =>
-                        ConflictError("another match of a player in this one is finishing right now; try again")
+                        ConflictError(ErrorText.matches.otherFinishing)
                 }
             _ <- refuseIfCascading(players)
             _ <- later.filter(_.isAfterCompleted).traverse_ { seat =>

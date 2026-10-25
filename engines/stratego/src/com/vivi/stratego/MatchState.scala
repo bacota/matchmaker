@@ -1,5 +1,6 @@
 package com.vivi.stratego
 
+import com.vivi.engine.ErrorText
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
@@ -260,11 +261,11 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
       * playable game, and refusing would make role configuration a prerequisite for trying it out.
       */
     def seat(players: List[Protocol.EnginePlayer]): Either[String, List[Seat]] =
-        if (players.sizeIs != 2) Left(s"stratego is a two-player game; ${players.size} player(s) were sent")
+        if (players.sizeIs != 2) Left(ErrorText.matches.twoPlayers(game = "stratego", sent = players.size.toString))
         else if (players.map(_.cognitoId).distinct.sizeIs != 2)
             // Both seats are found by the caller's subject, so one player holding both would make the
             // match unplayable — and in this game it would also mean one person seeing both armies.
-            Left("the two seats must belong to two different players")
+            Left(ErrorText.matches.samePlayer)
         else {
             val requested = players.map(p => p.role.flatMap(Side.parse))
             val sides =
@@ -284,7 +285,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
         parameters.get("maxMoves").map(_.trim) match {
             case None => Right(defaultMaxMoves)
             case Some(raw) =>
-                raw.toIntOption.filter(_ > 0).toRight(s"maxMoves must be a positive whole number, not '$raw'")
+                raw.toIntOption.filter(_ > 0).toRight(ErrorText.stratego.badMaxMoves(raw))
         }
 
     def seats(m: StrategoMatch): List[Seat] = m.seats

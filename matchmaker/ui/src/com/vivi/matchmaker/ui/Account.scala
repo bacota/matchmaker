@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
@@ -114,7 +115,7 @@ object Account {
         // sign-out would put the previous player back in the header. See `Store.currentSignIn`.
         val signIn = Store.currentSignIn
 
-        if (wanted.isEmpty) nicknameOutcome.set(Some(Outcome(true, "Enter a nickname.")))
+        if (wanted.isEmpty) nicknameOutcome.set(Some(Outcome(true, ErrorText.account.noNickname)))
         else {
             nicknameOutcome.set(None)
             busy.set(true)
@@ -170,7 +171,7 @@ object Account {
         // The button is disabled until this passes, so this is the keyboard's path in -- a form with a
         // single text field submits on Enter -- and the message is the one the disabled button cannot
         // give.
-        if (!isPlausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
+        if (!isPlausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, ErrorText.account.noEmail)))
         else
             withAccessToken(emailOutcome, busy)(CognitoIdp.updateEmail(_, wanted)) { destination =>
                 emailStage.set(EmailStage.Sent(destination))
@@ -181,7 +182,7 @@ object Account {
     private def confirmEmail(busy: Var[Boolean]): Unit = {
         val code = emailCode.now().trim
 
-        if (code.isEmpty) emailOutcome.set(Some(Outcome(true, "Enter the code we sent.")))
+        if (code.isEmpty) emailOutcome.set(Some(Outcome(true, ErrorText.account.noCode)))
         else
             withAccessToken(emailOutcome, busy)(CognitoIdp.verifyEmail(_, code)) { _ =>
                 val changed = email.now().trim
@@ -242,7 +243,7 @@ object Account {
 
     private def savePassword(busy: Var[Boolean]): Unit =
         if (currentPassword.now().isEmpty || newPassword.now().isEmpty)
-            passwordOutcome.set(Some(Outcome(true, "Enter your current password and the new one.")))
+            passwordOutcome.set(Some(Outcome(true, ErrorText.account.noPasswords)))
         else
             withAccessToken(passwordOutcome, busy)(token =>
                 CognitoIdp
@@ -276,7 +277,7 @@ object Account {
             .flatMap {
                 case Some(token) => action(token)
                 case None =>
-                    Future.failed(new IllegalStateException("Your session has expired. Sign in again to change this."))
+                    Future.failed(new IllegalStateException(ErrorText.session.expiredForChange))
             }
             .onComplete { result =>
                 busy.set(false)
@@ -292,24 +293,24 @@ object Account {
       */
     private def explain(error: Throwable): String = error match {
         case CognitoIdp.IdpError("NotAuthorizedException", _) =>
-            "That is not your current password."
+            ErrorText.account.wrongPassword
         case CognitoIdp.IdpError("LimitExceededException", _) =>
-            "Too many attempts. Wait a few minutes and try again."
+            ErrorText.account.tooManyAttempts
         case CognitoIdp.IdpError("CodeMismatchException", _) =>
-            "That code is not right. Check it and try again."
+            ErrorText.signIn.wrongCode
         case CognitoIdp.IdpError("ExpiredCodeException", _) =>
-            "That code has expired. Send yourself a new one."
+            ErrorText.account.codeExpired
         case CognitoIdp.IdpError("AliasExistsException", _) =>
-            "There is already an account with that email address."
+            ErrorText.account.emailInUse
         // The message field, not getMessage: IdpError's own message prefixes the exception type,
         // and "InvalidPasswordException: Password did not conform..." is not a sentence to show a
         // user. Cognito's message on its own is written to be read.
         case CognitoIdp.IdpError("InvalidPasswordException", message) =>
-            s"That password does not meet the pool's requirements: $message"
+            ErrorText.signIn.weakPassword(message)
         case CognitoIdp.IdpError(_, message) => message
         case _: CognitoIdp.IdpUnavailable =>
-            "Could not reach the sign-in service. Check your connection and try again."
-        case ApiError(409, _)     => "That nickname is taken."
+            ErrorText.signIn.unreachable
+        case ApiError(409, _)     => ErrorText.account.nicknameTaken
         case ApiError(_, message) => message
         case other                => Option(other.getMessage).getOrElse(other.toString)
     }
@@ -669,7 +670,7 @@ object Account {
             // that happens to be near it.
             child <-- email.signal.combineWithFn(hasLeftAddress.signal) {
                 case (typed, true) if typed.trim.nonEmpty && !isPlausibleEmail(typed) =>
-                    span(cls := "detail hint", "That is not an email address yet.")
+                    span(cls := "detail hint", ErrorText.account.notAnEmailYet)
                 case _ => emptyNode
             }
           ),
@@ -789,9 +790,9 @@ object Account {
                     cls := "mail-stopped",
                     role := "status",
                     p(
-                      strong("We have stopped emailing you."),
-                      s" Mail to ${notice.address} was reported as spam, so we are no longer sending to it. ",
-                      "If that was not deliberate, change your email address above — we will start again at the new one."
+                      strong(ErrorText.email.complaintHeading),
+                      " ",
+                      ErrorText.email.complaintDetail(notice.address)
                     )
                   )
               case Some(notice) =>
@@ -799,9 +800,9 @@ object Account {
                     cls := "mail-stopped",
                     role := "status",
                     p(
-                      strong("Your email is bouncing."),
-                      s" Mail to ${notice.address} is not being delivered, so we have stopped sending it. ",
-                      "Fix the mailbox and try again, or change your address above."
+                      strong(ErrorText.email.bounceHeading),
+                      " ",
+                      ErrorText.email.bounceDetail(notice.address)
                     ),
                     retryButton(notice)
                   )

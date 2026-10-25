@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
@@ -366,7 +367,7 @@ class MatchService(
                     .use { _ =>
                         for {
                             caller <- resolveCaller(session, callerExternalId)
-                            missing = NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
+                            missing = NotFoundError(ErrorText.matches.notInGame)
                             // Read plainly for its tournament, which a match never changes, so that the tournament
                             // can be locked before the match is.
                             found <- matchRepo.read(gameId, matchId).flatMap(IO.fromOption(_)(missing))
@@ -375,21 +376,17 @@ class MatchService(
                                 .flatMap(IO.fromOption(_)(missing))
                             existing <- matchRepo.readForUpdate(gameId, matchId).flatMap(IO.fromOption(_)(missing))
                             _ <- IO.raiseUnless(tournament.owner == caller.playerId)(
-                              UnauthorizedError(
-                                s"caller '$callerExternalId' does not own match ${matchId.value}'s tournament and may not cancel it"
-                              )
+                              UnauthorizedError(ErrorText.matches.cancelNotOwner)
                             )
                             // A tournament's match that has not begun is its tournament's to call off.
                             _ <- IO.raiseUnless(existing.status.hasBegun)(
-                              ConflictError(
-                                s"match ${matchId.value} has not begun; its tournament decides what becomes of it"
-                              )
+                              ConflictError(ErrorText.matches.cancelNotBegun)
                             )
                             _ <- IO.raiseWhen(existing.isCompleted)(
-                              ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
+                              ConflictError(ErrorText.matches.cancelCompleted)
                             )
                             _ <- IO.raiseWhen(existing.isCancelled)(
-                              ConflictError(s"match ${matchId.value} is already cancelled")
+                              ConflictError(ErrorText.matches.alreadyCancelled)
                             )
                             cancelled = existing.copy(isFriendly = true, isCancelled = true)
                             _ <- matchRepo.update(cancelled)
@@ -450,7 +447,7 @@ class MatchService(
                 allowed <-
                     if (caller.isAdmin) IO.pure(true)
                     else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
-                _ <- IO.raiseUnless(allowed)(UnauthorizedError("only an admin of this game may list its matches"))
+                _ <- IO.raiseUnless(allowed)(UnauthorizedError(ErrorText.matches.listNotAdmin))
                 matches <- new MatchRepo(session).listForGame(
                   gameId = gameId,
                   limit = MatchService.gameMatchLimit,
@@ -502,24 +499,22 @@ class MatchService(
                     for {
                         caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
                             case Some(player) => IO.pure(player)
-                            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                         }
                         allowed <-
                             if (caller.isAdmin) IO.pure(true)
                             else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
                         _ <- IO.raiseUnless(allowed)(
-                          UnauthorizedError("only an admin of this game may say whether its matches are friendly")
+                          UnauthorizedError(ErrorText.matches.friendlyNotAdmin)
                         )
                         existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
                             case Some(m) => IO.pure(m)
                             case None =>
-                                IO.raiseError(
-                                  NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
-                                )
+                                IO.raiseError(NotFoundError(ErrorText.matches.notInGame))
                         }
                         // Its seats are not yet rated before it begins, and rating is what this changes.
                         _ <- IO.raiseUnless(existing.status.hasBegun)(
-                          ConflictError(s"match ${matchId.value} has not begun")
+                          ConflictError(ErrorText.matches.notBegun)
                         )
                         changed = existing.isFriendly != friendly
                         // A match that is not friendly is rated, and cannot rate a player against
@@ -529,7 +524,7 @@ class MatchService(
                             .listForMatch(gameId, matchId)
                             .map(_.map((p, _, _) => p.playerId))
                         _ <- IO.raiseWhen(changed && !friendly && !EloRating.hasDistinctPlayers(players))(
-                          ConflictError("a player holds more than one seat in this match, so it can only be friendly")
+                          ConflictError(ErrorText.matches.mustBeFriendly)
                         )
                         _ <- IO.whenA(changed && existing.isCompleted)(
                           EloRatingService.reclassify(
@@ -584,7 +579,7 @@ class MatchService(
     private def resolveCaller(session: Session[IO], callerExternalId: String) =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 }
 

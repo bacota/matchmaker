@@ -1,5 +1,6 @@
 package com.vivi.wavinghands
 
+import com.vivi.engine.ErrorText
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock}
@@ -78,9 +79,9 @@ object Duel extends Game[Duel, Wizard, Orders] {
     override def seatName: String = "place in this duel"
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, Duel] =
-        if (request.players.sizeIs < 2) Left(s"a duel needs at least two wizards; ${request.players.size} were sent")
+        if (request.players.sizeIs < 2) Left(ErrorText.wavinghands.tooFewWizards(request.players.size.toString))
         else if (request.players.map(_.cognitoId).distinct.sizeIs != request.players.size)
-            Left("every wizard must belong to a different player")
+            Left(ErrorText.wavinghands.samePlayer)
         else
             Right(
               Duel(

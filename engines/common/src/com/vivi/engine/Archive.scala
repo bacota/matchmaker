@@ -13,8 +13,7 @@ import upickle.default.{read, write, ReadWriter}
 /** A finished match whose archive has expired: a friendly match, kept for 30 days. Raised by a read, and answered by
   * the routes as a 410 — a page saying so, where a page was asked for.
   */
-class ArchiveExpired(val matchId: String)
-    extends RuntimeException(s"match '$matchId' was a friendly match, and its archive has expired")
+class ArchiveExpired(val matchId: String) extends RuntimeException(ErrorText.archive.expired)
 
 /** Moving an archive's bytes to and from the urls matchmaker signs. No credentials: the signature is in the url and its
   * headers, and it is matchmaker's.
@@ -255,17 +254,11 @@ object ArchivingMatchStore {
 }
 
 /** What a player following a link to a finished friendly match is shown once its archive has gone. Every engine's,
-  * since what happened is the same whatever the game. Escaped, though a match id is matchmaker's UUID.
+  * since what happened is the same whatever the game. It does not name the match: the engine knows it only by its id,
+  * which is not for a person to read.
   */
 object ArchiveExpiredPage {
-    def apply(matchId: String): String = {
-        val id = matchId.flatMap {
-            case '<' => "&lt;"
-            case '>' => "&gt;"
-            case '&' => "&amp;"
-            case '"' => "&quot;"
-            case c   => c.toString
-        }
+    def apply(): String =
         s"""<!doctype html>
 <html lang="en">
 <head>
@@ -276,17 +269,14 @@ object ArchiveExpiredPage {
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
   main { max-width: 32rem; padding: 1rem; text-align: center; }
-  .detail { opacity: 0.75; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
 <main>
-<h1>This match is no longer available</h1>
-<p>It was a friendly match, and friendly matches are kept for 30 days after they finish. Its record has expired.</p>
-<p class="detail">Match $id</p>
+<h1>${ErrorText.archive.expiredHeading}</h1>
+<p>${ErrorText.archive.expiredDetail}</p>
 </main>
 </body>
 </html>
 """
-    }
 }

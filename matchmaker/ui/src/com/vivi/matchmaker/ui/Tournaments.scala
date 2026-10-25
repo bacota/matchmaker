@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
@@ -220,7 +221,7 @@ object Tournaments {
                 child.text <-- Store.endedFrame.signal
                     .combineWith(Store.failed(Store.Fetch.MyEndedTournaments))
                     .map {
-                        case (_, true)  => "Your ended competitions could not be loaded."
+                        case (_, true)  => ErrorText.loading.endedCompetitions
                         case (frame, _) => s"None of yours ended in the ${frame.label.toLowerCase}."
                     }
               )
@@ -965,7 +966,7 @@ object Tournaments {
                     ),
                     busyButton(label = "Save Ranks", busy = heldBusy(s"decide ${m.matchId}"))(busy =>
                         val typed = ranks.map((e, v) => v.now().trim.toIntOption.filter(_ >= 1).map(EntrantRank(e, _)))
-                        if (typed.exists(_.isEmpty)) Store.reportProblem("Give every seat a rank of 1 or more.")
+                        if (typed.exists(_.isEmpty)) Store.reportProblem(ErrorText.competitionForm.unranked)
                         else
                             Store.runSignedIn(
                               ApiClient
@@ -1364,7 +1365,7 @@ object Tournaments {
                   chooseRoles -> roles
                 )
                 problems.set(acceptedProblems)
-                val notice = s"That change was undone: ${raised.map(_.describe).mkString("; ")}"
+                val notice = ErrorText.competitionForm.undone(raised.map(_.describe).mkString("; "))
                 Store.reportProblem(notice)
                 undoneNotice = Some(notice)
             }
@@ -1726,13 +1727,13 @@ object Tournaments {
                 hasTriedSaving.set(true)
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
-                if (name.now().trim.isEmpty) Store.reportProblem("A competition needs a name.")
+                if (name.now().trim.isEmpty) Store.reportProblem(ErrorText.competitionForm.noName)
                 // Asked for where it is shown; a format that leaves it out saves the default.
                 else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
-                    Store.reportProblem("A competition needs a match time limit.")
+                    Store.reportProblem(ErrorText.competitionForm.noTimeLimit)
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else if (isJoining && isCharacterGame && joinWith.now().isEmpty)
-                    Store.reportProblem("Choose a character to enter with, or don't join the competition yourself.")
+                    Store.reportProblem(ErrorText.competitionForm.noCharacter)
                 else
                     modelId.now().foreach { id =>
                         val request = TournamentRequest(
@@ -1856,7 +1857,7 @@ object Tournaments {
                       ),
                       m.classification.fold(emptyNode)(c => span(cls := "detail", s" — $c")),
                       unplayable.fold(emptyNode)(problem =>
-                          p(cls := "detail", s"Can't be played in this game: ${problem.describe}")
+                          p(cls := "detail", ErrorText.competitionForm.unplayable(problem.describe))
                       )
                     )
                 }

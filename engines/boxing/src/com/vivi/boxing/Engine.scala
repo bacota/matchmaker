@@ -1,5 +1,6 @@
 package com.vivi.boxing
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import scala.util.control.NonFatal
 import com.vivi.engine.{GameEngine, Log, MatchStore, MatchmakerRefusal, Matchmaker, MoveApplied, Refusal, TurnClock}
@@ -96,7 +97,7 @@ class Engine(
         for {
             name <- named(newName)
             url <- matchmakerUrl.toRight(noMatchmaker)
-            _ <- ask("editing a fighter", notYours(characterId))(
+            _ <- ask("editing a fighter", notYours)(
               matchmaker.editCharacter(
                 matchmakerUrl = url,
                 characterId = characterId,
@@ -110,9 +111,9 @@ class Engine(
       */
     def giveFighter(cognitoId: String, characterId: Long, toNickname: String): Either[Refusal, Given] =
         for {
-            to <- Option(toNickname.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("say who to give it to"))
+            to <- Option(toNickname.trim).filter(_.nonEmpty).toRight(Refusal.Invalid(ErrorText.boxing.giveToWhom))
             url <- matchmakerUrl.toRight(noMatchmaker)
-            _ <- ask("giving a fighter away", notYours(characterId))(
+            _ <- ask("giving a fighter away", notYours)(
               matchmaker.transferCharacter(
                 matchmakerUrl = url,
                 characterId = characterId,
@@ -121,19 +122,19 @@ class Engine(
             )
         } yield Given(characterId, to)
 
-    private def notYours(characterId: Long) = Refusal.NotFound(s"you have no fighter $characterId")
+    private val notYours = Refusal.NotFound(ErrorText.boxing.noSuchFighter)
 
     private def named(name: String): Either[Refusal, String] =
-        Option(name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("give your fighter a name"))
+        Option(name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid(ErrorText.boxing.noName))
 
     private def view(f: Fighter): FighterView =
         FighterView(strength = f.strength, speed = f.speed, agility = f.agility, workrate = f.workrate, chin = f.chin)
 
-    private val noMatchmaker = Refusal.Unavailable("this engine has no matchmaker to keep fighters with")
+    private val noMatchmaker = Refusal.Unavailable(ErrorText.boxing.noMatchmaker)
 
     /** What a 404 from matchmaker means to a player who has never signed in there: it has no player for them. */
     private val Unknown =
-        Refusal.Invalid("matchmaker does not know you yet: sign in to matchmaker once to register, then come back")
+        Refusal.Invalid(ErrorText.boxing.unregistered)
 
     /** A call to matchmaker, with its failures put the way the player is told them. `notFound` is what a 404 means for
       * this call, and a 400 is passed on as matchmaker said it: those are the refusals that are the player's own.
@@ -149,10 +150,10 @@ class Engine(
             case MatchmakerRefusal(400, reason) => Left(Refusal.Invalid(reason))
             case e: MatchmakerRefusal =>
                 Log.failure(e, what)
-                Left(Refusal.Unavailable(s"matchmaker refused: ${e.reason}"))
+                Left(Refusal.Unavailable(ErrorText.boxing.matchmakerRefused(e.reason)))
             case NonFatal(e) =>
                 Log.failure(e, what)
-                Left(Refusal.Unavailable("matchmaker could not be reached; please try again"))
+                Left(Refusal.Unavailable(ErrorText.boxing.matchmakerUnreachable))
         }
 
     /** A player's plan for the current round. Both corners planning at the same moment is the ordinary case here, and
@@ -165,9 +166,9 @@ class Engine(
     ): Either[Refusal, MoveApplied[Bout, Corner, Plan]] =
         core.applyMove(matchId, cognitoId) { (current, corner, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this bout is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.boxing.over))
                 // Every corner is created with a built fighter; only a bout stored before that rule could lack one.
-                fighter <- corner.fighter.toRight(Refusal.Invalid("this corner's fighter was never built"))
+                fighter <- corner.fighter.toRight(Refusal.Invalid(ErrorText.boxing.unbuilt))
                 valid <- Allocation.validate(allocation, fighter).left.map(Refusal.Invalid(_))
                 round = current.currentRound
                 // No "not your turn": every round is both corners' turn. What a player may not do is
@@ -175,7 +176,7 @@ class Engine(
                 _ <- Either.cond(
                   current.planOf(corner, round).isEmpty,
                   (),
-                  Refusal.Invalid(s"you have already planned round $round; a plan cannot be changed")
+                  Refusal.Invalid(ErrorText.boxing.alreadyPlanned(round.toString))
                 )
             } yield {
                 // The round's start, or, in a live bout, this player's opening the board if that was later.

@@ -1,5 +1,7 @@
 package com.vivi.hilo
 
+import com.vivi.engine.HtmlText.jsString
+import com.vivi.engine.ErrorText
 import upickle.default.write
 import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
@@ -259,12 +261,12 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
         noSeat = true;
         state = null;
         render();
-        tell(ticket, "you have no place in this match");
+        tell(ticket, ${jsString(ErrorText.hilo.noPlace)});
         return null;
       }
       return response;
     } catch (e) {
-      if (!overtaken(ticket)) tell(ticket, "could not reach the engine");
+      if (!overtaken(ticket)) tell(ticket, ${jsString(ErrorText.page.unreachable)});
       return null;
     }
   }

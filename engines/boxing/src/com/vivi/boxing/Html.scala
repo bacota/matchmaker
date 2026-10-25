@@ -1,8 +1,8 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.{ErrorText, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.HtmlText.{escape, jsObject, scriptSafe}
 import Protocol.given
 
 /** The play page.
@@ -144,6 +144,8 @@ ${playLive.script(liveUrl, matchId)}
 ${TurnTimer.script}
 ${Finale.script(victory, defeat)}
 
+  // What board.js says when something goes wrong, from the engines' errors file.
+  const errors = ${jsObject("noCorner" -> ErrorText.boxing.noCorner, "unreachable" -> ErrorText.page.unreachable)};
 $boardScript
 </script>
 </body>
@@ -370,6 +372,13 @@ ${SignIn.css}
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 
+  // What fighters.js says when something goes wrong, from the engines' errors file.
+  const errors = ${jsObject(
+              "signIn" -> ErrorText.boxing.fightersSignIn,
+              "sayWho" -> ErrorText.boxing.fightersSayWho,
+              "unreachable" -> ErrorText.boxing.fightersUnreachable,
+              "notBuilt" -> ErrorText.boxing.notBuilt
+            )};
 $fightersScript
 </script>
 </body>

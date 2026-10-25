@@ -1,5 +1,6 @@
 package com.vivi.tictactoe
 
+import com.vivi.engine.ErrorText
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
 import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
@@ -95,11 +96,11 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
       * game, and refusing would make role configuration a prerequisite for trying it out.
       */
     def seat(players: List[Protocol.EnginePlayer]): Either[String, List[Seat]] =
-        if (players.sizeIs != 2) Left(s"tic-tac-toe is a two-player game; ${players.size} player(s) were sent")
+        if (players.sizeIs != 2) Left(ErrorText.matches.twoPlayers(game = "tic-tac-toe", sent = players.size.toString))
         else if (players.map(_.cognitoId).distinct.sizeIs != 2)
             // Both seats are found by the caller's subject, so one player holding both would make the
             // match unplayable in a way that is much harder to diagnose later than here.
-            Left("the two seats must belong to two different players")
+            Left(ErrorText.matches.samePlayer)
         else {
             val requested = players.map(p => p.role.flatMap(Mark.parse))
             val marks =

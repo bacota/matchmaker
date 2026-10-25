@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.net.URLEncoder
@@ -65,13 +66,13 @@ class ArchiveService(
     ): IO[UploadAnswer] =
         for {
             _ <- IO.raiseUnless(size > 0 && size <= MaxSize)(
-              ValidationError(s"an archive must be between 1 and $MaxSize bytes, not $size")
+              ValidationError(ErrorText.archive.size(most = MaxSize.toString, size = size.toString))
             )
             _ <- IO.raiseUnless(isSha256(sha256))(
-              ValidationError("sha256 must be the base64 of a 32-byte SHA-256 digest")
+              ValidationError(ErrorText.archive.badSha256)
             )
             _ <- IO.raiseWhen(formatVersion.exists(v => v.length > 64 || !v.forall(c => c >= ' ' && c <= '~')))(
-              ValidationError("formatVersion must be at most 64 printable ASCII characters")
+              ValidationError(ErrorText.archive.badFormatVersion)
             )
             decided <- sessionPool.use { session =>
                 val repo = new ArchiveRepo(session)
@@ -79,10 +80,10 @@ class ArchiveService(
                     for {
                         row <- requireForUpdate(repo = repo, matchId = matchId, callerExternalId = callerExternalId)
                         _ <- IO.raiseWhen(row.isCancelled)(
-                          ConflictError(s"match ${matchId.value} was cancelled, and a cancelled match is not archived")
+                          ConflictError(ErrorText.archive.cancelled)
                         )
                         completedAt <- IO.fromOption(row.completedAt)(
-                          ConflictError(s"match ${matchId.value} is not over, and only a completed match is archived")
+                          ConflictError(ErrorText.archive.notOver)
                         )
                         answer <- row.archivedAt match {
                             case Some(at) => IO.pure(Left(at))
@@ -148,7 +149,7 @@ class ArchiveService(
                     case None =>
                         for {
                             key <- IO.fromOption(before.key)(
-                              ConflictError(s"no upload was asked for for match ${matchId.value}")
+                              ConflictError(ErrorText.archive.noUploadAsked)
                             )
                             found <- store.head(bucketOf(before), key)
                             at <- sessionPool.use { session =>
@@ -165,19 +166,13 @@ class ArchiveService(
                                             case None =>
                                                 for {
                                                     _ <- IO.raiseUnless(row.key.contains(key))(
-                                                      ConflictError(
-                                                        s"the upload asked for for match ${matchId.value} changed while it was being checked"
-                                                      )
+                                                      ConflictError(ErrorText.archive.uploadChanged)
                                                     )
                                                     _ <- IO.raiseUnless(bucketOf(row) == bucketOf(before))(
-                                                      ConflictError(
-                                                        s"match ${matchId.value} changed archive while its upload was being checked"
-                                                      )
+                                                      ConflictError(ErrorText.archive.bucketChanged)
                                                     )
                                                     arrived <- IO.fromOption(found)(
-                                                      ConflictError(
-                                                        s"no archive has arrived for match ${matchId.value}"
-                                                      )
+                                                      ConflictError(ErrorText.archive.notArrived)
                                                     )
                                                     // A store that reports no checksum is trusted on the signature
                                                     // alone: the upload url was signed for this checksum, so nothing
@@ -185,9 +180,7 @@ class ArchiveService(
                                                     _ <- IO.raiseWhen(
                                                       arrived.sha256.exists(s => !row.sha256.contains(s))
                                                     )(
-                                                      ConflictError(
-                                                        s"the archive that arrived for match ${matchId.value} is not the one asked for"
-                                                      )
+                                                      ConflictError(ErrorText.archive.wrongArrival)
                                                     )
                                                     at <- repo.recordArchived(row.gameId, matchId)
                                                 } yield at
@@ -212,9 +205,9 @@ class ArchiveService(
             .flatMap { row =>
                 for {
                     archivedAt <- IO.fromOption(row.archivedAt)(
-                      NotFoundError(s"match ${matchId.value} has no archive")
+                      NotFoundError(ErrorText.archive.none)
                     )
-                    key <- IO.fromOption(row.key)(NotFoundError(s"match ${matchId.value} has no archive"))
+                    key <- IO.fromOption(row.key)(NotFoundError(ErrorText.archive.none))
                     _ <- IO.raiseWhen(row.expiredAt.isDefined)(expired(matchId))
                     bucket = bucketOf(row)
                     _ <-
@@ -240,19 +233,17 @@ class ArchiveService(
             .flatMap { row =>
                 for {
                     key <- IO.fromOption(row.key.filter(_ => row.archivedAt.isDefined))(
-                      NotFoundError(s"match ${matchId.value} has no archive")
+                      NotFoundError(ErrorText.archive.none)
                     )
                     _ <- IO.raiseUnless(bucketOf(row).isFriendly)(
-                      ConflictError(
-                        s"match ${matchId.value}'s archive is permanent and does not expire; a missing one is a fault"
-                      )
+                      ConflictError(ErrorText.archive.permanentMissing)
                     )
                     _ <-
                         if (row.expiredAt.isDefined) IO.unit
                         else
                             store.head(ArchiveBucket.Friendly, key).flatMap {
                                 case Some(_) =>
-                                    IO.raiseError(ConflictError(s"match ${matchId.value}'s archive is still there"))
+                                    IO.raiseError(ConflictError(ErrorText.archive.stillThere))
                                 case None => recordExpired(row)
                             }
                 } yield ()
@@ -352,9 +343,7 @@ class ArchiveService(
                 (row.archivedAt, prepared) match {
                     case (Some(_), Some(_)) => repo.recordMoved(game = gameId, id = matchId, friendly = false).as(true)
                     case (Some(_), None) =>
-                        IO.raiseError(
-                          ConflictError(s"match ${matchId.value}'s archive was being written just now; try again")
-                        )
+                        IO.raiseError(ConflictError(ErrorText.archive.beingWritten))
                     case (None, _) => repo.recordMoved(game = gameId, id = matchId, friendly = false).as(false)
                 }
             case _ => IO.pure(false)
@@ -385,7 +374,7 @@ class ArchiveService(
         sessionPool.use(session => new ArchiveRepo(session).recordExpired(row.gameId, row.matchId))
 
     private def expired(matchId: MatchId): GoneError =
-        GoneError(s"match ${matchId.value} was friendly, and its archive has expired")
+        GoneError(ErrorText.archive.expired)
 
     private def require(repo: ArchiveRepo, matchId: MatchId, callerExternalId: String): IO[ArchiveRow] =
         repo.readForEngine(matchId, callerExternalId).flatMap(found(matchId))
@@ -396,7 +385,7 @@ class ArchiveService(
     // Not found rather than unauthorized for a match that is another game's: an engine is told
     // nothing about matches that are not its own, including that they exist.
     private def found(matchId: MatchId)(row: Option[ArchiveRow]): IO[ArchiveRow] =
-        IO.fromOption(row)(NotFoundError(s"no match '${matchId.value}' in this engine's game"))
+        IO.fromOption(row)(NotFoundError(ErrorText.matches.notInGame))
 }
 
 object ArchiveService {

@@ -153,7 +153,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, _, _, _) = fixture()
         assertEquals(
           engine.move(matchId = "m-1", cognitoId = "sub-carol", shape = Shape.Rock),
-          Left(Refusal.NotYours("'sub-carol' has no seat in match 'm-1'"))
+          Left(Refusal.NotYours("you have no seat in this match"))
         )
         assert(engine.move(matchId = "m-1", cognitoId = "", shape = Shape.Rock).isLeft)
         assertEquals(recorder.moves, Nil)
@@ -320,10 +320,10 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("an unknown match is a 404 to matchmaker and to a player alike") {
         val (engine, _, _, _, _) = fixture()
-        assertEquals(engine.status("nope"), Left(Refusal.NotFound("no match 'nope'")))
+        assertEquals(engine.status("nope"), Left(Refusal.NotFound("there is no such match")))
         assertEquals(
           engine.move(matchId = "nope", cognitoId = alice, shape = Shape.Rock),
-          Left(Refusal.NotFound("no match 'nope'"))
+          Left(Refusal.NotFound("there is no such match"))
         )
     }
 

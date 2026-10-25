@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import scala.concurrent.duration._
@@ -426,13 +427,13 @@ class GameEngineService[T](
                         _ <- authorizeGame(gameRepo = gameRepo, gameId = gameId, callerExternalId = callerExternalId)
                         existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                         _ <- IO.raiseWhen(existing.isCompleted)(
-                          ValidationError(s"match ${matchId.value} is already completed")
+                          ValidationError(ErrorText.matches.alreadyCompleted)
                         )
                         // The engine has not been told the match was called off — there is no exchange that
                         // would tell it — so it will go on reporting moves made on a board matchmaker no
                         // longer recognises. Refusing them is what makes a cancel stick.
                         _ <- IO.raiseWhen(existing.isCancelled)(
-                          ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
+                          ConflictError(ErrorText.matches.cancelledNoMoves)
                         )
                         mover <- requireParticipant(
                           repo = participantRepo,
@@ -556,7 +557,7 @@ class GameEngineService[T](
                         _ <- authorizeGame(gameRepo = gameRepo, gameId = gameId, callerExternalId = callerExternalId)
                         existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
                         _ <- IO.raiseWhen(existing.isCancelled)(
-                          ConflictError(s"match ${matchId.value} was cancelled and can have no result")
+                          ConflictError(ErrorText.matches.cancelledNoResult)
                         )
                         _ <- turns.traverse_ { reported =>
                             for {
@@ -564,9 +565,7 @@ class GameEngineService[T](
                                 known = seats.map(_._1.participantId.value).toSet
                                 strangers = reported.map(_.participantId).filterNot(known).distinct
                                 _ <- IO.raiseUnless(strangers.isEmpty)(
-                                  ValidationError(
-                                    s"turn(s) by participant(s) ${strangers.mkString(", ")}, who are not in match ${matchId.value}"
-                                  )
+                                  ValidationError(ErrorText.matches.turnsByStrangers)
                                 )
                                 _ <- recordTurns(session = session, m = existing, turns = reported, since = None)
                             } yield ()
@@ -591,9 +590,7 @@ class GameEngineService[T](
                                     known = participants.map(_._1.participantId).toSet
                                     unknown = results.map(_.participantId).filterNot(known)
                                     _ <- IO.raiseUnless(unknown.isEmpty)(
-                                      ValidationError(
-                                        s"participant(s) ${unknown.map(_.value).mkString(", ")} are not in match ${matchId.value}"
-                                      )
+                                      ValidationError(ErrorText.matches.unknownSeats)
                                     )
                                     _ <- IO.unlessA(existing.isCompleted)(
                                       participants.traverse_((participant, _, _) =>
@@ -732,11 +729,11 @@ class GameEngineService[T](
                         existing <- requireBegunMatch(repo = matchRepo, gameId = gameId, matchId = matchId)
                         participants <- participantRepo.listForMatch(gameId, matchId)
                         _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
-                          UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
+                          UnauthorizedError(ErrorText.matches.noSeatForYou)
                         )
                         statusUrl <- existing.statusUrl match {
                             case Some(url) => IO.pure(url)
-                            case None => IO.raiseError(ValidationError(s"match ${matchId.value} has no status url"))
+                            case None      => IO.raiseError(ValidationError(ErrorText.matches.noStatusUrl))
                         }
                     } yield (existing, statusUrl)
                 }
@@ -767,7 +764,7 @@ class GameEngineService[T](
                     existing <- requireBegunMatch(repo = matchRepo, gameId = gameId, matchId = matchId)
                     participants <- participantRepo.listForMatch(gameId, matchId)
                     _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
-                      UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
+                      UnauthorizedError(ErrorText.matches.noSeatForYou)
                     )
                     // This is the call the UI makes when a player goes to take their turn — it is where the
                     // `playUrl` comes from — so it is one of the two moments a run-out clock is noticed. A
@@ -1000,7 +997,7 @@ class GameEngineService[T](
     private def authorizeGame(gameRepo: GameRepo[T], gameId: GameId, callerExternalId: String): IO[Game] =
         requireGame(gameRepo, gameId).flatTap { game =>
             IO.raiseUnless(callerExternalId == game.externalId)(
-              UnauthorizedError(s"invalid game externalId for game ${gameId.value}")
+              UnauthorizedError(ErrorText.engine.notThisGames)
             )
         }
 
@@ -1016,19 +1013,19 @@ class GameEngineService[T](
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
         gameRepo.read(gameId).flatMap {
             case Some(g) => IO.pure(g)
-            case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
         }
 
     private def requireCaller(playerRepo: PlayerRepo, callerExternalId: String): IO[Player] =
         playerRepo.readByExternalId(callerExternalId).flatMap {
             case Some(p) => IO.pure(p)
-            case None    => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     private def requireMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
         repo.read(gameId, matchId).flatMap {
             case Some(m) => IO.pure(m)
-            case None    => IO.raiseError(NotFoundError(s"no match '${matchId.value}' in game ${gameId.value}"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.matches.notInGame))
         }
 
     /* A match a player may open: one that has begun. A tournament's match exists before that,
@@ -1037,13 +1034,13 @@ class GameEngineService[T](
     private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
         requireMatch(repo = repo, gameId = gameId, matchId = matchId).flatMap { m =>
             if (m.status.hasBegun) IO.pure(m)
-            else IO.raiseError(NotFoundError(s"match '${matchId.value}' in game ${gameId.value} has not begun"))
+            else IO.raiseError(NotFoundError(ErrorText.matches.notBegun))
         }
 
     private def requireMatchForUpdate(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
         repo.readForUpdate(gameId, matchId).flatMap {
             case Some(m) => IO.pure(m)
-            case None    => IO.raiseError(NotFoundError(s"no match '${matchId.value}' in game ${gameId.value}"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.matches.notInGame))
         }
 
     private def requireParticipant(
@@ -1054,6 +1051,6 @@ class GameEngineService[T](
     ): IO[Participant] =
         repo.read(gameId, participantId).flatMap {
             case Some(p) if p.matchId == matchId => IO.pure(p)
-            case _ => IO.raiseError(NotFoundError(s"no participant ${participantId.value} in match '${matchId.value}'"))
+            case _                               => IO.raiseError(NotFoundError(ErrorText.matches.noSuchSeat))
         }
 }

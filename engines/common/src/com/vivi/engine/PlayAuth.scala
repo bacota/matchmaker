@@ -40,7 +40,7 @@ object PlayAuth {
       */
     class GatewayClaims(val login: Option[LoginConfig]) extends PlayAuth {
         def callerOf(request: EngineRequest): Either[Refusal, String] =
-            request.claims.get("sub").filter(_.nonEmpty).toRight(Refusal.Unauthenticated("sign in to play"))
+            request.claims.get("sub").filter(_.nonEmpty).toRight(Refusal.Unauthenticated(ErrorText.auth.signIn))
     }
 
     /** Local, against a real user pool. Verifies the bearer token itself — see [[JwtVerifier]].
@@ -51,9 +51,9 @@ object PlayAuth {
     class VerifiedToken(verifier: JwtVerifier, val login: Option[LoginConfig]) extends PlayAuth {
         def callerOf(request: EngineRequest): Either[Refusal, String] =
             request.bearerToken match {
-                case None => Left(Refusal.Unauthenticated("sign in to play"))
+                case None => Left(Refusal.Unauthenticated(ErrorText.auth.signIn))
                 case Some(token) =>
-                    verifier.verify(token).left.map(why => Refusal.Unauthenticated(s"sign in to play: $why"))
+                    verifier.verify(token).left.map(why => Refusal.Unauthenticated(ErrorText.auth.signInBecause(why)))
             }
     }
 
@@ -72,6 +72,6 @@ object PlayAuth {
                 .orElse(request.query.get("as"))
                 .map(_.trim)
                 .filter(_.nonEmpty)
-                .toRight(Refusal.Unauthenticated("say who you are with ?as=<cognito sub> or an X-Player-Id header"))
+                .toRight(Refusal.Unauthenticated(ErrorText.auth.sayWho))
     }
 }

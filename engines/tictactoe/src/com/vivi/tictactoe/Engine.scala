@@ -1,5 +1,6 @@
 package com.vivi.tictactoe
 
+import com.vivi.engine.ErrorText
 import java.time.Instant
 import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
@@ -32,11 +33,13 @@ class Engine(
     ): Either[Refusal, MoveApplied[TicTacToeMatch, Seat, TurnRecord]] =
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             for {
-                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid(ErrorText.matches.over))
                 _ <- Either.cond(
                   current.turn == seat.mark,
                   (),
-                  Refusal.Invalid(s"it is ${current.turn}'s turn, not ${seat.mark}'s")
+                  Refusal.Invalid(
+                    ErrorText.tictactoe.notYourTurn(turn = current.turn.toString, mark = seat.mark.toString)
+                  )
                 )
                 board <- current.board.place(cell, seat.mark).left.map(Refusal.Invalid.apply)
             } yield {

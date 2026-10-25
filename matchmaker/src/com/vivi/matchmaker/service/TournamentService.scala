@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
@@ -89,7 +90,7 @@ class TournamentService[T](
                     .summary(game = gameId, id = tournamentId, viewer = caller.playerId)
                     .flatMap {
                         case Some(s) => IO.pure(s)
-                        case None    => IO.raiseError(NotFoundError(s"no tournament $tournamentId in game $gameId"))
+                        case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
                     }
                 design <- new StageRepo(session).design(gameId, tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
@@ -110,7 +111,7 @@ class TournamentService[T](
                 }
                 game <- new GameRepo[T](session).read(gameId).flatMap {
                     case Some(g) => IO.pure(g)
-                    case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
+                    case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                 }
             } yield TournamentDetail(
               summary = summary,
@@ -244,7 +245,7 @@ class TournamentService[T](
                         .traverse(id =>
                             new PlayerRepo(session).readForShare(id).flatMap {
                                 case Some(p) => IO.pure(p.playerId)
-                                case None    => IO.raiseError(NotFoundError(s"no player $id"))
+                                case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                             }
                         )
                     updated <- t.status match {
@@ -270,7 +271,7 @@ class TournamentService[T](
                                 )
                                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                                 _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.isWithdrawn)))(
-                                  ValidationError("it already has more entries than that")
+                                  ValidationError(ErrorText.tournament.moreEntriesThanThat)
                                 )
                                 // Made from another model: its stages are the new model's from now on.
                                 _ <- IO.whenA(model.tournamentModelId != t.tournamentModelId)(
@@ -289,14 +290,14 @@ class TournamentService[T](
                             val s = request.settings
                             for {
                                 _ <- IO.raiseWhen(request.name.trim.isEmpty)(
-                                  ValidationError("a tournament needs a name")
+                                  ValidationError(ErrorText.tournament.blankName)
                                 )
                                 _ <- IO.raiseWhen(s.roundDuration.exists(d => d.isZero || d.isNegative))(
-                                  ValidationError("a round duration must be positive")
+                                  ValidationError(ErrorText.tournament.roundNotPositive)
                                 )
                                 roundDuration = s.roundDuration.orElse(t.settings.roundDuration)
                                 _ <- IO.raiseWhen(t.settings.isLive && !roundDuration.exists(_.getSeconds >= 1))(
-                                  ValidationError("a live tournament needs a round duration of at least a second")
+                                  ValidationError(ErrorText.tournament.liveRoundTooShort)
                                 )
                             } yield t.copy(
                               name = request.name.trim,
@@ -307,7 +308,7 @@ class TournamentService[T](
                                 roundDuration = roundDuration
                               )
                             )
-                        case _ => IO.raiseError(ConflictError("a tournament that is over cannot be changed"))
+                        case _ => IO.raiseError(ConflictError(ErrorText.tournament.overUnchangeable))
                     }
                     withOwner = updated.copy(owner = owner.getOrElse(updated.owner))
                     _ <- new TournamentRepo(session).update(withOwner)
@@ -331,13 +332,13 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(
                           t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled
                         )(
-                          ConflictError("this tournament is over")
+                          ConflictError(ErrorText.tournament.over)
                         )
                         game <- requireGame(session, gameId)
                         _ <- requireInvitationKind(game = game, players = 1, characters = 0)
                         invitee <- new PlayerRepo(session).readForShare(playerId).flatMap {
                             case Some(p) => IO.pure(p)
-                            case None    => IO.raiseError(NotFoundError(s"no player $playerId"))
+                            case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                         }
                         already <- invitations.isInvited(game = gameId, tournament = tournamentId, player = playerId)
                         _ <- invitations.invite(game = gameId, tournament = tournamentId, player = playerId)
@@ -362,9 +363,7 @@ class TournamentService[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId || caller.playerId == playerId)(
-                          UnauthorizedError(
-                            "only the tournament's owner, or the player invited, may remove an invitation"
-                          )
+                          UnauthorizedError(ErrorText.tournament.uninvitePlayerNotAllowed)
                         )
                         was <- invitations.isInvited(game = gameId, tournament = tournamentId, player = playerId)
                         _ <- invitations.revoke(game = gameId, tournament = tournamentId, player = playerId)
@@ -398,7 +397,7 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(
                           t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled
                         )(
-                          ConflictError("this tournament is over")
+                          ConflictError(ErrorText.tournament.over)
                         )
                         game <- requireGame(session, gameId)
                         _ <- requireInvitationKind(game = game, players = 0, characters = 1)
@@ -438,9 +437,7 @@ class TournamentService[T](
                         character <- new CharacterRepo[T](session).readForShare(characterId)
                         characterOwner = character.filter(_.gameId == gameId).flatMap(_.playerId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId || characterOwner.contains(caller.playerId))(
-                          UnauthorizedError(
-                            "only the tournament's owner, or the owner of the character invited, may remove an invitation"
-                          )
+                          UnauthorizedError(ErrorText.tournament.uninviteCharacterNotAllowed)
                         )
                         was <- invitations.isInvited(game = gameId, tournament = tournamentId, character = characterId)
                         _ <- invitations.revoke(game = gameId, tournament = tournamentId, character = characterId)
@@ -523,9 +520,9 @@ class TournamentService[T](
               t.status == TournamentStatus.Open || (late && t.settings.hasLateEntries && !t.isStopped)
             )(
               ConflictError(
-                if (late && t.isStopped) "this tournament has been stopped, and takes no more entries"
-                else if (late) "this tournament has started, and takes no late entries"
-                else s"this tournament is not open for entries; it is ${t.status.label.toLowerCase}"
+                if (late && t.isStopped) ErrorText.tournament.stoppedNoEntries
+                else if (late) ErrorText.tournament.noLateEntries
+                else ErrorText.tournament.notOpen(t.status.label.toLowerCase)
               )
             )
             _ <- checkCharacter(session = session, game = game, characterId = characterId, caller = caller)
@@ -538,15 +535,14 @@ class TournamentService[T](
             )
             _ <- IO.raiseUnless(!t.settings.isInvitational || invited || t.owner == caller.playerId)(
               UnauthorizedError(
-                if (game.gameType == GameType.Character)
-                    "this tournament is by invitation, and that character has not been invited"
-                else "this tournament is by invitation, and you have not been invited"
+                if (game.gameType == GameType.Character) ErrorText.tournament.characterNotInvited
+                else ErrorText.tournament.notInvited
               )
             )
             existing <- entrants.list(gameId, tournamentId)
             active = existing.count(!_.isWithdrawn)
             _ <- IO.raiseWhen(t.settings.maxEntrants.exists(active >= _))(
-              ConflictError(s"this ${TournamentService.noun(t)} is full")
+              ConflictError(ErrorText.tournament.full(TournamentService.noun(t)))
             )
             // The entries the caller plays now, which in a character game are their characters' as they stand.
             mine = existing.filter(_.playerId.contains(caller.playerId))
@@ -572,21 +568,21 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(mine.count(!_.isWithdrawn) >= t.settings.entriesPerPlayer)(
                           ConflictError(
                             if (t.settings.entriesPerPlayer == 1)
-                                s"you have already entered this ${TournamentService.noun(t)}"
-                            else s"you already have the ${t.settings.entriesPerPlayer} entries this tournament allows"
+                                ErrorText.tournament.alreadyEntered(TournamentService.noun(t))
+                            else ErrorText.tournament.allEntriesUsed(t.settings.entriesPerPlayer.toString)
                           )
                         )
                         _ <- IO.raiseWhen(characterId.exists(c => existing.exists(_.characterId.contains(c))))(
-                          ConflictError(s"that character has already entered this ${TournamentService.noun(t)}")
+                          ConflictError(ErrorText.tournament.characterAlreadyEntered(TournamentService.noun(t)))
                         )
                         rating <- ratingOf(session = session, gameId = gameId, player = caller.playerId)
                         _ <- IO.raiseWhen(
                           t.settings.minRating.exists(rating < _) || t.settings.maxRating.exists(rating > _)
                         )(
                           ValidationError(
-                            s"your rating of $rating is outside this tournament's limits" +
-                                t.settings.minRating.fold("")(m => s", at least $m") +
-                                t.settings.maxRating.fold("")(m => s", at most $m")
+                            ErrorText.tournament.ratingOutside(rating.toString) +
+                                t.settings.minRating.fold("")(m => ErrorText.tournament.ratingAtLeast(m.toString)) +
+                                t.settings.maxRating.fold("")(m => ErrorText.tournament.ratingAtMost(m.toString))
                           )
                         )
                         made <- entrants.create(
@@ -645,13 +641,11 @@ class TournamentService[T](
                         t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         found <- entrants
                             .readForUpdate(game = gameId, tournament = tournamentId, id = entrantId)
-                            .flatMap(IO.fromOption(_)(NotFoundError("there is no such entry in this tournament")))
+                            .flatMap(IO.fromOption(_)(NotFoundError(ErrorText.tournament.noSuchEntry)))
                         (player, withdrawnAt) = found
                         // Whoever plays the entry now -- its player, or its character's owner -- or the owner.
                         _ <- IO.raiseUnless(player.contains(caller.playerId) || t.owner == caller.playerId)(
-                          UnauthorizedError(
-                            "only the player of an entry, or the tournament's owner, may withdraw it"
-                          )
+                          UnauthorizedError(ErrorText.tournament.withdrawNotAllowed)
                         )
                         _ <- t.status match {
                             case TournamentStatus.Open =>
@@ -669,8 +663,8 @@ class TournamentService[T](
                                         )
                                 }
                             case TournamentStatus.Running =>
-                                IO.raiseError(ConflictError("that entry is already withdrawn"))
-                            case _ => IO.raiseError(ConflictError("this tournament is over"))
+                                IO.raiseError(ConflictError(ErrorText.tournament.alreadyWithdrawn))
+                            case _ => IO.raiseError(ConflictError(ErrorText.tournament.over))
                         }
                         // Carried out of the transaction because the entry that knew them may be gone.
                         entrant <- player.flatTraverse(new PlayerRepo(session).read)
@@ -705,12 +699,14 @@ class TournamentService[T](
     private def startIn(session: skunk.Session[IO], t: Tournament, game: Game): IO[Tournament] =
         for {
             _ <- IO.raiseUnless(t.status == TournamentStatus.Open)(
-              ConflictError(s"this tournament cannot be started; it is ${t.status.label.toLowerCase}")
+              ConflictError(ErrorText.tournament.cannotStart(t.status.label.toLowerCase))
             )
             entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn))
             least = math.max(2, game.requiredSeats)
             _ <- IO.raiseWhen(entries.sizeIs < least)(
-              ConflictError(s"a ${TournamentService.noun(t)} needs at least $least entries to start")
+              ConflictError(
+                ErrorText.tournament.tooFewToStart(noun = TournamentService.noun(t), least = least.toString)
+              )
             )
             design <- requireDesign(session, t)
             problems = Validation
@@ -774,7 +770,7 @@ class TournamentService[T](
             found <- model match {
                 case Some(m) if kept.contains(id)                 => IO.pure(m)
                 case Some(m) if m.isRoot && m.isActive && offered => IO.pure(m)
-                case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
+                case _ => IO.raiseError(NotFoundError(ErrorText.model.notOffered))
             }
         } yield found
     }
@@ -783,7 +779,7 @@ class TournamentService[T](
     private def requireDesign(session: skunk.Session[IO], t: Tournament): IO[TournamentDesign] =
         new StageRepo(session).design(t.gameId, t.tournamentId).flatMap {
             case Some(d) => IO.pure(d)
-            case None    => IO.raiseError(NotFoundError(s"no tournament ${t.tournamentId} in game ${t.gameId}"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
         }
 
     /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R — for a game
@@ -806,27 +802,25 @@ class TournamentService[T](
         val s = settings
         val problems =
             List(
-              Option.when(request.name.trim.isEmpty)("a tournament needs a name"),
-              Option.when(poolSize < 1)("a pool must hold at least one participant"),
-              Option.when(s.roundDuration.exists(d => d.isZero || d.isNegative))("a round duration must be positive"),
-              Option.when(s.entriesPerPlayer < 1)("a player must be allowed at least one entry"),
+              Option.when(request.name.trim.isEmpty)(ErrorText.tournament.blankName),
+              Option.when(poolSize < 1)(ErrorText.design.emptyPool),
+              Option.when(s.roundDuration.exists(d => d.isZero || d.isNegative))(ErrorText.tournament.roundNotPositive),
+              Option.when(s.entriesPerPlayer < 1)(ErrorText.tournament.noEntriesAllowed),
               Option.when(s.minRating.zip(s.maxRating).exists((lo, hi) => lo > hi))(
-                "the minimum rating cannot be above the maximum"
+                ErrorText.tournament.ratingsCrossed
               ),
-              Option.when(s.maxTurns.exists(_ < 1))("the maximum number of turns must be at least 1"),
-              Option.when(s.maxEntrants.exists(_ < 1))("it must take at least one entry"),
+              Option.when(s.maxTurns.exists(_ < 1))(ErrorText.tournament.noTurns),
+              Option.when(s.maxEntrants.exists(_ < 1))(ErrorText.tournament.noEntries),
               // A game with roles seats one player per role, which is not the owner's to change.
               Option.when(s.playersPerMatch.isDefined && !game.isRoleless)(
-                s"${game.displayName} seats one player per role, so a tournament of it cannot say how many players a " +
-                    "match has"
+                ErrorText.tournament.seatsByRole(game.displayName)
               ),
               Option.when(s.isAutoStarted && s.maxEntrants.isEmpty)(
-                "only a tournament that takes a limited number of entries can start itself when it is full"
+                ErrorText.tournament.autoStartUnlimited
               ),
               // The engine plays a live match against the clock it is given, which is the round's.
               Option.when(s.isLive && !s.roundDuration.exists(_.getSeconds >= 1))(
-                "a live tournament needs a round duration of at least a second: it is the clock the game engine " +
-                    "plays each match against"
+                ErrorText.tournament.liveNeedsClock
               ),
               // Held to the values the game allows here, where the owner can be told, rather than found out when a
               // match starts and the engine is sent something it cannot play.
@@ -872,11 +866,11 @@ class TournamentService[T](
         game.gameType match {
             case GameType.Character =>
                 IO.raiseWhen(players > 0)(
-                  ValidationError(s"${game.displayName} is played by characters: invite a character, not a player")
+                  ValidationError(ErrorText.tournament.inviteCharacter(game.displayName))
                 )
             case GameType.Plain =>
                 IO.raiseWhen(characters > 0)(
-                  ValidationError(s"${game.displayName} has no characters to invite: invite a player")
+                  ValidationError(ErrorText.tournament.invitePlayer(game.displayName))
                 )
         }
 
@@ -886,14 +880,14 @@ class TournamentService[T](
         for {
             character <- new CharacterRepo[T](session).readForShare(characterId).flatMap {
                 case Some(c) if c.gameId == game.gameId => IO.pure(c)
-                case _ => IO.raiseError(NotFoundError(s"${game.displayName} has no character $characterId"))
+                case _ => IO.raiseError(NotFoundError(ErrorText.character.notInGame(game.displayName)))
             }
             ownerId <- IO.fromOption(character.playerId)(
-              ValidationError(s"${character.name} has nobody to answer an invitation for it")
+              ValidationError(ErrorText.tournament.characterUnowned(character.name))
             )
             owner <- new PlayerRepo(session).readForShare(ownerId).flatMap {
                 case Some(p) => IO.pure(p)
-                case None    => IO.raiseError(NotFoundError(s"no player $ownerId"))
+                case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
             }
         } yield owner
 
@@ -909,7 +903,7 @@ class TournamentService[T](
                 if (player.isAdmin) IO.pure(true)
                 else new GameAdminRepo(session).isAdminForShare(player.playerId, game.gameId)
             _ <- IO.raiseUnless(allowed)(
-              UnauthorizedError(s"only an admin of ${game.displayName} may make a rated competition")
+              UnauthorizedError(ErrorText.tournament.ratedNotAdmin(game.displayName))
             )
         } yield ()
 
@@ -923,13 +917,13 @@ class TournamentService[T](
         (game.gameType, characterId) match {
             case (GameType.Plain, None) => IO.unit
             case (GameType.Plain, Some(_)) =>
-                IO.raiseError(ValidationError("this game has no characters to enter with"))
+                IO.raiseError(ValidationError(ErrorText.tournament.noCharacters))
             case (GameType.Character, None) =>
-                IO.raiseError(ValidationError("enter this game's tournament with one of your characters"))
+                IO.raiseError(ValidationError(ErrorText.tournament.enterWithCharacter))
             case (GameType.Character, Some(c)) =>
                 new CharacterRepo[T](session).readForShare(c).flatMap {
                     case Some(ch) if ch.gameId == game.gameId && ch.playerId.contains(caller.playerId) => IO.unit
-                    case _ => IO.raiseError(ValidationError("that is not one of your characters in this game"))
+                    case _ => IO.raiseError(ValidationError(ErrorText.tournament.notYourCharacter))
                 }
         }
 
@@ -948,14 +942,14 @@ class TournamentService[T](
     private def requireCaller(session: skunk.Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {
             case Some(p) => IO.pure(p)
-            case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$externalId'"))
+            case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     // Read plainly: see the class's note on the game.
     private def requireGame(session: skunk.Session[IO], gameId: GameId): IO[Game] =
         new GameRepo[T](session).read(gameId).flatMap {
             case Some(g) => IO.pure(g)
-            case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
         }
 
     private def requireTournamentForUpdate(
@@ -965,7 +959,7 @@ class TournamentService[T](
     ): IO[Tournament] =
         new TournamentRepo(session).readForUpdate(gameId, id).flatMap {
             case Some(t) => IO.pure(t)
-            case None    => IO.raiseError(NotFoundError(s"no tournament $id in game $gameId"))
+            case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
         }
 
     private def requireOwned(
@@ -976,7 +970,7 @@ class TournamentService[T](
     ): IO[Tournament] =
         requireTournamentForUpdate(session = session, gameId = gameId, id = id).flatMap { t =>
             if (t.owner == caller.playerId) IO.pure(t)
-            else IO.raiseError(UnauthorizedError("only the tournament's owner may do that"))
+            else IO.raiseError(UnauthorizedError(ErrorText.tournament.notOwner))
         }
 }
 

@@ -1,5 +1,6 @@
 package com.vivi.boxing
 
+import com.vivi.engine.ErrorText
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW, read, write}
 
@@ -59,9 +60,12 @@ object Fighter {
       */
     def validate(f: Fighter): Either[String, Fighter] =
         f.characteristics.find((_, v) => v < Min || v > Max) match {
-            case Some((name, v)) => Left(s"$name must be between $Min and $Max; it was $v")
+            case Some((name, v)) =>
+                Left(
+                  ErrorText.boxing.statRange(stat = name, least = Min.toString, most = Max.toString, was = v.toString)
+                )
             case None if f.total != Budget =>
-                Left(s"a fighter is built from exactly $Budget points; these add up to ${f.total}")
+                Left(ErrorText.boxing.budget(budget = Budget.toString, total = f.total.toString))
             case None => Right(f)
         }
 
@@ -94,9 +98,9 @@ object Allocation {
 
     /** Nothing negative, and exactly the fighter's workrate spent. */
     def validate(a: Allocation, fighter: Fighter): Either[String, Allocation] =
-        if (a.offense < 0 || a.defense < 0 || a.power < 0) Left("offense, defense and power cannot be negative")
+        if (a.offense < 0 || a.defense < 0 || a.power < 0) Left(ErrorText.boxing.negativePlan)
         else if (a.total != fighter.workrate)
-            Left(s"a round is planned with exactly your workrate of ${fighter.workrate}; these add up to ${a.total}")
+            Left(ErrorText.boxing.workrate(workrate = fighter.workrate.toString, total = a.total.toString))
         else Right(a)
 
     given ReadWriter[Allocation] = macroRW

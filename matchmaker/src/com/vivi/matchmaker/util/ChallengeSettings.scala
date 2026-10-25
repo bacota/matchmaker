@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.util
 
+import com.vivi.matchmaker.ErrorText
 import scala.util.control.NonFatal
 
 /** The game-parameter choices a challenger makes, as they are kept in a challenge's `settings`.
@@ -37,14 +38,17 @@ object ChallengeSettings {
       */
     def problem(settings: String, allowed: Map[String, Seq[String]]): Option[String] =
         objectOf(settings) match {
-            case None => Some("settings must be a JSON object")
+            case None => Some(ErrorText.settings.notAnObject)
             case Some(obj) =>
                 obj.value.iterator
                     .collect { case (name, raw) if allowed.contains(name) => (name, raw, allowed(name)) }
                     .collectFirst {
                         case (name, raw, values) if !textOf(raw).exists(values.contains) =>
-                            s"'${textOf(raw).getOrElse(ujson.write(raw))}' is not a value of $name; " +
-                                s"expected one of ${values.mkString(", ")}"
+                            ErrorText.settings.notAValue(
+                              value = textOf(raw).getOrElse(ujson.write(raw)),
+                              parameter = name,
+                              values = values.mkString(", ")
+                            )
                     }
         }
 

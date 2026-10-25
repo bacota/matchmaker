@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import com.vivi.matchmaker.ErrorText
 import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
 import com.vivi.matchmaker.model._
@@ -380,7 +381,7 @@ object Players {
                       case scala.util.Success(names) =>
                           loaded.set(Some(Right(names.filterNot(c => exclude.contains(c.characterId)))))
                       case scala.util.Failure(_) =>
-                          loaded.set(Some(Left(s"Couldn't load ${owner.nickname}'s characters just now.")))
+                          loaded.set(Some(Left(ErrorText.loading.characters(owner.nickname))))
                   }
               }
           },

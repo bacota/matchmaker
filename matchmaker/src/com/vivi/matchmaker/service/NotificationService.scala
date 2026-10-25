@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import java.time.Instant
 import cats.effect.IO
 import com.vivi.matchmaker.model._
@@ -133,7 +134,7 @@ class NotificationService(sessionPool: SessionPool) {
                     // rather than the foreign key violation a game deleted in the gap would produce.
                     player <- callerPlayer(session, callerExternalId)
                     exists <- repo.gameExists(gameId)
-                    _ <- IO.raiseUnless(exists)(NotFoundError(s"no game with id ${gameId.value}"))
+                    _ <- IO.raiseUnless(exists)(NotFoundError(ErrorText.game.notFound))
                     // The player's row, not this game's: the same lock every level of this service
                     // takes, and the only one available when the `player_game` row does not exist
                     // yet. See `NotificationRepo.lockSettings`.
@@ -168,11 +169,7 @@ class NotificationService(sessionPool: SessionPool) {
                     .flatMap {
                         case Some(found) => IO.pure(found)
                         case None =>
-                            IO.raiseError(
-                              NotFoundError(
-                                s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
-                              )
-                            )
+                            IO.raiseError(NotFoundError(ErrorText.matches.noSeatForYou))
                     }
             } yield preferences
         }
@@ -202,9 +199,7 @@ class NotificationService(sessionPool: SessionPool) {
                       preferences = preferences
                     )
                     _ <- IO.raiseUnless(written)(
-                      NotFoundError(
-                        s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
-                      )
+                      NotFoundError(ErrorText.matches.noSeatForYou)
                     )
                 } yield ()
             }
@@ -217,6 +212,6 @@ class NotificationService(sessionPool: SessionPool) {
     private def callerPlayer(session: skunk.Session[IO], callerExternalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
-            case None         => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 }

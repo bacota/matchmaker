@@ -131,11 +131,11 @@ object TurnClock {
                 for {
                     kind <- ClockKind
                         .parse(terms.kind)
-                        .toRight(s"'${terms.kind}' is not a kind of clock; expected PER_TURN or TOTAL")
+                        .toRight(ErrorText.clock.unknownKind(terms.kind))
                     _ <- Either.cond(
                       terms.timeLimitSeconds > 0,
                       (),
-                      s"a live match needs a time limit of at least a second; ${terms.timeLimitSeconds} was sent"
+                      ErrorText.clock.noTimeLimit(terms.timeLimitSeconds.toString)
                     )
                 } yield Some(TurnClock(limitSeconds = terms.timeLimitSeconds, kind = kind))
         }

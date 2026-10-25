@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.service
 
+import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
@@ -92,11 +93,7 @@ class SuppressionService(sessionPool: SessionPool) {
                         case SuppressionRepo.Release.Released      => IO.pure(true)
                         case SuppressionRepo.Release.NotSuppressed => IO.pure(false)
                         case SuppressionRepo.Release.RefusedComplaint =>
-                            IO.raiseError(
-                              ValidationError(
-                                "This address reported our mail as spam, so we cannot start sending to it again."
-                              )
-                            )
+                            IO.raiseError(ValidationError(ErrorText.email.reportedSpam))
                     }
             }
         }
@@ -108,6 +105,6 @@ class SuppressionService(sessionPool: SessionPool) {
     private def callerAddress(session: skunk.Session[IO], callerExternalId: String): IO[Option[String]] =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player.email.map(_.trim).filter(_.nonEmpty))
-            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+            case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 }

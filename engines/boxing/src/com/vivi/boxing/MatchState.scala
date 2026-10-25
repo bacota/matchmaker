@@ -1,5 +1,6 @@
 package com.vivi.boxing
 
+import com.vivi.engine.ErrorText
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
@@ -234,21 +235,21 @@ object Bout extends Game[Bout, Corner, Plan] {
       * fighter yet — no state, or state this engine could not have built — refuses the bout.
       */
     def seat(players: List[Protocol.EnginePlayer]): Either[String, List[Corner]] =
-        if (players.sizeIs != 2) Left(s"boxing is a two-fighter game; ${players.size} player(s) were sent")
+        if (players.sizeIs != 2) Left(ErrorText.boxing.twoFighters(players.size.toString))
         else if (players.map(_.cognitoId).distinct.sizeIs != 2)
             // A corner is found by the caller's subject, so one player holding both would be one person
             // seeing both plans.
-            Left("the two corners must belong to two different players")
+            Left(ErrorText.boxing.samePlayer)
         else if (players.exists(_.characterId.isEmpty))
-            Left("every corner needs a fighter; register boxing in matchmaker as a character game")
+            Left(ErrorText.boxing.noFighters)
         else if (players.exists(_.characterState.flatMap(Fighter.fromState).isEmpty))
             Left(
-              "every fighter must be built before a bout; character(s) " +
-                  players
-                      .filter(_.characterState.flatMap(Fighter.fromState).isEmpty)
-                      .flatMap(_.characterId)
-                      .mkString(", ") +
-                  " are not"
+              ErrorText.boxing.unbuiltFighters(
+                players
+                    .filter(_.characterState.flatMap(Fighter.fromState).isEmpty)
+                    .map(_.characterName.getOrElse(ErrorText.boxing.unnamedFighter))
+                    .mkString(", ")
+              )
             )
         else {
             Right(players.zip(List(Side.Red, Side.Blue)).map { (p, side) =>
@@ -285,7 +286,7 @@ object Bout extends Game[Bout, Corner, Plan] {
             case Some(raw) =>
                 raw.toIntOption
                     .filter(n => n >= MinRounds && n <= MaxRounds)
-                    .toRight(s"a bout is scheduled for $MinRounds to $MaxRounds rounds; '$raw' is not that")
+                    .toRight(ErrorText.boxing.rounds(least = MinRounds.toString, most = MaxRounds.toString, raw = raw))
         }
     }
 

@@ -1,5 +1,7 @@
 package com.vivi.matchmaker.model.tournament
 
+import com.vivi.matchmaker.ErrorText
+
 /** How many times a stage is played (`tournament-design.md`, "Tournament Design"). */
 enum Repetition {
 
@@ -204,19 +206,21 @@ object Validation {
         val gameProblems =
             List(
               Option.when(game.requiredSeats == 0)(
-                Problem(where = "", message = "the game has no required role, so no match could start")
+                Problem(where = "", message = ErrorText.design.noRequiredRole)
               ),
               game.open.flatMap(o =>
                   o.playersPerMatch.collect {
                       case k if k < o.minPlayers =>
                           Problem(
                             where = "",
-                            message = s"a match of $k players is fewer than the game's least of ${o.minPlayers}"
+                            message =
+                                ErrorText.design.matchTooSmall(players = k.toString, least = o.minPlayers.toString)
                           )
                       case k if o.maxPlayers.exists(k > _) =>
                           Problem(
                             where = "",
-                            message = s"a match of $k players is more than the game's most of ${o.maxPlayers.get}"
+                            message =
+                                ErrorText.design.matchTooBig(players = k.toString, most = o.maxPlayers.get.toString)
                           )
                   }
               ),
@@ -226,8 +230,7 @@ object Validation {
               )(
                 Problem(
                   where = "",
-                  message = "this game's players move at once and it has no maximum number of turns, so the " +
-                      "competition must give one"
+                  message = ErrorText.design.needsMaxTurns
                 )
               )
             ).flatten
@@ -254,17 +257,19 @@ object Validation {
         depth: Int
     ): List[Problem] = {
         val here = if (path.isEmpty) "" else path
-        if (depth > MaxDepth) List(Problem(where = here, message = s"designs may nest at most $MaxDepth deep"))
-        else if (design.stages.isEmpty) List(Problem(where = here, message = "a design needs at least one stage"))
+        if (depth > MaxDepth) List(Problem(where = here, message = ErrorText.design.tooDeep(MaxDepth.toString)))
+        else if (design.stages.isEmpty) List(Problem(where = here, message = ErrorText.design.noStages))
         // Every match of a round is played in one stage (round.stage_id), and the pools of a nesting stage play
         // their designs side by side: with more than one stage, one pool could be in another stage than the next.
         else if (depth > 1 && design.stages.sizeIs > 1)
-            List(Problem(where = here, message = "a design played in a stage's pools may have only one stage"))
+            List(Problem(where = here, message = ErrorText.design.nestedStages))
         else
             design.stages.zipWithIndex.flatMap { (stage, i) =>
-                val where = (if (path.isEmpty) "" else s"$path, ") + s"stage ${i + 1}"
+                val where = (if (path.isEmpty) "" else s"$path, ") + ErrorText.design.stage((i + 1).toString)
                 stageProblems(stage = stage, game = game, where = where, defaultPoolSize = defaultPoolSize) ++
-                    stage.design.toList.flatMap(check(_, game, s"$where's pools", defaultPoolSize, depth + 1))
+                    stage.design.toList.flatMap(
+                      check(_, game, ErrorText.design.poolsOf(where), defaultPoolSize, depth + 1)
+                    )
             }
     }
 
@@ -279,21 +284,21 @@ object Validation {
         def w(message: String) = Problem(where = where, message = message, isWarning = true)
         List(
           stage.repeat match {
-              case Repetition.Fixed(k) if k < 1 => Some(p("a stage must be played at least once"))
+              case Repetition.Fixed(k) if k < 1 => Some(p(ErrorText.design.neverPlayed))
               case Repetition.UntilRemaining(c) if c < 1 =>
-                  Some(p("a stage must stop with at least one participant left"))
+                  Some(p(ErrorText.design.noneLeft))
               case _ => None
           },
-          Option.when(n < 1)(p("a pool must hold at least one participant")),
-          Option.when(stage.demote.exists(_ <= 1))(p("demote must be greater than 1")),
-          Option.when(stage.promote.exists(_ < 1))(p("promote must be at least 1")),
+          Option.when(n < 1)(p(ErrorText.design.emptyPool)),
+          Option.when(stage.demote.exists(_ <= 1))(p(ErrorText.design.demoteTooLow)),
+          Option.when(stage.promote.exists(_ < 1))(p(ErrorText.design.promoteTooLow)),
           Option.when(stage.promote.zip(stage.demote).exists((pr, de) => pr >= de))(
-            p("promote must be a better rank than demote")
+            p(ErrorText.design.promoteBelowDemote)
           ),
           Option.when(stage.minStratum.zip(stage.maxStratum).exists((lo, hi) => lo > hi))(
-            p("the minimum stratum cannot be above the maximum")
+            p(ErrorText.design.strataCrossed)
           ),
-          Option.when(stage.points < 0 || stage.pointsForDraw < 0)(p("points cannot be negative")),
+          Option.when(stage.points < 0 || stage.pointsForDraw < 0)(p(ErrorText.design.negativePoints)),
           // Brackets: the pools are a power of n/a, which has to be a whole number above 1.
           if (!stage.hasBrackets) None
           else
@@ -301,25 +306,29 @@ object Validation {
                   case None => None // Brackets without demote: the pools are counted as without brackets.
                   case Some(a) =>
                       if (a >= n)
-                          Some(p(s"with brackets, fewer than the pool size ($n) must advance; demote is ${a + 1}"))
+                          Some(p(ErrorText.design.bracketsAllAdvance(pool = n.toString, demote = (a + 1).toString)))
                       else if (n % a != 0)
-                          Some(p(s"with brackets, the number advancing (${a}) must divide the pool size ($n)"))
+                          Some(p(ErrorText.design.bracketsUneven(advancing = a.toString, pool = n.toString)))
                       else None
               },
           if (stage.design.isEmpty) {
               val matches = Schedule.matchCount(n = n, game = game, rotateRoles = stage.isRotatingRoles)
               Option.when(matches > MaxMatchesPerPool)(
-                p(s"a pool of $n would play $matches matches; the most a pool may play is $MaxMatchesPerPool")
+                p(
+                  ErrorText.design.tooManyMatches(
+                    pool = n.toString,
+                    matches = matches.toString,
+                    most = MaxMatchesPerPool.toString
+                  )
+                )
               )
           } else None,
           Option.when(stage.design.isEmpty && n < game.requiredSeats)(
             p(
               if (game.isRoleless)
-                  s"a pool of $n is fewer than the game's least of ${game.requiredSeats} players, so it could never " +
-                      "play a match"
+                  ErrorText.design.poolBelowPlayers(pool = n.toString, least = game.requiredSeats.toString)
               else
-                  s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it could never play " +
-                      "a match"
+                  ErrorText.design.poolBelowRoles(pool = n.toString, roles = game.requiredSeats.toString)
             )
           ),
           // Each pool one match: a pool bigger than the game takes is a match its engine cannot play.
@@ -327,17 +336,17 @@ object Validation {
               .filter(o => stage.design.isEmpty && o.playersPerMatch.isEmpty)
               .flatMap(_.maxPlayers)
               .filter(n > _)
-              .map(most => p(s"each pool plays as one match, and a pool of $n is more than the game's most of $most")),
+              .map(most => p(ErrorText.design.poolAboveMost(pool = n.toString, most = most.toString))),
           Option.when(
             stage.design.isDefined && (stage.hasPointsBonus || stage.isRotatingRoles || stage.hasConcurrentRounds)
           )(
-            w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")
+            w(ErrorText.design.settingsIgnored)
           ),
           Option.when(stage.hasRubberMatch && !game.isRubberApplicable)(
-            w("a rubber match only breaks ties in a game of two seats a match; scores will be used instead")
+            w(ErrorText.design.rubberInapplicable)
           ),
           Option.when(stage.hasBrackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(
-            w("brackets keep their shape only when the winner takes the seed")
+            w(ErrorText.design.bracketsNeedWinnerSeed)
           )
         ).flatten
     }

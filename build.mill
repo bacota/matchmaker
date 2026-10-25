@@ -16,11 +16,18 @@ def sharedSources(moduleDir: os.Path): Seq[os.Path] = {
   Seq(root / "shared" / "src", root / "matchmaker" / "src" / "com" / "vivi" / "matchmaker" / "model")
 }
 
-/** A properties file of the UI's text as the source of a Scala object: `game.roles` becomes `<objectName>.game.roles`,
-  * and a value with `{name}` in it a method taking `name`. Compiled rather than fetched at run time, so a key the code
-  * asks for and the file lacks, or a placeholder renamed on one side only, fails the build instead of showing nothing.
+/** A properties file of text a person reads as the source of a Scala object: `game.roles` becomes
+  * `<objectName>.game.roles`, and a value with `{name}` in it a method taking `name`. Compiled rather than fetched at run
+  * time, so a key the code asks for and the file lacks, or a placeholder renamed on one side only, fails the build
+  * instead of showing nothing. The object is `private[ui]` in the UI's package unless `pkg` and `modifier` say otherwise.
   */
-def textObject(file: os.Path, objectName: String, example: String): String = {
+def textObject(
+    file: os.Path,
+    objectName: String,
+    example: String,
+    pkg: String = "com.vivi.matchmaker.ui",
+    modifier: String = "private[ui] "
+): String = {
   val props = new java.util.Properties
   val in = java.nio.file.Files.newBufferedReader(file.toNIO, java.nio.charset.StandardCharsets.UTF_8)
   try props.load(in)
@@ -59,13 +66,29 @@ def textObject(file: os.Path, objectName: String, example: String): String = {
   }
   // Every key, for checking a format's form overrides (`StandardModel.formOverrides`) name one there is.
   val keySet = s"  val keys: Set[String] = Set(\n${keys.map(k => "    " + literal(k)).mkString(",\n")}\n  )"
-  "package com.vivi.matchmaker.ui\n\n" +
-    s"/** Generated from matchmaker/ui/$fileName by build.mill: edit that, not this. */\n" +
-    s"private[ui] object $objectName {\n${(objects :+ keySet).mkString("\n\n")}\n}\n"
+  val source = file.relativeTo(mill.api.BuildCtx.workspaceRoot)
+  s"package $pkg\n\n" +
+    s"/** Generated from $source by build.mill: edit that, not this. */\n" +
+    s"${modifier}object $objectName {\n${(objects :+ keySet).mkString("\n\n")}\n}\n"
 }
+
+/** Matchmaker's `errors.properties` as `com.vivi.matchmaker.ErrorText`, for the JVM modules and the UI alike. */
+def errorText(file: os.Path): String =
+  textObject(file = file, objectName = "ErrorText", example = "game.notFound", pkg = "com.vivi.matchmaker", modifier = "")
 
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
+
+  /** The text of every error and warning matchmaker gives, in one file to be edited without touching the code: shared
+    * with the UI, which compiles the model that raises some of them and shows its own beside them.
+    */
+  def errorsFile = Task.Source(moduleDir / "errors.properties")
+
+  /** `errors.properties` as `com.vivi.matchmaker.ErrorText`; see [[textObject]]. */
+  def generatedSources = Task {
+    os.write(Task.dest / "ErrorText.scala", errorText(errorsFile().path))
+    super.generatedSources() ++ Seq(PathRef(Task.dest))
+  }
 
   /** skunk brings twiddles-core, which declares munit at *compile* scope rather than test (an
     * upstream packaging slip), and its SCRAM client does the same with junit. Left alone, a test
@@ -227,9 +250,13 @@ object matchmaker extends ScalaModule {
       */
     def tipsFile = Task.Source(moduleDir / "tips.properties")
     def labelsFile = Task.Source(moduleDir / "labels.properties")
+    def errorsFile = Task.Source(moduleDir / os.up / "errors.properties")
 
-    /** `tips.properties` as `object Tips` and `labels.properties` as `object Labels`; see [[textObject]]. */
+    /** `tips.properties` as `object Tips` and `labels.properties` as `object Labels`, and matchmaker's
+      * `errors.properties` as `ErrorText`, as the model compiled here uses it; see [[textObject]].
+      */
     def generatedSources = Task {
+      os.write(Task.dest / "ErrorText.scala", errorText(errorsFile().path))
       os.write(Task.dest / "Tips.scala", textObject(file = tipsFile().path, objectName = "Tips", example = "game.roles"))
       os.write(
         Task.dest / "Labels.scala",
@@ -371,6 +398,27 @@ object engines extends Module {
     * rather than shared — and its `ProtocolSpec` is where the two statements are compared.
     */
   object common extends EngineModule {
+
+    /** The text of every error and warning the engines give, every game's included: matchmaker's file is not theirs
+      * to depend on, any more than its code is.
+      */
+    def errorsFile = Task.Source(moduleDir / "errors.properties")
+
+    /** `errors.properties` as `com.vivi.engine.ErrorText`; see [[textObject]]. */
+    def generatedSources = Task {
+      os.write(
+        Task.dest / "ErrorText.scala",
+        textObject(
+          file = errorsFile().path,
+          objectName = "ErrorText",
+          example = "matches.notFound",
+          pkg = "com.vivi.engine",
+          modifier = ""
+        )
+      )
+      super.generatedSources() ++ Seq(PathRef(Task.dest))
+    }
+
     // Takes the testkit for `QuietTests`, as the engines' tests do.
     object test extends EngineTests {
       def moduleDeps = super.moduleDeps ++ Seq(testkit)

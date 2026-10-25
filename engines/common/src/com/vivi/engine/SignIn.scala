@@ -1,6 +1,6 @@
 package com.vivi.engine
 
-import HtmlText.{escape, escapeJs}
+import HtmlText.{escape, escapeJs, jsString}
 
 /** Signing a player in on an engine's own pages: the script that does it, the form's styles, and the page the hosted
   * login redirects back to.
@@ -82,12 +82,12 @@ ${authScript(Some(login))}
     document.getElementById("retry").addEventListener("click", () => location.reload());
 
     if (failure) return fail(failure);
-    if (!code) return fail("no authorization code came back");
+    if (!code) return fail(${jsString(ErrorText.signIn.noCode)});
     // A callback this page did not start is not acted on (RFC 6749 §10.12).
-    if (!returned || returned !== expected) return fail("this sign-in was not started here");
+    if (!returned || returned !== expected) return fail(${jsString(ErrorText.signIn.notStartedHere)});
 
     const verifier = sessionStorage.getItem(VerifierKey);
-    if (!verifier) return fail("this sign-in was started in another tab");
+    if (!verifier) return fail(${jsString(ErrorText.signIn.otherTab)});
 
     const body = new URLSearchParams({
       grant_type: "authorization_code",
@@ -107,14 +107,16 @@ ${authScript(Some(login))}
     } catch (e) {
       // Unreachable, rather than refused: without this the rejection escapes the function and the
       // page says "signing in…" for ever.
-      return fail("the sign-in service could not be reached; check your connection and try again", true);
+      return fail(${jsString(ErrorText.signIn.callbackUnreachable)}, true);
     }
 
-    if (!response.ok) return fail("the sign-in could not be completed: " + response.status);
+    if (!response.ok) return fail(${jsString(
+              ErrorText.signIn.notCompleted("{status}")
+            )}.replace("{status}", response.status));
 
     let tokens;
     try { tokens = await response.json(); } catch (e) { tokens = {}; }
-    if (!tokens.id_token) return fail("no id token came back");
+    if (!tokens.id_token) return fail(${jsString(ErrorText.signIn.noIdToken)});
 
     // Stored the same way a sign-in on the board stores them, refresh token included: a player who
     // arrives here from the hosted sign-up has a session that behaves like any other.
@@ -394,7 +396,7 @@ ${authScript(Some(login))}
      * offer and no seat to show for it. `signedIn()` is the board's own, called once tokens are
      * in hand. */
     def signInScript: String =
-        """  const codeResponseKeys = {
+        s"""  const codeResponseKeys = {
     // Only EMAIL_OTP can arrive with the pool as it is configured — no MFA and no phone number.
     // The rest are the same screen with a different key, and an unrecognised challenge is a dead
     // end for the player in front of it.
@@ -525,7 +527,7 @@ ${authScript(Some(login))}
   /* Runs one step and advances, or reports why it did not. `username` is threaded through because
    * Cognito does not echo it and every subsequent response has to carry it. */
   function step(username, run) {
-    if (!username) { problem = "Enter your email address."; renderSignIn(); return; }
+    if (!username) { problem = ${jsString(ErrorText.signIn.noEmail)}; renderSignIn(); return; }
     if (busy) return;
     busy = true;
     problem = null;
@@ -590,8 +592,7 @@ ${authScript(Some(login))}
       return;
     }
 
-    problem = "This account needs a sign-in step this page does not support (" + challenge.name +
-      "). Try resetting your password.";
+    problem = ${jsString(ErrorText.signIn.unsupportedStep("{step}"))}.replace("{step}", challenge.name);
     renderSignIn();
   }
 
@@ -618,23 +619,23 @@ ${authScript(Some(login))}
    * read by end users, and a second copy of its error catalogue is not worth maintaining. The
    * exceptions are the few where the right thing to say includes what to do next. */
   function explain(error) {
-    if (!error || !error.idp) return "Could not reach the sign-in service. Check your connection and try again.";
+    if (!error || !error.idp) return ${jsString(ErrorText.signIn.unreachable)};
     switch (error.type) {
       // Deliberately does not distinguish a bad address from a bad password: the pool client sets
       // prevent_user_existence_errors, and saying more here would undo it on the client side.
       case "NotAuthorizedException":
       case "UserNotFoundException":
-        return "Incorrect email or password.";
+        return ${jsString(ErrorText.signIn.incorrect)};
       case "UserNotConfirmedException":
-        return "This account has not been confirmed yet. Check your email for the confirmation link.";
+        return ${jsString(ErrorText.signIn.unconfirmed)};
       case "PasswordResetRequiredException":
-        return "This account needs a new password. Use “Forgot your password?” below.";
+        return ${jsString(ErrorText.signIn.resetRequired)};
       case "CodeMismatchException":
-        return "That code is not right. Check it and try again.";
+        return ${jsString(ErrorText.signIn.wrongCode)};
       case "ExpiredCodeException":
-        return "That code has expired. Start again to have a new one sent.";
+        return ${jsString(ErrorText.signIn.codeExpired)};
       case "InvalidPasswordException":
-        return "That password does not meet the pool's requirements: " + error.message;
+        return ${jsString(ErrorText.signIn.weakPassword("{reason}"))}.replace("{reason}", error.message);
       default:
         return error.message;
     }
@@ -676,4 +677,13 @@ object HtmlText {
     def scriptSafe(json: String): String = json.replace("</", "<\\/")
 
     def escapeJs(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("</", "<\\/")
+
+    /** `s` as a JavaScript string literal, quotes included, for a page's script to say. */
+    def jsString(s: String): String = "\"" + escapeJs(s) + "\""
+
+    /** A JavaScript object of named texts, for a script kept in its own `.js` file, which cannot be handed them one by
+      * one: `const errors = ${jsObject("unreachable" -> ...)};`.
+      */
+    def jsObject(entries: (String, String)*): String =
+        entries.map((name, text) => s"${jsString(name)}: ${jsString(text)}").mkString("{ ", ", ", " }")
 }

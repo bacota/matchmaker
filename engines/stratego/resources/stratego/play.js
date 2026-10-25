@@ -735,7 +735,7 @@
       move.timer = setTimeout(() => {
         if (pending !== move) return;
         pending = null;
-        tell(ticket, "the engine has not answered yet; the board shows the last it heard");
+        tell(ticket, errors.notAnswered);
         render();
         refresh();
       }, 15000);
@@ -800,12 +800,12 @@
         noSeat = true;
         state = null;
         render();
-        tell(ticket, "you have no seat in this match");
+        tell(ticket, errors.noSeat);
         return null;
       }
       return response;
     } catch (e) {
-      if (!overtaken(ticket)) tell(ticket, "could not reach the engine");
+      if (!overtaken(ticket)) tell(ticket, errors.unreachable);
       return null;
     }
   }

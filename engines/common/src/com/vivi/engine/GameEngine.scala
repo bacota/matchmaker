@@ -77,9 +77,9 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                         store.get(created.matchId) match {
                             case Some(stored) if hasSameSeats(stored, request) => Right(responseFor(stored))
                             case Some(_) =>
-                                Left(Refusal.Conflict(s"match '${created.matchId}' already exists with other players"))
+                                Left(Refusal.Conflict(ErrorText.matches.otherPlayers))
                             // Gone between the failed create and this read: cancelled in the meantime.
-                            case None => Left(Refusal.Conflict(s"match '${created.matchId}' was created and removed"))
+                            case None => Left(Refusal.Conflict(ErrorText.matches.removed))
                         }
                 }
         }
@@ -120,7 +120,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         // The time is asked for only of a live match: nothing else depends on it.
         lazy val at = now()
         (if (archived) store.getArchived(matchId) else store.get(matchId)) match {
-            case None => Left(Refusal.NotFound(s"no match '$matchId'"))
+            case None => Left(Refusal.NotFound(ErrorText.matches.notFound))
             case Some(m) if game.clock(m).isEmpty || timedOut(m, at).isEmpty => Right(Settled(m, isChanged = false))
             case Some(_) =>
                 store
@@ -132,7 +132,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                             case None        => (None, Settled(latest, isChanged = false))
                         }
                     }
-                    .toRight(Refusal.NotFound(s"no match '$matchId'"))
+                    .toRight(Refusal.NotFound(ErrorText.matches.notFound))
                     .map { settled =>
                         if (settled.isChanged) reportResults(settled.state)
                         settled
@@ -180,7 +180,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
             } yield game.withClock(m, clock.opening(seat.participantId, at))
 
         store.get(matchId) match {
-            case None                          => Left(Refusal.NotFound(s"no match '$matchId'"))
+            case None                          => Left(Refusal.NotFound(ErrorText.matches.notFound))
             case Some(m) if opening(m).isEmpty => Right(Settled(m, isChanged = false))
             case Some(_) =>
                 store
@@ -190,7 +190,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                             case None       => (None, Settled(latest, isChanged = false))
                         }
                     }
-                    .toRight(Refusal.NotFound(s"no match '$matchId'"))
+                    .toRight(Refusal.NotFound(ErrorText.matches.notFound))
         }
     }
 
@@ -239,7 +239,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         game
             .seats(m)
             .find(_.cognitoId == cognitoId)
-            .toRight(Refusal.NotYours(s"'$cognitoId' has no ${game.seatName} in match '${m.matchId}'"))
+            .toRight(Refusal.NotYours(ErrorText.matches.noSeat(game.seatName)))
 
     /** Step 4's other half: what matchmaker asks for when a participant hits refresh.
       *
@@ -329,13 +329,13 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 case Some(ended) =>
                     (
                       Some(ended),
-                      Left(Refusal.TimedOut("the turn ran out before this move was made; the match is over by forfeit"))
+                      Left(Refusal.TimedOut(ErrorText.clock.ranOut))
                     )
                 case None => attempt(current)
             }
         }
 
-        outcome.toRight(Refusal.NotFound(s"no match '$matchId'")).flatten match {
+        outcome.toRight(Refusal.NotFound(ErrorText.matches.notFound)).flatten match {
             case Right(applied) =>
                 notify(applied)
                 Right(applied)
