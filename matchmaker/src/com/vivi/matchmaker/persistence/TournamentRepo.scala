@@ -375,9 +375,15 @@ class TournamentRepo(session: Session[IO]) {
     private val selectOwnNotStartedForGame = selectForGame(sql"t.owner = $playerId")
 
     // Somebody else's, taking entries, that the viewer could enter: open to anybody, or invitational and the viewer
-    // entered or invited -- themselves, or a character of theirs.
+    // entered or invited -- themselves, or a character of theirs -- and with an entry left to them, none withdrawn.
     private val selectEnterableForGame = selectForGame(
-      sql"""t.status = 'open' AND t.owner <> $playerId AND (NOT t.is_invitational
+      sql"""t.status = 'open' AND t.owner <> $playerId
+            AND (SELECT count(*) FROM entrant_player e
+                  JOIN entrant n
+                    ON n.game_id = e.game_id AND n.tournament_id = e.tournament_id AND n.entrant_id = e.entrant_id
+                  WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId
+                    AND n.withdrawn_at IS NULL) < t.entries_per_player
+            AND (NOT t.is_invitational
               OR EXISTS (SELECT 1 FROM entrant_player e
                           WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
               OR EXISTS (SELECT 1 FROM player_invitation i
@@ -411,7 +417,7 @@ class TournamentRepo(session: Session[IO]) {
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId""".query(summaryCodec)
 
     /** A game's open competitions as `viewer` may see them: their own not yet started, then those taking entries that
-      * they could enter. Newest first within each.
+      * they could enter, with an entry left to them. Newest first within each.
       */
     def openForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
         // One snapshot for both halves: they are told apart by the owner, which can change between two statements,
@@ -422,7 +428,7 @@ class TournamentRepo(session: Session[IO]) {
                 for {
                     own <- session.execute(selectOwnNotStartedForGame)(((viewer, viewer), game, viewer))
                     enterable <- session.execute(selectEnterableForGame)(
-                      ((viewer, viewer), game, (viewer, viewer, viewer, viewer))
+                      ((viewer, viewer), game, (viewer, viewer, viewer, viewer, viewer))
                     )
                 } yield (own ++ enterable).map(summaryOf(viewer))
             )

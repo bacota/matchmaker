@@ -889,7 +889,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         val challenges = Set(entered, invited, owned)
         assertEquals(open.mine, challenges + tournament)
         assertEquals(open.standings, Set(entered, owned))
-        assertEquals(open.game, challenges + tournament)
+        // Not the challenge it entered, which takes one entry from each player.
+        assertEquals(open.game, Set(invited, owned, tournament))
         assertEquals(open.ended, Set.empty[TournamentId])
         // Over, finished or cancelled: gone from every list but the owner's ended one, which holds only their own.
         assertEquals(
@@ -923,6 +924,82 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         } yield (listed.map(_.tournament.tournamentId), List(own, others, anyone).map(_.tournamentId)))
         // Not the invitational one the viewer is not invited to; somebody else's is listed as soon as it is made.
         assertEquals(listed, ids)
+    }
+
+    test("a game no longer lists to a player a competition whose entries they have all used, nor while it is full") {
+        val (entrant, other, comeBack) = run(for {
+            f <- fixture(2)
+            t <- Challenges.create(tournaments = tournaments, game = f.game, owner = f.owner, poolSize = Some(3))
+            p = f.players.head
+            entry <- tournaments.enter(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              characterId = None,
+              callerExternalId = p.externalId
+            )
+            listedTo = (viewer: Player) =>
+                tournaments.listForGame(f.game.gameId, viewer.externalId).map(_.map(_.tournament.tournamentId))
+            entrant <- listedTo(p)
+            other <- listedTo(f.players(1))
+            _ <- tournaments.withdraw(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              entrantId = entry.entrantId,
+              callerExternalId = p.externalId
+            )
+            comeBack <- listedTo(p)
+        } yield (entrant.contains(t.tournamentId), other.contains(t.tournamentId), comeBack.contains(t.tournamentId)))
+        assert(!entrant, "listed to a player with no entry left in it")
+        assert(other, "not listed to a player who could still enter")
+        assert(comeBack, "not listed again once the entry was withdrawn")
+    }
+
+    test("a round robin with automatic rounds starts as everybody its pool seats signs up; one without waits") {
+        // As the competition form sends it: the format leaves out the most entries and starting when full.
+        def roundRobin(f: Fixture, isAutomatic: Boolean) =
+            request(
+              f = f,
+              standard = RoundRobin.id,
+              settings = TournamentSettings(
+                isInvitational = false,
+                roundDuration = Some(Duration.ofDays(2)),
+                hasAutomaticRounds = isAutomatic
+              )
+            ).copy(defaultPoolSize = Some(2), entry = Some(TournamentEntry()))
+        val (automatic, manual) = run(for {
+            f <- fixture(2)
+            made <- List(true, false).traverse(isAutomatic =>
+                tournaments.create(
+                  gameId = f.game.gameId,
+                  request = roundRobin(f, isAutomatic = isAutomatic),
+                  callerExternalId = f.owner.externalId
+                )
+            )
+            List(automatic, manual) = made: @unchecked
+            enter = (t: Tournament, p: Player) =>
+                tournaments.enter(
+                  gameId = f.game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = None,
+                  callerExternalId = p.externalId
+                )
+            _ <- enter(automatic, f.players.head)
+            // Without automatic rounds, its owner may take more and make its pool everyone entered before starting.
+            _ <- f.players.traverse_(enter(manual, _))
+            stood <- made.traverse(t =>
+                tournaments
+                    .detail(
+                      gameId = f.game.gameId,
+                      tournamentId = t.tournamentId,
+                      callerExternalId = f.owner.externalId
+                    )
+                    .map(_.summary.tournament)
+            )
+        } yield (stood.head, stood(1)))
+        assertEquals(automatic.status, TournamentStatus.Running)
+        assertEquals(automatic.settings.maxEntrants, Some(2))
+        assertEquals(manual.status, TournamentStatus.Open)
+        assertEquals(manual.settings.maxEntrants, None)
     }
 
     test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {

@@ -40,8 +40,8 @@ class TournamentService[T](
     // ---- reading ---------------------------------------------------------------------------
 
     /** A game's open competitions as the caller may see them: their own not yet started, then those taking entries that
-      * they could enter -- any that anybody may enter, and an invitational one they are invited to or have entered.
-      * Newest first within each.
+      * they could enter -- any that anybody may enter, and an invitational one they are invited to or have entered,
+      * while they have an entry left in it. Newest first within each.
       */
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[TournamentSummary]] =
         sessionPool.use { session =>
@@ -192,7 +192,7 @@ class TournamentService[T](
         request: TournamentRequest
     ): IO[Tournament] = {
         val poolSize = defaultPoolSize(game = game, model = model, request = request)
-        val settings = TournamentService.settingsFor(model, request.settings)
+        val settings = TournamentService.settingsFor(model = model, settings = request.settings, poolSize = poolSize)
         for {
             _ <- checkSettings(game = game, model = model, request = request, settings = settings, poolSize = poolSize)
             made <- new TournamentRepo(session).create(
@@ -258,7 +258,11 @@ class TournamentService[T](
                                   kept = Some(t.tournamentModelId)
                                 )
                                 poolSize = defaultPoolSize(game = game, model = model, request = request)
-                                settings = TournamentService.settingsFor(model, request.settings)
+                                settings = TournamentService.settingsFor(
+                                  model = model,
+                                  settings = request.settings,
+                                  poolSize = poolSize
+                                )
                                 _ <- IO.whenA(t.settings.isFriendly && !settings.isFriendly)(
                                   requireGameAdmin(session = session, player = caller, game = game)
                                 )
@@ -977,10 +981,15 @@ class TournamentService[T](
 object TournamentService {
 
     /** A request's settings as its model makes them: a model whose seats choose their roles makes every tournament of
-      * it choose them.
+      * it choose them. A Round Robin with automatic rounds starts as soon as everybody signs up -- the participants its
+      * pool seats, which are then the most entries it takes -- for its form leaves out both of those settings. Without
+      * them its owner starts it, and may first make its pool everyone entered.
       */
-    def settingsFor(model: TournamentModel, settings: TournamentSettings): TournamentSettings =
-        settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
+    def settingsFor(model: TournamentModel, settings: TournamentSettings, poolSize: Int): TournamentSettings = {
+        val roles = settings.copy(hasRoleChoice = settings.hasRoleChoice || model.hasRoleChoice)
+        if (model.tournamentModelId != RoundRobin.modelId || !settings.hasAutomaticRounds) roles
+        else roles.copy(maxEntrants = Some(poolSize), isAutoStarted = true)
+    }
 
     /** What a tournament is called in a refusal: a challenge, or a tournament. */
     def noun(t: Tournament): String = if (t.tournamentModelId == RoundRobin.modelId) "challenge" else "tournament"

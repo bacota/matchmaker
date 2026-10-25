@@ -91,7 +91,8 @@ The challenge model follows every tournament rule, and nothing special-cases it:
 - It is not seeded in SQL, which would state it a second time beside `standard.Challenge`. `/tournament-models/sync`
   writes it like any other model.
 - A game offers it as it offers any format, and `requireModel` has no exception for it.
-- `createChallenge` sets `maxEntrants` to the pool size, which is what lets a full challenge start by itself.
+- `TournamentService.settingsFor` gives a Round Robin with automatic rounds `maxEntrants` of its pool size and
+  `isAutoStarted`, which is what lets a full challenge start by itself: the form leaves both fields out.
 
 Roles are chosen after a challenge starts, in seed order, never at acceptance — `has_role_choice` on the tournament
 and its model.

@@ -581,11 +581,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       )
                     )
                     t <- Challenges.offered(services = failing, game = fixture.game, seats = seats)
-                    _ <- failing.tournaments.start(
-                      gameId = fixture.game.gameId,
-                      tournamentId = t,
-                      callerExternalId = externalId
-                    )
+                    _ <- Challenges.startAndBegin(services = failing, game = fixture.game, t = t, owner = fixture.owner)
                     matchId <- Challenges.choose(
                       services = failing,
                       game = fixture.game,
