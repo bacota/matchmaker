@@ -340,19 +340,18 @@ object Tournaments {
           if (isWaitingToStart)
               busyButton(label = "Start Competition", busy = stepBusy(t, "start"))(busy =>
                   Store.runSignedIn(
-                    ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
+                    thenListed(
+                      ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
+                    ),
                     busy
-                  ) { _ =>
-                      Store.reloadMyTournaments()
-                      Store.reloadTournamentChoices()
-                  }
+                  )(_ => ())
               ).amend(aria.label := s"Start Competition: ${t.name}")
           else if (isWaitingOnMe(s))
               busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
-                  Store.runSignedIn(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId), busy) { _ =>
-                      Store.reloadMyTournaments()
-                      Store.reloadTournamentChoices()
-                  }
+                  Store.runSignedIn(
+                    thenListed(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
+                    busy
+                  )(_ => ())
               ).amend(aria.label := s"Start Next Round of ${t.name}")
           else emptyNode
         )
@@ -494,7 +493,7 @@ object Tournaments {
         def step(label: String, name: String) =
             busyButton(label = label, busy = stepBusy(t, name))(busy =>
                 Store.runSignedIn(
-                  ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name),
+                  thenShown(d)(ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name)),
                   busy
                 )(_ => reload(d))
             )
@@ -562,10 +561,12 @@ object Tournaments {
                             ),
                             busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
                                 Store.runSignedIn(
-                                  ApiClient.startRound(
-                                    gameId = t.gameId,
-                                    tournamentId = t.tournamentId,
-                                    duration = roundLength
+                                  thenShown(d)(
+                                    ApiClient.startRound(
+                                      gameId = t.gameId,
+                                      tournamentId = t.tournamentId,
+                                      duration = roundLength
+                                    )
                                   ),
                                   busy
                                 )(_ => reload(d))
@@ -779,6 +780,12 @@ object Tournaments {
         val t = d.summary.tournament
         action.flatMap(answer => Store.reloadTournament(t.gameId, t.tournamentId).map(_ => answer))
     }
+
+    /* `action`, settled only once the caller's lists have been read again after it: the start buttons in their rows,
+     * which the answer takes away, stay busy until the rows are drawn again, rather than offering a second press that
+     * is refused because the first one worked. `thenShown` is the same for the tournament's own page. */
+    private def thenListed[A](action: Future[A]): Future[A] =
+        action.flatMap(answer => Store.reloadMyTournaments().zip(Store.reloadTournamentChoices()).map(_ => answer))
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
