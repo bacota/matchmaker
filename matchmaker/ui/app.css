@@ -350,12 +350,6 @@ ul {
   font-weight: 600;
 }
 
-/* A competition's entries: the name, its rating and a Withdraw button on one line, with nothing
-   between them -- Laminar emits no whitespace -- so the button is set off from the rating. */
-.entries .row > button {
-  margin-left: 0.75rem;
-}
-
 /* "Issue Challenge or Create Tournament", set off from the first competition listed under it. */
 .new-competition {
   margin-bottom: 0.75rem;
@@ -919,6 +913,22 @@ button:disabled {
   cursor: default;
 }
 
+/* Laminar emits no whitespace between elements, so a button would otherwise touch the text or the
+   button beside it. Only beside inline things: a button after a heading, a paragraph or a field is
+   on a line of its own, and a margin there would indent it. The ⓘ is left out, being a 44px box
+   with its own room round the glyph, and so is the tip after it, which is placed absolutely.
+   Zero specificity, so a layout that spaces its buttons itself wins wherever it says so. */
+:where(span, a, strong, em, b, i, small, time, code, button:not(.tip-toggle)) + :where(button:not(.tip-toggle)),
+:where(button:not(.tip-toggle)) + :where(span, a, strong, em, b, i, small, time, code) {
+  margin-inline-start: 0.75rem;
+}
+
+/* ...except where the gap is already the space between them, or the buttons are stacked, where the
+   margin would only indent the second one onwards. Later than the rule above, which it ties. */
+:where(.error, .completed-steps, .match-table td.board .controls, .menu, .menu > div, .menu-game, .alternatives) > * {
+  margin-inline-start: 0;
+}
+
 /* Raised, so a button reads as something to press rather than a box of text: lit from above, a
    darker lower edge and a shadow under it, and pushed in while it is held. Only the buttons drawn as
    buttons -- the link-buttons, the refresh glyph, the menu entries and the ⓘ tips have no box to
@@ -1053,8 +1063,9 @@ button.toggle {
 }
 
 /* `button.link + button.link` spaces adjacent links horizontally, which is what the match rows
-   want. These are stacked, so that margin only indents the second one onwards. */
-.sign-in .alternatives button.link + button.link {
+   want. These are stacked, so that margin only indents the second one onwards -- here and in the
+   account panel and its dialogs, which stack theirs the same way. */
+.alternatives button.link + button.link {
   margin-left: 0;
 }
 

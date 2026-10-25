@@ -3,7 +3,7 @@ package com.vivi.wavinghands
 import com.vivi.engine.HtmlText.jsString
 import com.vivi.engine.ErrorText
 import upickle.default.write
-import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -75,6 +75,7 @@ object Html {
   summary::before { content: "▸"; display: inline-block; width: 1.25rem; }
   details[open] > summary::before { content: "▾"; }
   :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+${ButtonSpacing.css}
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
