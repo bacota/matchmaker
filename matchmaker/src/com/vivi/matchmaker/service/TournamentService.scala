@@ -215,7 +215,8 @@ class TournamentService[T](
 
     /** The owner's edit of a tournament. Before it starts, anything -- but only an admin of the game may make a
       * friendly one rated; once it is running, its name and description, its owner, and the settings that apply to
-      * rounds still to come. Never once it is over.
+      * rounds still to come. Never once it is over. One that starts itself and is left full starts, and one running
+      * whose rounds run themselves begins its next round if it is waiting for one.
       */
     def update(
         gameId: GameId,
@@ -223,98 +224,118 @@ class TournamentService[T](
         request: TournamentRequest,
         callerExternalId: String
     ): IO[Tournament] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    // The model before the tournament, the order `create` and a model sync take them in: a sync
-                    // locks a model and then every tournament made from it, so taking the tournament first would
-                    // deadlock against one removing the model this tournament is made from. `requireModel` takes
-                    // it again below, which a lock already held makes free.
-                    //
-                    // And the sync lock, shared, before either: a sync removes its models one after another, and
-                    // one removing both the model this tournament is made from and the model it is moving to would
-                    // lock the first and its tournaments, then wait on this edit's lock on the second while this
-                    // waits on the tournament. Shared, so that edits do not queue for one another.
-                    _ <- TournamentModelService.lockSyncShared(session)
-                    _ <- new TournamentModelRepo(session).lockForShare(request.tournamentModelId)
-                    t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
-                    game <- requireGame(session, gameId)
-                    owner <- request.owner
-                        .filterNot(_ == t.owner)
-                        .traverse(id =>
-                            new PlayerRepo(session).readForShare(id).flatMap {
-                                case Some(p) => IO.pure(p.playerId)
-                                case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
-                            }
-                        )
-                    updated <- t.status match {
-                        case TournamentStatus.Open =>
-                            for {
-                                model <- requireModel(
-                                  session = session,
-                                  gameId = gameId,
-                                  id = request.tournamentModelId,
-                                  kept = Some(t.tournamentModelId)
-                                )
-                                poolSize = defaultPoolSize(game = game, model = model, request = request)
-                                settings = TournamentService.settingsFor(model, request.settings)
-                                _ <- IO.whenA(t.settings.isFriendly && !settings.isFriendly)(
-                                  requireGameAdmin(session = session, player = caller, game = game)
-                                )
-                                _ <- checkSettings(
-                                  game = game,
-                                  model = model,
-                                  request = request,
-                                  settings = settings,
-                                  poolSize = poolSize
-                                )
-                                entries <- new EntrantRepo(session).list(gameId, tournamentId)
-                                _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.isWithdrawn)))(
-                                  ValidationError(ErrorText.tournament.moreEntriesThanThat)
-                                )
-                                // Made from another model: its stages are the new model's from now on.
-                                _ <- IO.whenA(model.tournamentModelId != t.tournamentModelId)(
-                                  new StageRepo(session).removeAll(gameId, tournamentId) *>
-                                      new StageRepo(session)
-                                          .copy(game = gameId, tournament = tournamentId, design = model.design)
-                                )
-                            } yield t.copy(
-                              name = request.name.trim,
-                              description = request.description.trim,
-                              tournamentModelId = model.tournamentModelId,
-                              defaultPoolSize = poolSize,
-                              settings = settings
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        // The model before the tournament, the order `create` and a model sync take them in: a sync
+                        // locks a model and then every tournament made from it, so taking the tournament first would
+                        // deadlock against one removing the model this tournament is made from. `requireModel` takes
+                        // it again below, which a lock already held makes free.
+                        //
+                        // And the sync lock, shared, before either: a sync removes its models one after another, and
+                        // one removing both the model this tournament is made from and the model it is moving to would
+                        // lock the first and its tournaments, then wait on this edit's lock on the second while this
+                        // waits on the tournament. Shared, so that edits do not queue for one another.
+                        _ <- TournamentModelService.lockSyncShared(session)
+                        _ <- new TournamentModelRepo(session).lockForShare(request.tournamentModelId)
+                        t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
+                        game <- requireGame(session, gameId)
+                        owner <- request.owner
+                            .filterNot(_ == t.owner)
+                            .traverse(id =>
+                                new PlayerRepo(session).readForShare(id).flatMap {
+                                    case Some(p) => IO.pure(p.playerId)
+                                    case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
+                                }
                             )
-                        case TournamentStatus.Running =>
-                            val s = request.settings
-                            for {
-                                _ <- IO.raiseWhen(request.name.trim.isEmpty)(
-                                  ValidationError(ErrorText.tournament.blankName)
+                        updated <- t.status match {
+                            case TournamentStatus.Open =>
+                                for {
+                                    model <- requireModel(
+                                      session = session,
+                                      gameId = gameId,
+                                      id = request.tournamentModelId,
+                                      kept = Some(t.tournamentModelId)
+                                    )
+                                    poolSize = defaultPoolSize(game = game, model = model, request = request)
+                                    settings = TournamentService.settingsFor(model, request.settings)
+                                    _ <- IO.whenA(t.settings.isFriendly && !settings.isFriendly)(
+                                      requireGameAdmin(session = session, player = caller, game = game)
+                                    )
+                                    _ <- checkSettings(
+                                      game = game,
+                                      model = model,
+                                      request = request,
+                                      settings = settings,
+                                      poolSize = poolSize
+                                    )
+                                    entries <- new EntrantRepo(session).list(gameId, tournamentId)
+                                    _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.isWithdrawn)))(
+                                      ValidationError(ErrorText.tournament.moreEntriesThanThat)
+                                    )
+                                    // Made from another model: its stages are the new model's from now on.
+                                    _ <- IO.whenA(model.tournamentModelId != t.tournamentModelId)(
+                                      new StageRepo(session).removeAll(gameId, tournamentId) *>
+                                          new StageRepo(session)
+                                              .copy(game = gameId, tournament = tournamentId, design = model.design)
+                                    )
+                                } yield t.copy(
+                                  name = request.name.trim,
+                                  description = request.description.trim,
+                                  tournamentModelId = model.tournamentModelId,
+                                  defaultPoolSize = poolSize,
+                                  settings = settings
                                 )
-                                _ <- IO.raiseWhen(s.roundDuration.exists(d => d.isZero || d.isNegative))(
-                                  ValidationError(ErrorText.tournament.roundNotPositive)
+                            case TournamentStatus.Running =>
+                                val s = request.settings
+                                for {
+                                    _ <- IO.raiseWhen(request.name.trim.isEmpty)(
+                                      ValidationError(ErrorText.tournament.blankName)
+                                    )
+                                    _ <- IO.raiseWhen(s.roundDuration.exists(d => d.isZero || d.isNegative))(
+                                      ValidationError(ErrorText.tournament.roundNotPositive)
+                                    )
+                                    roundDuration = s.roundDuration.orElse(t.settings.roundDuration)
+                                    _ <- IO.raiseWhen(t.settings.isLive && !roundDuration.exists(_.getSeconds >= 1))(
+                                      ValidationError(ErrorText.tournament.liveRoundTooShort)
+                                    )
+                                } yield t.copy(
+                                  name = request.name.trim,
+                                  description = request.description.trim,
+                                  settings = t.settings.copy(
+                                    isAutoStarted = s.isAutoStarted,
+                                    hasLateEntries = s.hasLateEntries,
+                                    roundDuration = roundDuration
+                                  )
                                 )
-                                roundDuration = s.roundDuration.orElse(t.settings.roundDuration)
-                                _ <- IO.raiseWhen(t.settings.isLive && !roundDuration.exists(_.getSeconds >= 1))(
-                                  ValidationError(ErrorText.tournament.liveRoundTooShort)
-                                )
-                            } yield t.copy(
-                              name = request.name.trim,
-                              description = request.description.trim,
-                              settings = t.settings.copy(
-                                isAutoStarted = s.isAutoStarted,
-                                hasLateEntries = s.hasLateEntries,
-                                roundDuration = roundDuration
-                              )
-                            )
-                        case _ => IO.raiseError(ConflictError(ErrorText.tournament.overUnchangeable))
-                    }
-                    withOwner = updated.copy(owner = owner.getOrElse(updated.owner))
-                    _ <- new TournamentRepo(session).update(withOwner)
-                } yield withOwner
+                            case _ => IO.raiseError(ConflictError(ErrorText.tournament.overUnchangeable))
+                        }
+                        withOwner = updated.copy(owner = owner.getOrElse(updated.owner))
+                        _ <- new TournamentRepo(session).update(withOwner)
+                        // Left full and starting itself, by a lower most or the flag turned on: no entry can come to
+                        // fill it now, so the edit is what starts it, as the filling entry would have.
+                        edited <-
+                            if (withOwner.status == TournamentStatus.Open && withOwner.settings.isAutoStarted)
+                                new EntrantRepo(session).list(gameId, tournamentId).flatMap { entries =>
+                                    if (withOwner.settings.maxEntrants.contains(entries.count(!_.isWithdrawn)))
+                                        startIn(session = session, t = withOwner, game = game)
+                                    else IO.pure(withOwner)
+                                }
+                            else IO.pure(withOwner)
+                    } yield edited
+                }
             }
-        }
+            .flatTap(t =>
+                // Rounds turned to run themselves begin the one waiting, if it is: the first after a start by hand or
+                // by this edit, or the next after a round that ended while the flag was still off. `autoStart` decides
+                // that under the lock, so an edit with the flag already on asks for nothing that would not happen
+                // anyway.
+                IO.whenA(t.status == TournamentStatus.Running && t.settings.isAutoStarted)(
+                  started(t.gameId, t.tournamentId)
+                )
+            )
 
     // ---- invitations -----------------------------------------------------------------------
 

@@ -1073,6 +1073,88 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(uncapped, (TournamentStatus.Running, 1))
     }
 
+    test("a tournament started by hand begins its round once its owner turns its rounds to run themselves") {
+        val (before, round) = run(for {
+            f <- fixture(2)
+            settings = TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
+            t <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f, settings = settings),
+              callerExternalId = f.owner.externalId
+            )
+            _ <- f.players.traverse_(p =>
+                tournaments.enter(
+                  gameId = f.game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = None,
+                  callerExternalId = p.externalId
+                )
+            )
+            _ <- tournaments.start(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            before <- tournaments.detail(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            _ <- tournaments.update(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              request = request(f = f, settings = settings.copy(isAutoStarted = true)),
+              callerExternalId = f.owner.externalId
+            )
+            round <- begunRound(f, t)
+        } yield (before.round.size, round.size))
+        assertEquals(before, 0, "a round was begun before the owner asked for one")
+        assertEquals(round, 1, "its round was not begun")
+    }
+
+    test("a tournament its owner leaves full and starting itself starts, and begins its round") {
+        // Made as `from`, entered by two, and edited to `to`.
+        def leftFull(from: TournamentSettings, to: TournamentSettings) =
+            for {
+                f <- fixture(2)
+                t <- tournaments.create(
+                  gameId = f.game.gameId,
+                  request = request(f = f, settings = from),
+                  callerExternalId = f.owner.externalId
+                )
+                _ <- f.players.traverse_(p =>
+                    tournaments.enter(
+                      gameId = f.game.gameId,
+                      tournamentId = t.tournamentId,
+                      characterId = None,
+                      callerExternalId = p.externalId
+                    )
+                )
+                edited <- tournaments.update(
+                  gameId = f.game.gameId,
+                  tournamentId = t.tournamentId,
+                  request = request(f = f, settings = to),
+                  callerExternalId = f.owner.externalId
+                )
+                round <- begunRound(f, t)
+            } yield (edited.status, round.size)
+        val settings = TournamentSettings(
+          isInvitational = false,
+          roundDuration = Some(Duration.ofDays(2)),
+          maxEntrants = Some(2)
+        )
+        val (turnedOn, lowered) = run(
+          leftFull(from = settings.copy(maxEntrants = None), to = settings.copy(isAutoStarted = true)).product(
+            leftFull(
+              from = settings.copy(isAutoStarted = true, maxEntrants = Some(4)),
+              to = settings.copy(isAutoStarted = true)
+            )
+          )
+        )
+        assertEquals(turnedOn, (TournamentStatus.Running, 1))
+        assertEquals(lowered, (TournamentStatus.Running, 1))
+    }
+
     test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {
         val (before, after, entrants) = run(for {
             f <- fixture(2)
