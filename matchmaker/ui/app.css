@@ -344,6 +344,12 @@ ul {
   font-size: 0.9rem;
 }
 
+/* "Knockout is offered", "... is no longer offered": the answer to a tick in the formats list,
+   set in bold at full size so it is not missed among the .detail lines under each format. */
+.formats-said {
+  font-weight: 600;
+}
+
 /* A competition's entries: the name, its rating and a Withdraw button on one line, with nothing
    between them -- Laminar emits no whitespace -- so the button is set off from the rating. */
 .entries .row > button {

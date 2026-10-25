@@ -1815,7 +1815,7 @@ object Tournaments {
             subject = "Competition Formats",
             text = Tips.competition.formats
           )(h3("Competition Formats")),
-          div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
+          div(aria.live := "polite", cls := "formats-said", child.text <-- said.signal),
           listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
             p(cls := "empty", "There are no formats yet.")
           )(models =>
