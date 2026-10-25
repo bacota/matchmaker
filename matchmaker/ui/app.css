@@ -529,6 +529,29 @@ ul {
   min-height: 44px;
 }
 
+/* Where there is room, the caption beside its box, as `label.field`'s is from the same width and in
+   the same first column, so "Find a Player" lines up with "Rankings by role" under it. Wider than
+   `.search` to give the box beside the caption the room it had under it. What came of it stays
+   under the box. */
+@media (min-width: 48rem) {
+  .inline-form {
+    display: grid;
+    grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.15rem 0.6rem;
+    max-width: 36rem;
+  }
+
+  .inline-form > [aria-live] {
+    grid-column: 2;
+  }
+}
+
+/* Clear of the "Find a Player" form above it, which it would otherwise read as part of. */
+.role-rankings {
+  margin-top: 1.5rem;
+}
+
 /* Previous and Next under a completed list, each named by the window it goes to ("Previous week"):
    earlier at the left, later at the right, as the leaderboard's are. Either may be absent -- Next
    on the most recent window, Previous once the oldest match is shown -- and the other keeps its
