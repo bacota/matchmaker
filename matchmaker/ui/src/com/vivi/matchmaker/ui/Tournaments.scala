@@ -462,8 +462,7 @@ object Tournaments {
           div(
             cls := "row",
             t.status match {
-                case TournamentStatus.Draft => step("Open for Entries", "open")
-                case TournamentStatus.Open  => step("Start Competition", "start")
+                case TournamentStatus.Open => step("Start Competition", "start")
                 case TournamentStatus.Running =>
                     span(
                       if (roundOpen) emptyNode
@@ -534,7 +533,7 @@ object Tournaments {
                 ),
             t.status match {
                 // Not started, so nothing has been played: stopping it deletes it, which is cancelling it.
-                case TournamentStatus.Draft | TournamentStatus.Open =>
+                case TournamentStatus.Open =>
                     stopButton(
                       label = "Cancel Competition",
                       question = "Cancel this competition? It will be deleted, with its entries."
@@ -1137,6 +1136,13 @@ object Tournaments {
         val autoRounds = Var(s0.hasAutomaticRounds)
         // Unticked for a new competition: an admin's is rated unless they tick it.
         val friendly = Var(existing.fold(false)(_.settings.isFriendly))
+        // Whether the creator of a new competition enters it as it is made: ticked unless they administer the game, who
+        // more often makes one for others to play. The game's admins can arrive after the form is drawn, and the box
+        // follows them until the creator ticks or unticks it. With a character of theirs, in a character game.
+        val join = Var(!Store.isAdministering(game.gameId))
+        var hasChosenJoin = false
+        val joinWith: Var[Option[CharacterId]] = Var(None)
+        val isCharacterGame = game.gameType == GameType.Character
         val lateEntries = Var(s0.hasLateEntries)
         val concurrentRounds = Var(s0.hasConcurrentRounds)
         val isPublic = Var(s0.isPublic)
@@ -1177,6 +1183,8 @@ object Tournaments {
         /* What a field saves: what it holds, or, when the chosen format leaves it out, `default` -- what a new
          * competition starts with, which for a field that choosing a format fills in is what the format fills in. */
         def unlessLeftOut[A](key: String, value: => A, default: => A): A = if (isLeftOut(key)) default else value
+        def isJoining: Boolean =
+            existing.isEmpty && unlessLeftOut(key = "competition.join", value = join.now(), default = false)
         val fresh = TournamentSettings()
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
         // or the code no longer defines it: not among those offered, and kept unless another is chosen.
@@ -1355,7 +1363,8 @@ object Tournaments {
             caption: Signal[Option[String]],
             v: Var[Boolean],
             tip: Signal[Option[String]],
-            disabledWhen: Signal[Boolean] = Val(false)
+            disabledWhen: Signal[Boolean] = Val(false),
+            onChoose: Boolean => Unit = _ => ()
         ) = {
             val id = freshTipId(s"$key-tip")
             val words = caption.map(_.getOrElse(""))
@@ -1365,7 +1374,12 @@ object Tournaments {
                   tpe := "checkbox",
                   aria.describedBy := id,
                   disabled <-- disabledWhen,
-                  controlled(checked <-- v.signal, onClick.mapToChecked --> v)
+                  controlled(
+                    checked <-- v.signal,
+                    onClick.mapToChecked --> { on =>
+                        v.set(on); onChoose(on)
+                    }
+                  )
                 ),
                 child.text <-- words
               )
@@ -1451,6 +1465,10 @@ object Tournaments {
                       }
               }
           },
+          Store.currentPlayer.flatMapSwitch {
+              case Some(player) => Store.administers(game.gameId, player)
+              case None         => Val(false)
+          } --> (isAdmin => if (!hasChosenJoin) join.set(!isAdmin)),
           asked.fold(emptyNode)(who =>
               p(cls := "detail", s"Once it is made, you can invite ${who.nickname} from its page.")
           ),
@@ -1650,6 +1668,38 @@ object Tournaments {
                 tip = tipOf("competition.maxTurns", Tips.competition.maxTurns)
               )
           else emptyNode,
+          if (existing.isDefined) emptyNode
+          else {
+              val joinCaption = labelOf("competition.join", Labels.competition.join)
+              div(
+                checkbox(
+                  caption = joinCaption,
+                  v = join,
+                  tip = tipOf("competition.join", Tips.competition.join),
+                  onChoose = _ => hasChosenJoin = true
+                ),
+                if (!isCharacterGame) emptyNode
+                else
+                    field(
+                      labelOf("competition.enterWith", Labels.competition.enterWith)
+                          .combineWith(join.signal, joinCaption)
+                          .map((caption, isOn, shown) => caption.filter(_ => isOn && shown.isDefined)),
+                      select(
+                        onChange.mapToValue --> (v => joinWith.set(v.toLongOption.map(CharacterId(_)))),
+                        option(value := "", "Choose a character"),
+                        children <-- Store.charactersByGame.signal.map(
+                          _.getOrElse(game.gameId, Seq.empty).map(c =>
+                              option(
+                                value := c.characterId.value.toString,
+                                selected <-- joinWith.signal.map(_.contains(c.characterId)),
+                                c.name
+                              )
+                          )
+                        )
+                      )
+                    )
+              )
+          },
           div(
             cls := "row",
             busyButton(
@@ -1664,6 +1714,8 @@ object Tournaments {
                 else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
                     Store.reportProblem("A competition needs a match time limit.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
+                else if (isJoining && isCharacterGame && joinWith.now().isEmpty)
+                    Store.reportProblem("Choose a character to enter with, or don't join the competition yourself.")
                 else
                     modelId.now().foreach { id =>
                         val request = TournamentRequest(
@@ -1675,7 +1727,8 @@ object Tournaments {
                             default = ""
                           ),
                           defaultPoolSize = poolSizeAsked,
-                          settings = settings
+                          settings = settings,
+                          entry = Option.when(isJoining)(TournamentEntry(joinWith.now()))
                         )
                         val saving: Future[Tournament] = existing match {
                             case Some(t) =>

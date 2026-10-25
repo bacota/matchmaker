@@ -19,6 +19,7 @@ object TournamentJson {
     given ReadWriter[TournamentMatchStatus] = readwriter[String].bimap(_.code, TournamentMatchStatus.fromCode)
     given ReadWriter[TournamentSettings] = macroRW
     given ReadWriter[Tournament] = macroRW
+    given ReadWriter[TournamentEntry] = macroRW
     given ReadWriter[TournamentRequest] = macroRW
     given ReadWriter[TournamentModel] = macroRW
     given ReadWriter[TournamentModelSync] = macroRW

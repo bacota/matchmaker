@@ -295,25 +295,25 @@ class TournamentRepo(session: Session[IO]) {
     // the union, the owned ones by the partial index `tournament_owner_not_over`, which their predicate matches.
     private val playersLiveTournaments: Fragment[(PlayerId, PlayerId, PlayerId, PlayerId)] =
         sql"""SELECT game_id, tournament_id FROM tournament
-                WHERE owner = $playerId AND status IN ('draft', 'open', 'running')
+                WHERE owner = $playerId AND status IN ('open', 'running')
           UNION SELECT e.game_id, e.tournament_id FROM entrant_player e
                 JOIN tournament t ON t.game_id = e.game_id AND t.tournament_id = e.tournament_id
-                WHERE e.player_id = $playerId AND t.status IN ('draft', 'open', 'running')
+                WHERE e.player_id = $playerId AND t.status IN ('open', 'running')
           UNION SELECT i.game_id, i.tournament_id FROM player_invitation i
                 JOIN tournament t ON t.game_id = i.game_id AND t.tournament_id = i.tournament_id
-                WHERE i.player_id = $playerId AND t.status IN ('draft', 'open', 'running')
+                WHERE i.player_id = $playerId AND t.status IN ('open', 'running')
           UNION SELECT ci.game_id, ci.tournament_id FROM character_invitation ci
                 JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
                 JOIN tournament t ON t.game_id = ci.game_id AND t.tournament_id = ci.tournament_id
-                WHERE c.player_id = $playerId AND t.status IN ('draft', 'open', 'running')"""
+                WHERE c.player_id = $playerId AND t.status IN ('open', 'running')"""
 
     // A challenge that is over is a match played, which the completed matches list: a player's tournament lists
     // leave it out, so that they grow with the tournaments being played and not with every challenge ever played.
     private val challenge = com.vivi.matchmaker.model.tournament.standard.RoundRobin.modelId.value
     private val isListed: Fragment[Void] =
-        sql"(t.tournament_model_id <> '#$challenge' OR t.status IN ('draft', 'open', 'running'))"
+        sql"(t.tournament_model_id <> '#$challenge' OR t.status IN ('open', 'running'))"
     // Not yet started: what a game's screen lists, as the partial index `tournament_not_started` is written.
-    private val isNotStarted: Fragment[Void] = sql"t.status IN ('draft', 'open')"
+    private val isNotStarted: Fragment[Void] = sql"t.status = 'open'"
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
     // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
@@ -364,14 +364,14 @@ class TournamentRepo(session: Session[IO]) {
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
     // A game's list, in two halves, each read by `tournament_not_started` and holding only the rows it shows, so that
-    // nobody else's drafts, nor invitationals the viewer has no part in, are read and summarised to be thrown away.
+    // no invitationals the viewer has no part in are read and summarised to be thrown away.
     private def selectForGame[A](where: Fragment[A]) =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.game_id = $gameId AND $isNotStarted AND $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
-    // The viewer's own, in draft or taking entries.
+    // The viewer's own, taking entries.
     private val selectOwnNotStartedForGame = selectForGame(sql"t.owner = $playerId")
 
     // Somebody else's, taking entries, that the viewer could enter: open to anybody, or invitational and the viewer

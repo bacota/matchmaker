@@ -147,11 +147,6 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               ),
               callerExternalId = owner.externalId
             )
-            _ <- s.tournaments.open(
-              gameId = game.gameId,
-              tournamentId = t.tournamentId,
-              callerExternalId = owner.externalId
-            )
             _ <- players.traverse(p =>
                 s.tournaments.enter(
                   gameId = game.gameId,
@@ -602,11 +597,6 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                     tournamentModelId = model.tournamentModelId,
                     settings = TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
                   ),
-                  callerExternalId = owner.externalId
-                )
-                _ <- s.tournaments.open(
-                  gameId = game.gameId,
-                  tournamentId = t.tournamentId,
                   callerExternalId = owner.externalId
                 )
                 _ <- s.tournaments.enter(

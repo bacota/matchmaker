@@ -20,7 +20,7 @@ object Challenges {
         TestSession.resource.use(TournamentFixtures.model(_, game, RoundRobin.modelId.value)).void
 
     /** A challenge as the challenge form used to make one, now that it is a competition like any other: a tournament of
-      * the round robin model, its invitations sent, opened, and its owner's entry in it unless `isPlaying` is false.
+      * the round robin model, its owner entered as it is made unless `isPlaying` is false, and its invitations sent.
       * Its pool size is how many it seats and the most entries it takes, the game's R if not given. Invitational when
       * it invites anybody. A rated one is made by a game's admin, which its owner is made first.
       */
@@ -67,7 +67,8 @@ object Challenges {
                   isLive = isLive,
                   isAutoStarted = isAutoStarted,
                   maxEntrants = Some(pool)
-                )
+                ),
+                entry = Option.when(isPlaying)(TournamentEntry(characterId))
               ),
               callerExternalId = owner.externalId
             )
@@ -87,18 +88,7 @@ object Challenges {
                   callerExternalId = owner.externalId
                 )
             )
-            opened <- tournaments.open(game.gameId, made.tournamentId, owner.externalId)
-            _ <- IO.whenA(isPlaying)(
-              tournaments
-                  .enter(
-                    gameId = game.gameId,
-                    tournamentId = made.tournamentId,
-                    characterId = characterId,
-                    callerExternalId = owner.externalId
-                  )
-                  .void
-            )
-        } yield opened
+        } yield made
     }
 
     /** A player in a challenge: who, the role they will choose, and the character they enter with in a character game.

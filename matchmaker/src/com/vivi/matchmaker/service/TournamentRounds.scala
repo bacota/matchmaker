@@ -723,7 +723,7 @@ class TournamentRounds[T](
                       UnauthorizedError("only the tournament's owner may stop it")
                     )
                     _ <- t.status match {
-                        case TournamentStatus.Draft | TournamentStatus.Open =>
+                        case TournamentStatus.Open =>
                             new TournamentRepo(session).delete(gameId, tournamentId)
                         case TournamentStatus.Running if t.isStopped =>
                             IO.raiseError(ConflictError("this tournament has been stopped already"))

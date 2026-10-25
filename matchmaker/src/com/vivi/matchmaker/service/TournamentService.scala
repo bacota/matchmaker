@@ -137,39 +137,58 @@ class TournamentService[T](
 
     // ---- designing -------------------------------------------------------------------------
 
-    /** A new tournament, in draft, owned by the caller: made from one of the game's models, whose stages are copied
-      * into it, with its root pool. Only an admin of the game may make a rated one.
+    /** A new tournament, open for entries, owned by the caller: made from one of the game's models, whose stages are
+      * copied into it, with its root pool. Only an admin of the game may make a rated one.
+      *
+      * With `request.entry` the caller enters it as it is made, held to every rule of [[enter]], so that an entry
+      * refused makes no tournament either. Nobody is told of that entry: the owner is the only one who would be, and
+      * they made it.
       */
     def create(gameId: GameId, request: TournamentRequest, callerExternalId: String): IO[Tournament] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    game <- requireGame(session, gameId)
-                    _ <- IO.whenA(!request.settings.isFriendly)(
-                      requireGameAdmin(session = session, player = caller, game = game)
-                    )
-                    model <- requireModel(session = session, gameId = gameId, id = request.tournamentModelId)
-                    made <- createIn(
-                      session = session,
-                      caller = caller,
-                      game = game,
-                      model = model,
-                      request = request,
-                      status = TournamentStatus.Draft
-                    )
-                } yield made
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        game <- requireGame(session, gameId)
+                        _ <- IO.whenA(!request.settings.isFriendly)(
+                          requireGameAdmin(session = session, player = caller, game = game)
+                        )
+                        model <- requireModel(session = session, gameId = gameId, id = request.tournamentModelId)
+                        made <- createIn(
+                          session = session,
+                          caller = caller,
+                          game = game,
+                          model = model,
+                          request = request
+                        )
+                        // No lock to take: nobody else can see the row until this transaction commits. Answered as the
+                        // entry left it, which is started when it fills one that starts itself.
+                        entered <- request.entry.traverse(e =>
+                            enterIn(
+                              session = session,
+                              t = made,
+                              game = game,
+                              caller = caller,
+                              characterId = e.characterId
+                            )
+                        )
+                    } yield entered.flatMap(_._2).getOrElse(made)
+                }
             }
-        }
+            .flatTap(t =>
+                IO.whenA(t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds)(
+                  started(t.gameId, t.tournamentId)
+                )
+            )
 
-    /* A tournament written, with its stages and root pool, under the caller's transaction. */
+    /* A tournament written, open for entries, with its stages and root pool, under the caller's transaction. */
     private def createIn(
         session: skunk.Session[IO],
         caller: Player,
         game: Game,
         model: TournamentModel,
-        request: TournamentRequest,
-        status: TournamentStatus
+        request: TournamentRequest
     ): IO[Tournament] = {
         val poolSize = defaultPoolSize(game = game, model = model, request = request)
         val settings = TournamentService.settingsFor(model, request.settings)
@@ -185,7 +204,7 @@ class TournamentService[T](
                 tournamentModelId = model.tournamentModelId,
                 defaultPoolSize = poolSize,
                 settings = settings,
-                status = status
+                status = TournamentStatus.Open
               )
             )
             _ <- new StageRepo(session).copy(game = game.gameId, tournament = made.tournamentId, design = model.design)
@@ -229,7 +248,7 @@ class TournamentService[T](
                             }
                         )
                     updated <- t.status match {
-                        case TournamentStatus.Draft | TournamentStatus.Open =>
+                        case TournamentStatus.Open =>
                             for {
                                 model <- requireModel(
                                   session = session,
@@ -294,16 +313,6 @@ class TournamentService[T](
                     _ <- new TournamentRepo(session).update(withOwner)
                 } yield withOwner
             }
-        }
-
-    /** Opens a draft tournament for entries. */
-    def open(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Tournament] =
-        transition(gameId = gameId, tournamentId = tournamentId, callerExternalId = callerExternalId) { t =>
-            if (t.status == TournamentStatus.Draft) IO.pure(t.copy(status = TournamentStatus.Open))
-            else
-                IO.raiseError(
-                  ConflictError(s"only a draft can be opened; this tournament is ${t.status.label.toLowerCase}")
-                )
         }
 
     // ---- invitations -----------------------------------------------------------------------
@@ -645,7 +654,7 @@ class TournamentService[T](
                           )
                         )
                         _ <- t.status match {
-                            case TournamentStatus.Draft | TournamentStatus.Open =>
+                            case TournamentStatus.Open =>
                                 entrants.delete(game = gameId, tournament = tournamentId, id = entrantId)
                             case TournamentStatus.Running if withdrawnAt.isEmpty =>
                                 requireGame(session, gameId).flatMap { game =>
@@ -695,7 +704,7 @@ class TournamentService[T](
      * starts itself. */
     private def startIn(session: skunk.Session[IO], t: Tournament, game: Game): IO[Tournament] =
         for {
-            _ <- IO.raiseUnless(t.status == TournamentStatus.Draft || t.status == TournamentStatus.Open)(
+            _ <- IO.raiseUnless(t.status == TournamentStatus.Open)(
               ConflictError(s"this tournament cannot be started; it is ${t.status.label.toLowerCase}")
             )
             entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn))
@@ -725,20 +734,6 @@ class TournamentService[T](
         } yield running
 
     // ---- shared ----------------------------------------------------------------------------
-
-    private def transition(gameId: GameId, tournamentId: TournamentId, callerExternalId: String)(
-        change: Tournament => IO[Tournament]
-    ): IO[Tournament] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
-                    changed <- change(t)
-                    _ <- new TournamentRepo(session).update(changed)
-                } yield changed
-            }
-        }
 
     /** Rewrites a running tournament's state, read under the tournament's lock, which the caller already holds. */
     private def updateState(session: skunk.Session[IO], t: Tournament, game: Game)(

@@ -561,7 +561,7 @@ object Router {
             case ("GET", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.tournaments.listForGame(gid, caller)))
 
-            // A new tournament, in draft, made from one of the game's models.
+            // A new tournament, open for entries, made from one of the game's models; its creator's entry, if asked.
             case ("POST", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid =>
                     body[TournamentRequest](request).flatMap(r =>
@@ -605,12 +605,7 @@ object Router {
                     )
                 )
 
-            // The owner's steps through a tournament's life: open for entries, start, call off.
-            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "open" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) =>
-                    ok(services.tournaments.open(gameId = gid, tournamentId = t, callerExternalId = caller))
-                )
-
+            // The owner's steps through a tournament's life: start, call off.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "start" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
                     ok(services.tournaments.start(gameId = gid, tournamentId = t, callerExternalId = caller))

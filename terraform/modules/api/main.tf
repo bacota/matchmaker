@@ -372,7 +372,6 @@ locals {
     "POST /games/{gameId}/tournaments",
     "GET /games/{gameId}/tournaments/{tournamentId}",
     "PUT /games/{gameId}/tournaments/{tournamentId}",
-    "POST /games/{gameId}/tournaments/{tournamentId}/open",
     "POST /games/{gameId}/tournaments/{tournamentId}/start",
     "POST /games/{gameId}/tournaments/{tournamentId}/stop",
     "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
