@@ -1334,6 +1334,13 @@ object Tournaments {
         var acceptedProblems: List[Problem] = Nil
         // Whether the next check is of the format the form fills in as the formats arrive: not a change to undo.
         var isFillingIn = false
+        /* The banner saying a change was undone, while it may still be up. The undoing has already put the problem
+         * right, so the banner comes down at the next change made on the form, or when the form closes. */
+        var undoneNotice: Option[String] = None
+        def withdrawUndoneNotice(): Unit = {
+            undoneNotice.foreach(Store.withdrawProblem)
+            undoneNotice = None
+        }
         def checkChange(): Unit = {
             val now = found
             val raised = now.filterNot(acceptedProblems.contains)
@@ -1355,7 +1362,9 @@ object Tournaments {
                   chooseRoles -> roles
                 )
                 problems.set(acceptedProblems)
-                Store.reportProblem(s"That change was undone: ${raised.map(_.describe).mkString("; ")}")
+                val notice = s"That change was undone: ${raised.map(_.describe).mkString("; ")}"
+                Store.reportProblem(notice)
+                undoneNotice = Some(notice)
             }
         }
 
@@ -1448,6 +1457,10 @@ object Tournaments {
 
         div(
           cls := "card competition-form",
+          // Any field's input or change bubbles up to here; setting the fields from code, as an undo does, does not.
+          onInput --> (_ => withdrawUndoneNotice()),
+          onChange --> (_ => withdrawUndoneNotice()),
+          onUnmountCallback(_ => withdrawUndoneNotice()),
           // Headed when it is a dialog of its own, which is named by its heading.
           headingId.fold(emptyNode)(id => h3(idAttr := id, "Issue Challenge or Create Tournament")),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
@@ -1542,7 +1555,9 @@ object Tournaments {
                       // Gone with the pool size it fills in.
                       Views.shownWhen(labelOf("competition.poolSize", Labels.competition.poolSize)),
                       s"One pool of everyone entered ($everyone)",
-                      onClick --> (_ => poolSize.set(everyone.toString))
+                      onClick --> { _ =>
+                          withdrawUndoneNotice(); poolSize.set(everyone.toString)
+                      }
                     )
                 } else emptyNode
               ),

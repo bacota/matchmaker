@@ -761,6 +761,15 @@ object Store {
         bannerOwner = Banner.Action
     }
 
+    /** Takes down a banner `reportProblem` raised, for a problem that has since gone -- but only while it is still the
+      * one showing, so that whatever has been reported since is left up.
+      */
+    def withdrawProblem(message: String): Unit =
+        if (bannerOwner == Banner.Action && error.now().contains(message)) {
+            error.set(None)
+            bannerOwner = Banner.Nobody
+        }
+
     /** The same, holding `busy` for as long as the request is in flight, so the button that started it can show that it
       * is waiting. The flag is cleared however the request ends — a failure re-enables the button rather than leaving
       * it spinning on an answer that already came.
