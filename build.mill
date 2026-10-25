@@ -39,6 +39,7 @@ def textObject(file: os.Path, objectName: String, example: String): String = {
   keys.filterNot(_.matches(name + "\\." + name)).foreach { key =>
     throw new Exception(s"$fileName: '$key' is not two names joined by a dot, such as $example")
   }
+  if (keys.exists(_.startsWith("keys."))) throw new Exception(s"$fileName: 'keys' is taken, by the list of every key")
   val objects = keys.groupBy(_.takeWhile(_ != '.')).toSeq.sortBy(_._1).map { (screen, inScreen) =>
     val members = inScreen.map { key =>
       val member = key.drop(screen.length + 1)
@@ -56,9 +57,11 @@ def textObject(file: os.Path, objectName: String, example: String): String = {
     }
     s"  object `$screen` {\n${members.mkString("\n")}\n  }"
   }
+  // Every key, for checking a format's form overrides (`StandardModel.formOverrides`) name one there is.
+  val keySet = s"  val keys: Set[String] = Set(\n${keys.map(k => "    " + literal(k)).mkString(",\n")}\n  )"
   "package com.vivi.matchmaker.ui\n\n" +
     s"/** Generated from matchmaker/ui/$fileName by build.mill: edit that, not this. */\n" +
-    s"private[ui] object $objectName {\n${objects.mkString("\n\n")}\n}\n"
+    s"private[ui] object $objectName {\n${(objects :+ keySet).mkString("\n\n")}\n}\n"
 }
 
 object matchmaker extends ScalaModule {
