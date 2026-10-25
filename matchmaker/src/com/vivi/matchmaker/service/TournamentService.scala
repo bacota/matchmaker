@@ -215,8 +215,8 @@ class TournamentService[T](
 
     /** The owner's edit of a tournament. Before it starts, anything -- but only an admin of the game may make a
       * friendly one rated; once it is running, its name and description, its owner, and the settings that apply to
-      * rounds still to come. Never once it is over. One running whose rounds run themselves begins its next round if it
-      * is waiting for one.
+      * rounds still to come. Never once it is over. One that starts itself and is left full starts, and one running
+      * whose rounds run themselves begins its next round if it is waiting for one.
       */
     def update(
         gameId: GameId,
@@ -314,13 +314,24 @@ class TournamentService[T](
                         }
                         withOwner = updated.copy(owner = owner.getOrElse(updated.owner))
                         _ <- new TournamentRepo(session).update(withOwner)
-                    } yield withOwner
+                        // Left full and starting itself, by a lower most or the flag turned on: no entry can come to
+                        // fill it now, so the edit is what starts it, as the filling entry would have.
+                        edited <-
+                            if (withOwner.status == TournamentStatus.Open && withOwner.settings.isAutoStarted)
+                                new EntrantRepo(session).list(gameId, tournamentId).flatMap { entries =>
+                                    if (withOwner.settings.maxEntrants.contains(entries.count(!_.isWithdrawn)))
+                                        startIn(session = session, t = withOwner, game = game)
+                                    else IO.pure(withOwner)
+                                }
+                            else IO.pure(withOwner)
+                    } yield edited
                 }
             }
             .flatTap(t =>
-                // Rounds turned to run themselves begin the one waiting, if it is: the first after a start by hand,
-                // or the next after a round that ended while the flag was still off. `autoStart` decides that under
-                // the lock, so an edit with the flag already on asks for nothing that would not happen anyway.
+                // Rounds turned to run themselves begin the one waiting, if it is: the first after a start by hand or
+                // by this edit, or the next after a round that ended while the flag was still off. `autoStart` decides
+                // that under the lock, so an edit with the flag already on asks for nothing that would not happen
+                // anyway.
                 IO.whenA(t.status == TournamentStatus.Running && t.settings.isAutoStarted)(
                   started(t.gameId, t.tournamentId)
                 )
