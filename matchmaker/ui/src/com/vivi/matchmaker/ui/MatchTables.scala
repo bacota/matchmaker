@@ -453,7 +453,7 @@ object MatchTables {
                   // `MatchStarted`, but that match has already started, so it is a choice that could
                   // never apply again. What is saved for it is what was fetched, unchanged.
                   Notifications.form(
-                    heading = "Notification Preferences for this match",
+                    heading = Headings.matches.notifications,
                     explanation = "What we email you about this match, whatever you change elsewhere later.",
                     preferences = preferences,
                     withDefault = false,

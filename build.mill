@@ -264,15 +264,17 @@ object matchmaker extends ScalaModule {
 
     def sources = Task.Sources(Seq(moduleDir / "src") ++ sharedSources(moduleDir)*)
 
-    /** The text of every "?" tip, and the caption of every form field, each kept in one file to be edited without
-      * touching the code.
+    /** The text of every "?" tip, the caption of every form field and the heading of every section, each kept in one
+      * file to be edited without touching the code.
       */
     def tipsFile = Task.Source(moduleDir / "tips.properties")
     def labelsFile = Task.Source(moduleDir / "labels.properties")
+    def headingsFile = Task.Source(moduleDir / "headings.properties")
     def errorsFile = Task.Source(moduleDir / os.up / "errors.properties")
 
-    /** `tips.properties` as `object Tips` and `labels.properties` as `object Labels`, and matchmaker's
-      * `errors.properties` as `ErrorText`, as the model compiled here uses it; see [[textObject]].
+    /** `tips.properties` as `object Tips`, `labels.properties` as `object Labels` and `headings.properties` as
+      * `object Headings`, and matchmaker's `errors.properties` as `ErrorText`, as the model compiled here uses it; see
+      * [[textObject]].
       */
     def generatedSources = Task {
       os.write(Task.dest / "ErrorText.scala", errorText(errorsFile().path))
@@ -283,6 +285,10 @@ object matchmaker extends ScalaModule {
       os.write(
         Task.dest / "Labels.scala",
         textObject(file = labelsFile().path, objectName = "Labels", example = "game.name")
+      )
+      os.write(
+        Task.dest / "Headings.scala",
+        textObject(file = headingsFile().path, objectName = "Headings", example = "account.nickname")
       )
       super.generatedSources() ++ Seq(PathRef(Task.dest))
     }
@@ -426,7 +432,12 @@ object engines extends Module {
       */
     def errorsFile = Task.Source(moduleDir / "errors.properties")
 
-    /** `errors.properties` as `com.vivi.engine.ErrorText`; see [[textObject]]. */
+    /** The headings of the pages every engine serves alike, such as the sign-in; a game's own page keeps its own. */
+    def headingsFile = Task.Source(moduleDir / "headings.properties")
+
+    /** `errors.properties` as `com.vivi.engine.ErrorText`, and `headings.properties` as `com.vivi.engine.Headings`;
+      * see [[textObject]].
+      */
     def generatedSources = Task {
       os.write(
         Task.dest / "ErrorText.scala",
@@ -434,6 +445,16 @@ object engines extends Module {
           file = errorsFile().path,
           objectName = "ErrorText",
           example = "matches.notFound",
+          pkg = "com.vivi.engine",
+          modifier = ""
+        )
+      )
+      os.write(
+        Task.dest / "Headings.scala",
+        textObject(
+          file = headingsFile().path,
+          objectName = "Headings",
+          example = "signIn.signIn",
           pkg = "com.vivi.engine",
           modifier = ""
         )

@@ -240,7 +240,7 @@ object Views {
     private def header: HtmlElement =
         headerTag(
           cls := "header",
-          h1("Matchmaker"),
+          h1(Headings.app.title),
           // Unmissable, because a page that looks like the real thing but authenticates nobody is
           // exactly the page you do not want to be confused about.
           if (Config.current.isHeaderAuth)
@@ -328,7 +328,7 @@ object Views {
 
         div(
           cls := "card",
-          h2("Choose a Nickname"),
+          h2(Headings.app.chooseNickname),
           p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
           field(
             Labels.register.nickname,

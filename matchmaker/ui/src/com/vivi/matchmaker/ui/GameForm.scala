@@ -77,7 +77,7 @@ object GameForm {
             id = s"$formKey-roles-tip",
             subject = "Roles",
             text = Tips.game.roles
-          )(h4("Roles")),
+          )(h4(Headings.gameForm.roles)),
           children <-- roles.signal.map(_.zipWithIndex.map { (draft, i) =>
               val nameTip = s"$formKey-role-$i-name-tip"
               val displayTip = s"$formKey-role-$i-display-tip"
@@ -175,7 +175,7 @@ object GameForm {
             id = s"$formKey-parameters-tip",
             subject = "Parameters",
             text = Tips.game.parameters
-          )(h4("Parameters")),
+          )(h4(Headings.gameForm.parameters)),
           children <-- parameters.signal.map(_.zipWithIndex.map { (draft, i) =>
               // A caption on each box, as on a role's: a placeholder is gone at the first keystroke, and with it
               // any way of telling which of four alike boxes is which.

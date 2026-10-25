@@ -64,7 +64,7 @@ object Characters {
     private def prompt(game: Game, checked: Var[Option[String]], focusStatus: () => Unit): HtmlElement =
         div(
           cls := "card",
-          h3(s"Make Your Character for ${game.displayName}"),
+          h3(Headings.characters.make(game.displayName)),
           p(
             s"You need a character in ${game.displayName} to enter a competition. ",
             "Characters are made in the game itself, which tells matchmaker once yours exists."

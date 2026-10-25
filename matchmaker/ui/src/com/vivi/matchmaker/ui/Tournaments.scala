@@ -56,7 +56,7 @@ object Tournaments {
                   )
           ),
           Views.refreshableSection(
-            heading = "Open Competitions",
+            heading = Headings.tournaments.open,
             reload = () => Store.reloadTournaments(game.gameId),
             subsection = false
           )(
@@ -65,7 +65,7 @@ object Tournaments {
               cls := "new-competition",
               htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
               aria.expanded <-- Store.showTournamentForm.signal,
-              "Issue Challenge or Create Tournament",
+              Headings.tournaments.create,
               onMountCallback(context => newCompetitionTrigger = Some(context.thisNode.ref)),
               onUnmountCallback(_ => newCompetitionTrigger = None),
               onClick --> (_ => Store.showTournamentForm.set(true))
@@ -107,7 +107,7 @@ object Tournaments {
               if (choices.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = "Choose a Role",
+                    heading = Headings.tournaments.chooseRole,
                     reload = () => Store.reloadTournamentChoices(),
                     subsection = false
                   )(
@@ -144,7 +144,7 @@ object Tournaments {
               if (waiting.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = "Rounds to Start",
+                    heading = Headings.tournaments.roundsToStart,
                     reload = () => Store.reloadMyTournaments(),
                     subsection = false
                   )(
@@ -178,7 +178,7 @@ object Tournaments {
               if (mine.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = "My Competitions",
+                    heading = Headings.tournaments.mine,
                     reload = () => Store.reloadMyTournaments(),
                     subsection = false
                   )(
@@ -187,7 +187,7 @@ object Tournaments {
           },
           // Drawn once, not from the list: the Show control keeps its focus as the list it asks for arrives.
           Views.refreshableSection(
-            heading = "Completed Challenges and Tournaments",
+            heading = Headings.tournaments.completed,
             reload = () => Store.reloadMyEndedTournaments(),
             subsection = false
           )(
@@ -231,7 +231,7 @@ object Tournaments {
               if (rows.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = "Where You Stand",
+                    heading = Headings.tournaments.whereYouStand,
                     reload = () => Store.reloadTournamentStandings(),
                     subsection = false
                   )(
@@ -399,7 +399,9 @@ object Tournaments {
           entriesSection(d, me),
           if (d.summary.isOwner && t.settings.isInvitational) invitationsSection(d) else emptyNode,
           roundSection(d = d, game = game, me = me, names = names),
-          d.state.fold(emptyNode)(s => standings(node = s.root, names = names, heading = Some("Standings"))),
+          d.state.fold(emptyNode)(s =>
+              standings(node = s.root, names = names, heading = Some(Headings.tournaments.standings))
+          ),
           d.state.flatMap(_.root.ranking).fold(emptyNode)(r => finalRanking(r, names))
         )
         Detail(top = top, rest = rest)
@@ -461,7 +463,7 @@ object Tournaments {
             roundHours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round))
         div(
           cls := "card",
-          h3("Run This Competition"),
+          h3(Headings.tournaments.run),
           morePools.getOrElse(emptyNode),
           div(
             cls := "row",
@@ -570,7 +572,7 @@ object Tournaments {
         val characterGame = d.gameType == GameType.Character
         val chosen: Var[Option[CharacterId]] = Var(None)
         sectionTag(
-          h3(s"Entries (${d.entries.count(!_.isWithdrawn)})"),
+          h3(Headings.tournaments.entries(d.entries.count(!_.isWithdrawn).toString)),
           if (d.entries.isEmpty) p(cls := "empty", "Nobody has entered yet.")
           else
               ul(
@@ -717,7 +719,7 @@ object Tournaments {
         val found: Var[Seq[PublicPlayer]] = Var(asked.toSeq)
         val invitedCharacters = d.invitedCharacters.map(_.character.characterId).toSet
         sectionTag(
-          h3("Invitations"),
+          h3(Headings.tournaments.invitations),
           if (d.invited.isEmpty && d.invitedCharacters.isEmpty) p(cls := "empty", "Nobody is invited yet.")
           else
               ul(
@@ -835,7 +837,7 @@ object Tournaments {
         else
             sectionTag(
               aria.live := "polite",
-              h3(s"Round ${d.state.map(_.round).getOrElse(0)}"),
+              h3(Headings.tournaments.round(d.state.map(_.round).getOrElse(0).toString)),
               if (d.summary.isRoundOver)
                   p(
                     cls := "detail",
@@ -998,11 +1000,13 @@ object Tournaments {
             )
 
     private def runView(run: StageRun, names: Long => String): HtmlElement =
+        val stage = (run.stage + 1).toString
+        val named =
+            if (run.repetition > 0)
+                Headings.tournaments.stageRepeated(stage = stage, play = (run.repetition + 1).toString)
+            else Headings.tournaments.stage(stage)
         div(
-          h4(
-            s"Stage ${run.stage + 1}" + (if (run.repetition > 0) s", play ${run.repetition + 1}" else "") +
-                (if (run.isCompleted) "" else " (being played)")
-          ),
+          h4(if (run.isCompleted) named else Headings.tournaments.stageBeingPlayed(named)),
           run.pools.zipWithIndex.map((pool, i) => poolView(pool = pool, label = poolName(i), names = names)),
           if (run.sittingOut.isEmpty) emptyNode
           else p(cls := "detail", s"Sitting this one out: ${run.sittingOut.map(names).mkString(", ")}")
@@ -1065,7 +1069,7 @@ object Tournaments {
 
     private def finalRanking(ranking: Map[Long, Int], names: Long => String): HtmlElement =
         sectionTag(
-          h3("Final Ranking"),
+          h3(Headings.tournaments.finalRanking),
           div(
             cls := "table-scroll",
             table(
@@ -1112,7 +1116,7 @@ object Tournaments {
       *
       * For a game without roles it also asks how many players a match has, and — for a tournament not yet started, with
       * `entered` entries so far — offers the pool size that puts everyone entered in one pool. `headingId` heads it
-      * "Issue Challenge or Create Tournament", under that id, for the dialog it is shown in.
+      * Headings.tournaments.create, under that id, for the dialog it is shown in.
       */
     def form(
         game: Game,
@@ -1463,7 +1467,7 @@ object Tournaments {
           onChange --> (_ => withdrawUndoneNotice()),
           onUnmountCallback(_ => withdrawUndoneNotice()),
           // Headed when it is a dialog of its own, which is named by its heading.
-          headingId.fold(emptyNode)(id => h3(idAttr := id, "Issue Challenge or Create Tournament")),
+          headingId.fold(emptyNode)(id => h3(idAttr := id, Headings.tournaments.create)),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
           models --> { ms =>
               chosen.now() match {
@@ -1562,7 +1566,7 @@ object Tournaments {
                     )
                 } else emptyNode
               ),
-          h4("Settings"),
+          h4(Headings.tournaments.settings),
           checkbox(
             caption = labelOf("competition.invitational", Labels.competition.invitational),
             v = invitational,
@@ -1808,7 +1812,7 @@ object Tournaments {
             id = tipId,
             subject = "Competition Formats",
             text = Tips.competition.formats
-          )(h3("Competition Formats")),
+          )(h3(Headings.tournaments.formats)),
           div(aria.live := "polite", cls := "formats-said", child.text <-- said.signal),
           listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
             p(cls := "empty", "There are no formats yet.")

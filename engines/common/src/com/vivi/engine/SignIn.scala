@@ -444,7 +444,7 @@ ${authScript(Some(login))}
 
     if (stage.kind === "credentials") {
       box.innerHTML = trouble +
-        "<form><h2>Sign In</h2>" +
+        "<form><h2>" + ${jsString(escape(Headings.signIn.signIn))} + "</h2>" +
         field("si-email", "email", "username", "Email", signInEmail) +
         field("si-password", "password", "current-password", "Password", signInPassword) +
         '<button type="submit" id="si-submit"' + off + ">Sign in</button>" +
@@ -480,7 +480,7 @@ ${authScript(Some(login))}
 
     } else if (stage.kind === "code") {
       box.innerHTML = trouble +
-        "<form><h2>Enter Your Code</h2><p>" +
+        "<form><h2>" + ${jsString(escape(Headings.signIn.code))} + "</h2><p>" +
         (stage.deliveredTo ? "We sent a sign-in code to " + escapeHtml(stage.deliveredTo) + "." : "We sent you a sign-in code.") +
         "</p>" +
         // one-time-code lets phones offer the code straight from the notification.
@@ -499,7 +499,7 @@ ${authScript(Some(login))}
 
     } else {
       box.innerHTML = trouble +
-        "<form><h2>Choose a Password</h2>" +
+        "<form><h2>" + ${jsString(escape(Headings.signIn.newPassword))} + "</h2>" +
         "<p>This account is signed in with a temporary password. Pick a permanent one to continue.</p>" +
         field("si-new-password", "password", "new-password", "New password", "") +
         '<button type="submit" id="si-submit"' + off + ">Save and sign in</button>" +

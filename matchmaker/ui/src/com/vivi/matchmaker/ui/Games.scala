@@ -137,7 +137,7 @@ object Games {
         gameDialog(
           existing = Some(game),
           headingId = s"edit-game-${game.gameId.value}-heading",
-          title = s"Edit ${game.displayName}",
+          title = Headings.games.edit(game.displayName),
           close = () => closeEditGame(game),
           onSaved = _ => if (editGameOpening == opening) closeEditGame(game)
         )
@@ -165,7 +165,7 @@ object Games {
       */
     private def gameHistory(game: Game): HtmlElement =
         refreshableSection(
-          heading = "Your Completed Matches",
+          heading = Headings.games.completedMatches,
           refreshing = MatchSections.refreshingCompleted,
           reload = () => Store.reloadCompleted(),
           subsection = false
@@ -206,7 +206,7 @@ object Games {
             }
         div(
           onUnmountCallback(_ => opening += 1),
-          h2("Add a Game"),
+          h2(Headings.games.add),
           child <-- currentPlayer.map {
               case Some(player) if player.isAdmin =>
                   div(
@@ -226,7 +226,7 @@ object Games {
                             gameDialog(
                               existing = None,
                               headingId = "add-game-heading",
-                              title = "Add a Game",
+                              title = Headings.games.add,
                               close = close,
                               onSaved = saved => if (opening == mine) Store.show(Store.Page.OneGame(saved.gameId))
                             )
@@ -248,7 +248,7 @@ object Games {
     private def disabledGames: HtmlElement =
         div(
           cls := "detail-panel",
-          h3("Disabled Games"),
+          h3(Headings.games.disabled),
           // Through the store, like every fetch: the Coalescer, and nothing committed after a sign-out.
           onMountCallback(_ => Store.reloadDisabledGames()),
           div(
