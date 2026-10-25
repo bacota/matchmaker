@@ -312,8 +312,9 @@ class TournamentRepo(session: Session[IO]) {
     private val isNotStarted: Fragment[Void] = sql"t.status = 'open'"
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
-    // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
-    // with every match of its round over -- waiting, unless its rounds start themselves, on its owner.
+    // entries are still in it, whether the viewer has an entry or an invitation, whether it is under way
+    // with every match of its round over -- waiting, unless its rounds start themselves, on its owner -- the name
+    // of its format, and the round being played.
     private val summaryColumns =
         sql"""g.display_name, o.nickname,
               (SELECT count(*) FROM entrant e
@@ -329,17 +330,20 @@ class TournamentRepo(session: Session[IO]) {
                                     AND c.player_id = me.player_id))),
               t.status = 'running' AND t.current_round IS NOT NULL AND NOT EXISTS (SELECT 1 FROM match m
                        WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id
-                         AND m.round = t.current_round AND m.status <> 'F')"""
+                         AND m.round = t.current_round AND m.status <> 'F'),
+              (SELECT f.name FROM tournament_model f WHERE f.tournament_model_id = t.tournament_model_id),
+              t.current_round"""
 
-    private val summaryRow = text *: text *: int8 *: bool *: bool *: bool
+    private val summaryRow = text *: text *: int8 *: bool *: bool *: bool *: text *: int4.opt
 
-    // The row decodes as one element, its summary as six more: (game, id, row, game name, owner, entries,
-    // entered, invited, round over).
-    private type SummaryRow = (GameId, TournamentId, Row, String, String, Long, Boolean, Boolean, Boolean)
+    // The row decodes as one element, its summary as eight more: (game, id, row, game name, owner, entries,
+    // entered, invited, round over, format, round).
+    private type SummaryRow =
+        (GameId, TournamentId, Row, String, String, Long, Boolean, Boolean, Boolean, String, Option[Int])
     private val summaryCodec: Codec[SummaryRow] = gameId *: tournamentId *: row *: summaryRow
 
     private def summaryOf(viewer: PlayerId)(s: SummaryRow): TournamentSummary = {
-        val (game, id, r, gameName, owner, entrants, entered, invited, roundOver) = s
+        val (game, id, r, gameName, owner, entrants, entered, invited, roundOver, formatName, round) = s
         val t = tournamentOf(game = game, id = id, r = r)
         TournamentSummary(
           tournament = t,
@@ -349,7 +353,9 @@ class TournamentRepo(session: Session[IO]) {
           isOwner = t.owner == viewer,
           isEntered = entered,
           isInvited = invited,
-          isRoundOver = roundOver
+          isRoundOver = roundOver,
+          formatName = formatName,
+          round = round
         )
     }
 

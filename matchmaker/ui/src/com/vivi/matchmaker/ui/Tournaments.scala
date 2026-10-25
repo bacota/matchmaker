@@ -140,41 +140,17 @@ object Tournaments {
                 .map(names => if (names.isEmpty) "" else names.mkString("A round is ready to start in ", ", ", "."))
           ),
           child <-- Store.myTournaments.signal.map { mine =>
-              val waiting = mine.filter(isWaitingOnMe)
-              if (waiting.isEmpty) emptyNode
+              val running = mine.filter(_.isOwner)
+              if (running.isEmpty) emptyNode
               else
                   Views.refreshableSection(
-                    heading = Headings.tournaments.roundsToStart,
+                    heading = Headings.tournaments.running,
                     reload = () => Store.reloadMyTournaments(),
                     subsection = false
-                  )(
-                    ul(
-                      waiting.map { s =>
-                          val t = s.tournament
-                          li(
-                            cls := "row",
-                            button(
-                              cls := "link",
-                              tpe := "button",
-                              t.name,
-                              onClick --> (_ => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId)))
-                            ),
-                            span(cls := "detail", s" · ${s.gameName} · every match of the round is over"),
-                            busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
-                                Store.runSignedIn(
-                                  ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId),
-                                  busy
-                                ) { _ =>
-                                    Store.reloadMyTournaments()
-                                    Store.reloadTournamentChoices()
-                                }
-                            ).amend(aria.label := s"Start Next Round of ${t.name}")
-                          )
-                      }
-                    )
-                  )
+                  )(ul(running.map(runningRow)))
           },
-          child <-- Store.myTournaments.signal.map { mine =>
+          // Those the caller runs are listed above, under their own heading.
+          child <-- Store.myTournaments.signal.map(_.filterNot(_.isOwner)).map { mine =>
               if (mine.isEmpty) emptyNode
               else
                   Views.refreshableSection(
@@ -298,6 +274,94 @@ object Tournaments {
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
         s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
+    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Edit button, and
+      * the step it waits on them for -- starting it, or starting its next round -- when it waits on one.
+      */
+    private def runningRow(s: TournamentSummary): HtmlElement = {
+        val t = s.tournament
+        val isStopped = t.isStopped && t.status == TournamentStatus.Running
+        val progress = List(s.gameName, t.status.label) ++ s.round.map(r => s"round $r") ++
+            Option.when(s.isRoundOver)("round over") ++ Option.when(isStopped)("stopped") ++
+            Option.when(s.formatName.nonEmpty)(s.formatName) ++ List(s"${s.entrants} entered")
+        // Each game parameter by the name its game shows it under, which is known only once the games have come.
+        def parameters(game: Option[Game]) = GameSettingsFields
+            .storedChoices(t.settings.gameSettings)
+            .toSeq
+            .sortBy((name, _) => game.fold(0)(_.parameters.indexWhere(_.name == name)))
+            .map { (name, chosen) =>
+                val shown = game.flatMap(_.parameters.find(_.name == name)).map(_.displayName).filter(_ != name)
+                s"${shown.getOrElse(name.capitalize)}: $chosen"
+            }
+        val ticked = List(
+          t.settings.isInvitational -> Labels.competition.invitational,
+          t.settings.isFriendly -> Labels.competition.friendly,
+          t.settings.hasLateEntries -> Labels.competition.lateEntries,
+          t.settings.hasConcurrentRounds -> Labels.competition.concurrentRounds,
+          t.settings.isPublic -> Labels.competition.isPublic,
+          t.settings.hasRoleChoice -> Labels.competition.chooseRoles,
+          t.settings.isLive -> Labels.competition.live,
+          t.settings.isAutoStarted -> Labels.competition.autoStart
+        ).collect { case (true, caption) => caption }
+        li(
+          cls := "row",
+          button(
+            cls := "link",
+            tpe := "button",
+            t.name,
+            onClick --> (_ => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId)))
+          ),
+          span(cls := "detail", progress.mkString(" · ", " · ", "")),
+          div(
+            cls := "detail",
+            child.text <-- Store.games.signal
+                .map(_.find(_.gameId == t.gameId))
+                .distinct
+                .map(game => (parameters(game) ++ ticked).mkString(" · "))
+          ),
+          div(actions(s))
+        )
+    }
+
+    /* The Edit button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
+    private def actions(s: TournamentSummary): Seq[Modifier[HtmlElement]] = {
+        val t = s.tournament
+        // One that starts by itself once full waits on nobody; one without a most is always started by its owner.
+        val isWaitingToStart = t.status == TournamentStatus.Open && !t.settings.isAutoStarted
+        Seq(
+          button(
+            tpe := "button",
+            "Edit",
+            aria.label := s"Edit ${t.name}",
+            onClick --> { _ =>
+                editOnArrival = Some(t.tournamentId)
+                Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
+            }
+          ),
+          if (isWaitingToStart)
+              busyButton(label = "Start Competition", busy = stepBusy(t, "start"))(busy =>
+                  Store.runSignedIn(
+                    ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start"),
+                    busy
+                  ) { _ =>
+                      Store.reloadMyTournaments()
+                      Store.reloadTournamentChoices()
+                  }
+              ).amend(aria.label := s"Start Competition: ${t.name}")
+          else if (isWaitingOnMe(s))
+              busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
+                  Store.runSignedIn(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId), busy) { _ =>
+                      Store.reloadMyTournaments()
+                      Store.reloadTournamentChoices()
+                  }
+              ).amend(aria.label := s"Start Next Round of ${t.name}")
+          else emptyNode
+        )
+    }
+
+    /* The tournament whose page is to open with its Edit form open: set by a main-page Edit button, and taken by the
+     * page as it is drawn. */
+    private var editOnArrival: Option[TournamentId] = None
+
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
           rows.map { s =>
@@ -328,21 +392,27 @@ object Tournaments {
      * from the tournament as it then stood -- redrawn with the page, it closed, or lost what had been typed. The
      * buttons' busy flags are held too, by `heldBusy`. */
     def page(gameId: GameId, tournamentId: TournamentId): HtmlElement = {
-        val editing = Var(false)
+        val editing = Var(editOnArrival.contains(tournamentId))
+        editOnArrival = None
         // Drawn once per answer, and shared by the two parts.
         val parts = Store.tournament.signal.map(
           _.filter(_.summary.tournament.tournamentId == tournamentId).map(detail(_, editing))
         )
         div(
           child <-- parts.map(_.fold(p(cls := "empty", "Loading…"))(_.top)),
-          child <-- editing.signal.distinct.map(isOpen =>
-              Store.tournament
-                  .now()
-                  .filter(_ => isOpen)
-                  .filter(_.summary.tournament.tournamentId == tournamentId)
-                  .flatMap(editForm(_, editing))
-                  .getOrElse(emptyNode)
-          ),
+          // Drawn again only as it opens or closes, or as the tournament first arrives -- the form can be asked for
+          // open before it has, from the main page's Edit -- and not with every reload.
+          child <-- editing.signal
+              .combineWith(parts.map(_.isDefined))
+              .distinct
+              .map((isOpen, _) =>
+                  Store.tournament
+                      .now()
+                      .filter(_ => isOpen)
+                      .filter(_.summary.tournament.tournamentId == tournamentId)
+                      .flatMap(editForm(_, editing))
+                      .getOrElse(emptyNode)
+              ),
           child <-- parts.map(_.fold(emptyNode)(_.rest))
         )
     }
@@ -362,8 +432,12 @@ object Tournaments {
             )
     }
 
-    /** One flag for both Start Next Round buttons, the Rounds to Start row's and the tournament page's. */
+    /** One flag for both Start Next Round buttons, the main page's and the tournament page's. */
     private def startRoundBusy(t: Tournament): Var[Boolean] = heldBusy(s"start round ${t.tournamentId}")
+
+    /** One flag for each of the owner's steps through a tournament's life, for the main page's button and the page's.
+      */
+    private def stepBusy(t: Tournament, step: String): Var[Boolean] = heldBusy(s"$step tournament ${t.tournamentId}")
 
     private def reload(d: TournamentDetail): Unit = {
         val t = d.summary.tournament
@@ -418,7 +492,7 @@ object Tournaments {
     private def ownerControls(d: TournamentDetail, editing: Var[Boolean]): HtmlElement = {
         val t = d.summary.tournament
         def step(label: String, name: String) =
-            busyButton(label = label, busy = heldBusy(s"$name tournament ${t.tournamentId}"))(busy =>
+            busyButton(label = label, busy = stepBusy(t, name))(busy =>
                 Store.runSignedIn(
                   ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = name),
                   busy
@@ -1087,11 +1161,19 @@ object Tournaments {
     // ---- creating and editing ---------------------------------------------------------------
 
     /** The models offered for a game, grouped by classification, as a select's options: those with none first, under no
-      * heading.
+      * heading. `current` is drawn chosen: the options can arrive after the select's value was set, and a value set
+      * before its option exists is lost, leaving the first shown as chosen.
       */
-    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] = {
+    private def modelOptions(models: Seq[TournamentModel], current: Option[TournamentModelId]): Seq[HtmlElement] = {
         def options(ms: Seq[TournamentModel]): Seq[HtmlElement] =
-            ms.sortBy(_.name.toLowerCase).map(m => option(value := m.tournamentModelId.value.toString, m.name))
+            ms.sortBy(_.name.toLowerCase)
+                .map(m =>
+                    option(
+                      value := m.tournamentModelId.value.toString,
+                      selected := current.contains(m.tournamentModelId),
+                      m.name
+                    )
+                )
         val (classified, unclassified) = models.partition(_.classification.isDefined)
         options(unclassified) ++
             classified
@@ -1525,9 +1607,15 @@ object Tournaments {
                     children <-- models
                         .combineWith(keptRetired)
                         .map((ms, retired) =>
-                            modelOptions(ms) ++
+                            modelOptions(ms, modelId.now()) ++
                                 retired
-                                    .map(id => option(value := id.value, "Current format (no longer offered)"))
+                                    .map(id =>
+                                        option(
+                                          value := id.value,
+                                          selected := modelId.now().contains(id),
+                                          "Current format (no longer offered)"
+                                        )
+                                    )
                         )
                   )
                 ),
