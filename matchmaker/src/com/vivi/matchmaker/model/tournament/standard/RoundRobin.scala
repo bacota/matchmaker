@@ -2,17 +2,28 @@ package com.vivi.matchmaker.model.tournament
 package standard
 
 /** Round Robin: the simplest tournament there is, one match of everyone who enters -- so there is no most to set, nor
-  * to start on, and the form leaves both out.
+  * to start on, and the form leaves both out, with late entries. Its pool is everyone taking part, so the form calls
+  * the pool size the number of participants, without the tip about pools, and says what starting by itself means here.
   */
 object RoundRobin
     extends StandardModel(
       id = "RR",
-      version = 2,
+      version = 3,
       name = "Round Robin Challenge",
       description = "",
       classification = None,
       hasRoleChoice = true,
-      formOverrides = Map("labels.competition.maxEntrants" -> None, "labels.competition.autoStart" -> None)
+      formOverrides = Map(
+        "labels.competition.maxEntrants" -> None,
+        "labels.competition.autoStart" -> None,
+        "labels.competition.poolSize" -> Some("Number of participants"),
+        "tips.competition.poolSize" -> None,
+        "tips.competition.autoRounds" -> Some(
+          "Start as soon as everybody signs up. If there is more than one round, then start each round as soon as the " +
+              "previous round ends."
+        ),
+        "labels.competition.lateEntries" -> None
+      )
     ) {
 
     /** The model's id, which the challenge screens find their tournaments by. */

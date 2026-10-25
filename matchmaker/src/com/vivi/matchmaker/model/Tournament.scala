@@ -6,10 +6,7 @@ import com.vivi.matchmaker.model.tournament.TournamentDesign
 /** Where a tournament is in its life. */
 enum TournamentStatus(val code: String, val label: String) {
 
-    /** Being set up by its owner: nobody may enter yet. */
-    case Draft extends TournamentStatus("draft", "Draft")
-
-    /** Taking entries. */
+    /** Taking entries, from the moment it is made. */
     case Open extends TournamentStatus("open", "Open for entries")
 
     /** Started: its rounds are being played. */
@@ -116,7 +113,7 @@ case class Tournament(
     tournamentModelId: TournamentModelId,
     defaultPoolSize: Int,
     settings: TournamentSettings,
-    status: TournamentStatus = TournamentStatus.Draft,
+    status: TournamentStatus = TournamentStatus.Open,
     startedAt: Option[Instant] = None,
     endedAt: Option[Instant] = None,
     roundStartedAt: Option[Instant] = None,
@@ -191,7 +188,7 @@ case class TournamentMatch(
 
 /** What a tournament is created or edited with: the model it is made from, its default pool size (`None` for the
   * model's suggestion), and its settings. `owner` hands an existing tournament to another player; a new one is its
-  * creator's.
+  * creator's. `entry` enters the creator in a new one as it is made, and is ignored by an edit.
   */
 case class TournamentRequest(
     name: String,
@@ -199,8 +196,12 @@ case class TournamentRequest(
     description: String = "",
     defaultPoolSize: Option[Int] = None,
     settings: TournamentSettings = TournamentSettings(),
-    owner: Option[PlayerId] = None
+    owner: Option[PlayerId] = None,
+    entry: Option[TournamentEntry] = None
 )
+
+/** A creator's entry in the tournament they are making: with which character of theirs, in a character game. */
+case class TournamentEntry(characterId: Option[CharacterId] = None)
 
 /** A tournament as a list shows it: the tournament, its game's name, its owner's nickname, how many have entered,
   * whether the viewer owns it, has entered it, or is invited, and whether it is under way with every match of its round

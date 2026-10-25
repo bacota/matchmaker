@@ -370,9 +370,18 @@ object Store {
       * must not be redrawn when some other game's list arrives.
       */
     def administers(gameId: GameId, player: Player): Signal[Boolean] =
-        gameAdminsByGame.signal
-            .map(byGame => player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId)))
-            .distinct
+        gameAdminsByGame.signal.map(isAdminIn(_, gameId, player)).distinct
+
+    /** Whether the player signed in administers the game, as [[administers]] says it now: for a form deciding, as it
+      * saves, what to send.
+      */
+    def isAdministering(gameId: GameId): Boolean = player.now() match {
+        case PlayerState.Registered(p) => isAdminIn(gameAdminsByGame.now(), gameId, p)
+        case _                         => false
+    }
+
+    private def isAdminIn(byGame: Map[GameId, Seq[GameAdmin]], gameId: GameId, player: Player): Boolean =
+        player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId))
 
     /** The player a new competition is to invite, carried from their page to the competition's.
       *
@@ -751,6 +760,15 @@ object Store {
         error.set(Some(message))
         bannerOwner = Banner.Action
     }
+
+    /** Takes down a banner `reportProblem` raised, for a problem that has since gone -- but only while it is still the
+      * one showing, so that whatever has been reported since is left up.
+      */
+    def withdrawProblem(message: String): Unit =
+        if (bannerOwner == Banner.Action && error.now().contains(message)) {
+            error.set(None)
+            bannerOwner = Banner.Nobody
+        }
 
     /** The same, holding `busy` for as long as the request is in flight, so the button that started it can show that it
       * is waiting. The flag is cleared however the request ends — a failure re-enables the button rather than leaving

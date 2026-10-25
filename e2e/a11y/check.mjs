@@ -329,17 +329,16 @@ try {
     await call("POST", `${MM}/tournament-models/sync`, {}, alice);
     await call("PUT", `${MM}/games/${gameId}/tournament-models/RR`, {}, alice);
 
-    // A one-match competition of the round robin format, as the New Competition dialog makes one: created, its
-    // invitations sent, opened, and entered by its owner.
+    // A one-match competition of the round robin format, as the New Competition dialog makes one: created with its
+    // owner entered, and its invitations sent.
     async function challenge({ poolSize, isAutoStarted = false, isOpen, isPublic = false, invitations = [] }, sub = alice) {
         const t = (await call("POST", `${MM}/games/${gameId}/tournaments`, {
             name: "A challenge", tournamentModelId: "RR", defaultPoolSize: poolSize,
             settings: { hasAutomaticRounds: true, isInvitational: !isOpen, isAutoStarted, isPublic, maxEntrants: poolSize },
+            entry: {},
         }, sub)).tournamentId;
         for (const playerId of invitations)
             await call("POST", `${MM}/games/${gameId}/tournaments/${t}/invitations`, { playerId }, sub);
-        await call("POST", `${MM}/games/${gameId}/tournaments/${t}/open`, {}, sub);
-        await call("POST", `${MM}/games/${gameId}/tournaments/${t}/entries`, {}, sub);
         return t;
     }
     async function newMatch(isPublic = false) {
