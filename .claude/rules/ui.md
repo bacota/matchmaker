@@ -35,7 +35,8 @@ refreshable section's heading. Status messages, live regions and empty-state tex
 
 A tip's text lives in `matchmaker/ui/tips.properties`, not in the code: the build generates `Tips` from it, so
 `game.roles` there is `Tips.game.roles`, and a `{name}` in a tip makes it a method taking `name`. A new tip adds a key
-there.
+there. A key the code asks for and the file lacks, or leaves empty, is `""` rather than a build failure, and the tip
+helpers show no ⓘ for it -- so a misspelt key builds, and only shows as a missing tip.
 
 ## Fetches go through the store
 

@@ -539,11 +539,12 @@ object Views {
     }
 
     /** A captioned text field whose explanation is a tip beside it rather than a line under it: [[withTip]] around a
-      * `label.field`, with the input pointed at the tip so that it is read out with the field.
+      * `label.field`, with the input pointed at the tip so that it is read out with the field. Just the field while
+      * `text` is empty.
       */
     private[ui] def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
         withTip(id = id, subject = caption, text = text)(
-          label(cls := "field", caption, control.amend(aria.describedBy := id))
+          label(cls := "field", caption, if (text.nonEmpty) control.amend(aria.describedBy := id) else control)
         )
 
     /** [[tipField]] whose caption and tip change as it is shown: the competition form's, which the format chosen may
@@ -601,7 +602,11 @@ object Views {
         )
 
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
-        tipped(id = id, text = text, control = control)(cls := "tip-toggle", aria.label := s"About $subject", tipIcon())
+        tipped(id = id, text = text, control = control, hasTip = Val(text.nonEmpty))(
+          cls := "tip-toggle",
+          aria.label := s"About $subject",
+          tipIcon()
+        )
 
     /** [[withTip]] whose subject and tip change as it is shown, with no tip while it is `None`. */
     private[ui] def withTip(id: String, subject: Signal[String], text: Signal[Option[String]])(
@@ -621,10 +626,13 @@ object Views {
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as an ⓘ beside it would. For a
       * cell too narrow to hold both a word and an ⓘ -- the heading of a running match's Friendly column. A button, so
       * that a keyboard and a finger can reach the tip as well as a mouse can, but set as the word with a dotted line
-      * under it.
+      * under it. Just the word while `text` is empty.
       */
     private def tipWord(id: String, word: String, text: String): HtmlElement =
-        tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
+        if (text.isEmpty) span(word)
+        else
+            tipped(id = id, text = text, control = emptyNode)(cls := "tip-toggle tip-word", word)
+                .amend(cls := "inline-tip")
 
     /* The tip, and the button that shows it after `control`: the ⓘ of `withTip`, or `tipWord`'s word. `text` is the
      * tip's words, or a `child.text` that keeps them up to date. While `hasTip` is false the button and the tip are

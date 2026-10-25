@@ -241,7 +241,12 @@ object MatchTables {
               role := "cell",
               cls := "elo",
               // Only the ⓘ, a word being too wide for the column; named for a screen reader by what it marks.
-              tipped(id = freshTipId("friendly-tip"), text = Tips.matches.friendly, control = emptyNode)(
+              tipped(
+                id = freshTipId("friendly-tip"),
+                text = Tips.matches.friendly,
+                control = emptyNode,
+                hasTip = Val(Tips.matches.friendly.nonEmpty)
+              )(
                 cls := "tip-toggle",
                 aria.label := "Friendly match",
                 tipIcon()

@@ -20,13 +20,17 @@ def sharedSources(moduleDir: os.Path): Seq[os.Path] = {
   * `<objectName>.game.roles`, and a value with `{name}` in it a method taking `name`. Compiled rather than fetched at run
   * time, so a key the code asks for and the file lacks, or a placeholder renamed on one side only, fails the build
   * instead of showing nothing. The object is `private[ui]` in the UI's package unless `pkg` and `modifier` say otherwise.
+  *
+  * With `canBeMissing`, a key the code asks for and the file lacks is `""` instead, whatever it would be given to fill:
+  * for the tips, where a tip the file leaves out is not shown.
   */
 def textObject(
     file: os.Path,
     objectName: String,
     example: String,
     pkg: String = "com.vivi.matchmaker.ui",
-    modifier: String = "private[ui] "
+    modifier: String = "private[ui] ",
+    canBeMissing: Boolean = false
 ): String = {
   val props = new java.util.Properties
   val in = java.nio.file.Files.newBufferedReader(file.toNIO, java.nio.charset.StandardCharsets.UTF_8)
@@ -62,14 +66,29 @@ def textObject(
         s"    def `$member`(${params.map(p => s"`$p`: String").mkString(", ")}): String = ${body.mkString(" + ")}"
       }
     }
-    s"  object `$screen` {\n${members.mkString("\n")}\n  }"
+    val parent = if (canBeMissing) " extends Missing" else ""
+    s"  object `$screen`$parent {\n${members.mkString("\n")}\n  }"
   }
+  // A screen or a key the file lacks, found by `Dynamic` only when there is no such member.
+  val missing =
+    if (!canBeMissing) Nil
+    else
+      Seq(
+        "  trait Missing extends Dynamic {\n" +
+          "    def selectDynamic(key: String): String = \"\"\n" +
+          "    def applyDynamic(key: String)(fills: Any*): String = \"\"\n" +
+          "    def applyDynamicNamed(key: String)(fills: (String, Any)*): String = \"\"\n" +
+          "  }",
+        "  def selectDynamic(screen: String): Missing = new Missing {}"
+      )
   // Every key, for checking a format's form overrides (`StandardModel.formOverrides`) name one there is.
   val keySet = s"  val keys: Set[String] = Set(\n${keys.map(k => "    " + literal(k)).mkString(",\n")}\n  )"
   val source = file.relativeTo(mill.api.BuildCtx.workspaceRoot)
   s"package $pkg\n\n" +
+    (if (canBeMissing) "import scala.language.dynamics\n\n" else "") +
     s"/** Generated from $source by build.mill: edit that, not this. */\n" +
-    s"${modifier}object $objectName {\n${(objects :+ keySet).mkString("\n\n")}\n}\n"
+    s"${modifier}object $objectName${if (canBeMissing) " extends Dynamic" else ""} {\n" +
+    s"${(missing ++ objects :+ keySet).mkString("\n\n")}\n}\n"
 }
 
 /** Matchmaker's `errors.properties` as `com.vivi.matchmaker.ErrorText`, for the JVM modules and the UI alike. */
@@ -257,7 +276,10 @@ object matchmaker extends ScalaModule {
       */
     def generatedSources = Task {
       os.write(Task.dest / "ErrorText.scala", errorText(errorsFile().path))
-      os.write(Task.dest / "Tips.scala", textObject(file = tipsFile().path, objectName = "Tips", example = "game.roles"))
+      os.write(
+        Task.dest / "Tips.scala",
+        textObject(file = tipsFile().path, objectName = "Tips", example = "game.roles", canBeMissing = true)
+      )
       os.write(
         Task.dest / "Labels.scala",
         textObject(file = labelsFile().path, objectName = "Labels", example = "game.name")

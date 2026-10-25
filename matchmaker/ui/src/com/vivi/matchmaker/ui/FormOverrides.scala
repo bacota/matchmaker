@@ -18,7 +18,8 @@ private[ui] object FormOverrides {
         else overrides.getOrElse(s"labels.$key", Some(default))
 
     /** The tip `key` names, as `overrides` words it with each `{name}` in `fills` given its value, or `default`, the
-      * UI's own already filled in; `None` for a tip left out.
+      * UI's own already filled in; `None` for a tip left out, by the format or, as an empty `default`, by
+      * `tips.properties`.
       */
     def tip(
         overrides: Map[String, Option[String]],
@@ -27,7 +28,7 @@ private[ui] object FormOverrides {
         fills: (String, String)*
     ): Option[String] =
         overrides
-            .getOrElse(s"tips.$key", Some(default))
+            .getOrElse(s"tips.$key", Some(default).filter(_.nonEmpty))
             .map(text => fills.foldLeft(text) { case (t, (name, value)) => t.replace(s"{$name}", value) })
 
     /** The keys of `overrides` that name neither a caption nor a tip there is, and so reword nothing. */
