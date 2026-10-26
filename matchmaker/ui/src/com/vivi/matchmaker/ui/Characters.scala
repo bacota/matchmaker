@@ -34,7 +34,7 @@ object Characters {
                           div(
                             button(
                               cls := "link",
-                              s"Manage your characters in ${game.displayName}",
+                              Buttons.characters.manage(game = game.displayName),
                               onClick --> (_ => openSignedIn(url))
                             )
                           )
@@ -73,10 +73,10 @@ object Characters {
               case Some(url) =>
                   div(
                     button(
-                      s"Make a character in ${game.displayName}",
+                      Buttons.characters.make(game = game.displayName),
                       onClick --> (_ => openSignedIn(url))
                     ),
-                    busyButton(label = "I've made one — check again", classes = Some("link")) { busy =>
+                    busyButton(label = Buttons.characters.checkAgain, classes = Some("link")) { busy =>
                         // Cleared first, so that a second "no character yet" is a change the live
                         // region announces rather than the same text it already holds.
                         checked.set(None)

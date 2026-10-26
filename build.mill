@@ -315,17 +315,18 @@ object matchmaker extends ScalaModule {
 
     def sources = Task.Sources(Seq(moduleDir / "src") ++ sharedSources(moduleDir)*)
 
-    /** The text of every "?" tip, the caption of every form field and the heading of every section, each kept in one
-      * file to be edited without touching the code.
+    /** The text of every "?" tip, the caption of every form field, the heading of every section and the name of every
+      * button, each kept in one file to be edited without touching the code.
       */
     def tipsFile = Task.Source(moduleDir / "tips.properties")
     def labelsFile = Task.Source(moduleDir / "labels.properties")
     def headingsFile = Task.Source(moduleDir / "headings.properties")
+    def buttonsFile = Task.Source(moduleDir / "buttons.properties")
     def errorsFile = Task.Source(moduleDir / os.up / "errors.properties")
 
-    /** `tips.properties` as `object Tips`, `labels.properties` as `object Labels` and `headings.properties` as
-      * `object Headings`, and matchmaker's `errors.properties` as `ErrorText`, as the model compiled here uses it; see
-      * [[textObject]].
+    /** `tips.properties` as `object Tips`, `labels.properties` as `object Labels`, `headings.properties` as
+      * `object Headings` and `buttons.properties` as `object Buttons`, and matchmaker's `errors.properties` as
+      * `ErrorText`, as the model compiled here uses it; see [[textObject]].
       */
     def generatedSources = Task {
       os.write(Task.dest / "ErrorText.scala", errorText(errorsFile().path))
@@ -340,6 +341,10 @@ object matchmaker extends ScalaModule {
       os.write(
         Task.dest / "Headings.scala",
         textObject(file = headingsFile().path, objectName = "Headings", example = "account.nickname")
+      )
+      os.write(
+        Task.dest / "Buttons.scala",
+        textObject(file = buttonsFile().path, objectName = "Buttons", example = "tournaments.manage")
       )
       super.generatedSources() ++ Seq(PathRef(Task.dest))
     }
@@ -470,17 +475,17 @@ object engines extends Module {
     }
   }
 
-  /** Where on an engine's classpath its own `errors.properties` or `headings.properties` is, for engines.common to
-    * read the keys it overrides from.
+  /** Where on an engine's classpath its own `errors.properties`, `headings.properties` or `buttons.properties` is, for
+    * engines.common to read the keys it overrides from.
     */
   def textOverrides(fileName: String): String = s"com/vivi/engine/overrides/$fileName"
 
   /** A game's engine, on engines.common, with its own text.
     *
-    * Its `errors.properties` holds the game's errors and warnings, and its `headings.properties`, if it has one, the
-    * headings it gives the pages every engine serves. Either may also give a key of common's file, to say it
-    * differently in this game. Each is generated, merged with common's, into an `ErrorText` and a `Headings` in the
-    * engine's own package, which its code uses in place of common's; and each is put on the classpath at
+    * Its `errors.properties` holds the game's errors and warnings, and its `headings.properties` and
+    * `buttons.properties`, if it has them, the headings and button names it gives the pages every engine serves. Each
+    * may also give a key of common's file, to say it differently in this game. Each is generated, merged with common's,
+    * into an `ErrorText`, a `Headings` and a `Buttons` in the engine's own package, which its code uses in place of common's; and each is put on the classpath at
     * [[textOverrides]], from which common's own objects take what the engine overrides.
     */
   trait GameModule extends EngineModule {
@@ -488,11 +493,12 @@ object engines extends Module {
 
     def errorsFile = Task.Source(moduleDir / "errors.properties")
     def headingsFile = Task.Source(moduleDir / "headings.properties")
+    def buttonsFile = Task.Source(moduleDir / "buttons.properties")
 
     /** The engine's package, `com.vivi.<module>`. */
     def textPackage = s"com.vivi.${moduleDir.last}"
 
-    /** The engine's files merged with common's, as its own `ErrorText` and `Headings`; see [[textObject]]. */
+    /** The engine's files merged with common's, as its own `ErrorText`, `Headings` and `Buttons`; see [[textObject]]. */
     def generatedSources = Task {
       os.write(
         Task.dest / "ErrorText.scala",
@@ -516,12 +522,23 @@ object engines extends Module {
           overrides = Option.when(os.exists(headingsFile().path))(headingsFile().path)
         )
       )
+      os.write(
+        Task.dest / "Buttons.scala",
+        textObject(
+          file = common.buttonsFile().path,
+          objectName = "Buttons",
+          example = "signIn.signIn",
+          pkg = textPackage,
+          modifier = "",
+          overrides = Option.when(os.exists(buttonsFile().path))(buttonsFile().path)
+        )
+      )
       super.generatedSources() ++ Seq(PathRef(Task.dest))
     }
 
     /** The engine's own files, where engines.common looks for them. */
     def textResources = Task {
-      Seq(errorsFile(), headingsFile()).map(_.path).filter(os.exists).foreach { file =>
+      Seq(errorsFile(), headingsFile(), buttonsFile()).map(_.path).filter(os.exists).foreach { file =>
         os.copy(file, Task.dest / os.RelPath(textOverrides(file.last)), createFolders = true)
       }
       PathRef(Task.dest)
@@ -546,8 +563,11 @@ object engines extends Module {
     /** The headings of the pages every engine serves alike, such as the sign-in; a game's own page keeps its own. */
     def headingsFile = Task.Source(moduleDir / "headings.properties")
 
-    /** `errors.properties` as `com.vivi.engine.ErrorText`, and `headings.properties` as `com.vivi.engine.Headings`;
-      * see [[textObject]]. Each takes a key the engine it runs in says otherwise from that engine's file, which
+    /** The button names of the pages every engine serves alike; a game's own page keeps its own. */
+    def buttonsFile = Task.Source(moduleDir / "buttons.properties")
+
+    /** `errors.properties` as `com.vivi.engine.ErrorText`, `headings.properties` as `com.vivi.engine.Headings` and
+      * `buttons.properties` as `com.vivi.engine.Buttons`; see [[textObject]]. Each takes a key the engine it runs in says otherwise from that engine's file, which
       * [[GameModule]] puts on the classpath at [[textOverrides]].
       */
     def generatedSources = Task {
@@ -571,6 +591,17 @@ object engines extends Module {
           pkg = "com.vivi.engine",
           modifier = "",
           runtimeOverrides = Some(textOverrides("headings.properties"))
+        )
+      )
+      os.write(
+        Task.dest / "Buttons.scala",
+        textObject(
+          file = buttonsFile().path,
+          objectName = "Buttons",
+          example = "signIn.signIn",
+          pkg = "com.vivi.engine",
+          modifier = "",
+          runtimeOverrides = Some(textOverrides("buttons.properties"))
         )
       )
       super.generatedSources() ++ Seq(PathRef(Task.dest))

@@ -101,7 +101,7 @@ object Games {
                       cls := "link",
                       htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
                       aria.expanded := editing.contains(game.gameId),
-                      "Edit game",
+                      Buttons.game.edit,
                       onMountCallback(context => editGameTrigger = Some(context.thisNode.ref)),
                       onUnmountCallback(_ => editGameTrigger = None),
                       onClick --> (_ => Store.editingGame.set(Some(game.gameId)))
@@ -213,7 +213,7 @@ object Games {
                     button(
                       htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
                       aria.expanded <-- adding.signal,
-                      "New Game",
+                      Buttons.game.`new`,
                       onMountCallback(context => trigger = Some(context.thisNode.ref)),
                       onUnmountCallback(_ => trigger = None),
                       onClick --> (_ => adding.set(true))

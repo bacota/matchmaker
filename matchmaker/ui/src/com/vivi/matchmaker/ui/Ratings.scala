@@ -426,15 +426,17 @@ object Ratings {
               cls := "completed-steps",
               // Named for their board, since a role's sits on the page beside the overall one.
               step(
-                caption = "Previous",
-                label = "Previous 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                caption = Buttons.ratings.previous,
+                label = role.fold(Buttons.ratings.previousNamed)(r =>
+                    Buttons.ratings.previousAsNamed(role = r.displayName)
+                ),
                 side = "backward",
                 possible = page.signal.map(_ > 0),
                 to = _ - 1
               ),
               step(
-                caption = "Next",
-                label = "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                caption = Buttons.ratings.next,
+                label = role.fold(Buttons.ratings.nextNamed)(r => Buttons.ratings.nextAsNamed(role = r.displayName)),
                 side = "forward",
                 possible = board.signal.map(_.exists(_.hasMore)),
                 to = _ + 1
@@ -496,7 +498,7 @@ object Ratings {
               controlled(value <-- prefix.signal, onInput.mapToValue --> prefix)
             ),
             // Not disabled while searching: a disabled button drops the keyboard's focus.
-            button(tpe := "submit", aria.busy <-- busy.signal, "Find")
+            button(tpe := "submit", aria.busy <-- busy.signal, Buttons.ratings.find)
           ),
           // Mounted before it has anything to say, so that what arrives in it is announced. The lines
           // themselves are in the table, which is not announced; this says how many and where.
@@ -602,7 +604,7 @@ object Ratings {
                       ratingInput(id, typed, placeholder := "New rating"),
                       // Not disabled while saving: a disabled button drops the keyboard's focus. A press
                       // made meanwhile is ignored by the filter above instead.
-                      button(tpe := "submit", aria.busy <-- busy.signal, "Set")
+                      button(tpe := "submit", aria.busy <-- busy.signal, Buttons.ratings.set)
                     )
                   )
           }
@@ -635,7 +637,7 @@ object Ratings {
             cls := "compound",
             ratingInput(id, typed, placeholder := "New rating"),
             // Not disabled while saving: a disabled button drops the keyboard's focus.
-            button(tpe := "submit", aria.busy <-- busy.signal, "Set rating")
+            button(tpe := "submit", aria.busy <-- busy.signal, Buttons.ratings.setRating)
           ),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal)
         )

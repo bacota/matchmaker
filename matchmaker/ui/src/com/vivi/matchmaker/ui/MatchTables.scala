@@ -36,7 +36,7 @@ object MatchTables {
     private[ui] def reviewControl(summary: MatchSummary): HtmlElement =
         if (summary.isCompleted && summary.isArchiveExpired) archiveExpiredNote
         else if (summary.isCompleted)
-            busyButton(label = "Review game", classes = Some("link")) { busy =>
+            busyButton(label = Buttons.matches.review, classes = Some("link")) { busy =>
                 // Signed in: an answer after a sign-out would hand the next session's token to this match's url.
                 Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
@@ -58,7 +58,9 @@ object MatchTables {
         if (summary.isArchiveExpired) archiveExpiredNote
         else
             summary.publicUrl
-                .map(url => button(tpe := "button", cls := "link", "Watch", onClick --> (_ => openSignedIn(url))))
+                .map(url =>
+                    button(tpe := "button", cls := "link", Buttons.matches.watch, onClick --> (_ => openSignedIn(url)))
+                )
                 .getOrElse(span())
 
     /** How the caller's own finished match came out: the engine's account where it gave one, and every seat's result
@@ -357,7 +359,7 @@ object MatchTables {
           cls := "controls",
           // The play url lives on the match rather than the summary, and is the game engine's,
           // not matchmaker's — so it is fetched when asked for and opened directly.
-          busyButton(label = "Play", classes = Some("link")) { busy =>
+          busyButton(label = Buttons.matches.play, classes = Some("link")) { busy =>
               // Signed in, as "Review game" is.
               Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                   m.playUrl match {
@@ -368,7 +370,7 @@ object MatchTables {
           },
           // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
           // engine, which is what recovers from a callback that never arrived.
-          busyButton(label = "Refresh", classes = Some("link")) { busy =>
+          busyButton(label = Buttons.matches.refresh, classes = Some("link")) { busy =>
               Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(
                 MatchSections.reloadAfterMatchRefresh
               )
@@ -376,7 +378,7 @@ object MatchTables {
           // Only the owner's. Every player forfeits and the match turns friendly, so the
           // confirmation says what actually happens.
           if (summary.isOwner)
-              busyButton(label = "Cancel", classes = Some("link")) { busy =>
+              busyButton(label = Buttons.matches.cancel, classes = Some("link")) { busy =>
                   if (
                     dom.window.confirm(
                       "Cancel this match? Every player forfeits, and it won't change anyone's rating."
@@ -429,7 +431,7 @@ object MatchTables {
             // Not disabled while the form is fetched, which would drop the keyboard's focus.
             aria.disabled <-- busy.signal,
             child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-            "Notifications",
+            Buttons.matches.notifications,
             onClick --> { _ =>
                 if (busy.now()) ()
                 else if (shown.now()) shown.set(false)
@@ -457,7 +459,7 @@ object MatchTables {
                     explanation = "What we email you about this match, whatever you change elsewhere later.",
                     preferences = preferences,
                     withDefault = false,
-                    saveLabel = "Save for this match",
+                    saveLabel = Buttons.matches.saveForMatch,
                     kinds = NotificationType.duringMatch,
                     busy = saving,
                     outcome = said

@@ -186,7 +186,7 @@ object Notifications {
         explanation: String,
         preferences: Var[NotificationPreferences],
         withDefault: Boolean = true,
-        saveLabel: String = "Save",
+        saveLabel: String = Buttons.notifications.save,
         cascades: Seq[Cascade] = Nil,
         kinds: Seq[NotificationType] = NotificationType.values.toSeq,
         deferred: Option[Deferred] = None,
@@ -276,7 +276,7 @@ object Notifications {
                 ask.alongside,
                 div(
                   cls := "alternatives",
-                  button(tpe := "button", cls := "link", "Close", onClick --> (_ => dismiss()))
+                  button(tpe := "button", cls := "link", Buttons.app.close, onClick --> (_ => dismiss()))
                 )
               )
             )

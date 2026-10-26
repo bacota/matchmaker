@@ -119,8 +119,8 @@ object Tournaments {
                             c.chooseBy.fold(emptyNode)(by => span(cls := "detail", s" · by ${when(by)}")),
                             button(
                               tpe := "button",
-                              "Choose",
-                              aria.label := s"Choose your role in ${c.tournamentName}",
+                              Buttons.tournaments.chooseRole,
+                              aria.label := Buttons.tournaments.chooseRoleNamed(competition = c.tournamentName),
                               onClick --> (_ => Store.show(Store.Page.OneTournament(c.gameId, c.tournamentId)))
                             )
                           )
@@ -274,7 +274,7 @@ object Tournaments {
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
         s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
-    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Edit button, and
+    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Manage button, and
       * the step it waits on them for -- starting it, or starting its next round -- when it waits on one.
       */
     private def runningRow(s: TournamentSummary): HtmlElement = {
@@ -322,14 +322,14 @@ object Tournaments {
         )
     }
 
-    /* The Edit button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
+    /* The Manage button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
     private def actions(s: TournamentSummary): Seq[Modifier[HtmlElement]] = {
         val t = s.tournament
         Seq(
           button(
             tpe := "button",
-            "Edit",
-            aria.label := s"Edit ${t.name}",
+            Buttons.tournaments.manage,
+            aria.label := Buttons.tournaments.manageNamed(competition = t.name),
             onClick --> { _ =>
                 editOnArrival = Some(t.tournamentId)
                 Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
@@ -341,22 +341,22 @@ object Tournaments {
               child <-- hasEnoughToStart(gameId = t.gameId, entered = s.entrants).map(isOffered =>
                   if (!isOffered) emptyNode
                   else
-                      busyButton(label = "Start Competition", busy = stepBusy(t, "start"))(busy =>
+                      busyButton(label = Buttons.tournaments.start, busy = stepBusy(t, "start"))(busy =>
                           Store.runSignedIn(
                             thenListed(
                               ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
                             ),
                             busy
                           )(_ => ())
-                      ).amend(aria.label := s"Start Competition: ${t.name}")
+                      ).amend(aria.label := Buttons.tournaments.startNamed(competition = t.name))
               )
           else if (isWaitingOnMe(s))
-              busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
+              busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
                   Store.runSignedIn(
                     thenListed(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
                     busy
                   )(_ => ())
-              ).amend(aria.label := s"Start Next Round of ${t.name}")
+              ).amend(aria.label := Buttons.tournaments.startRoundNamed(competition = t.name))
           else emptyNode
         )
     }
@@ -366,7 +366,7 @@ object Tournaments {
     private def hasEnoughToStart(gameId: GameId, entered: Int): Signal[Boolean] =
         Store.games.signal.map(_.find(_.gameId == gameId).exists(g => entered >= Tournament.leastToStart(g))).distinct
 
-    /* The tournament whose page is to open with its Edit form open: set by a main-page Edit button, and taken by the
+    /* The tournament whose page is to open with its Edit form open: set by a main-page Manage button, and taken by the
      * page as it is drawn. */
     private var editOnArrival: Option[TournamentId] = None
 
@@ -553,7 +553,7 @@ object Tournaments {
                 case TournamentStatus.Open =>
                     span(
                       child <-- hasEnoughToStart(gameId = t.gameId, entered = d.entries.count(!_.isWithdrawn))
-                          .map(if (_) step("Start Competition", "start") else emptyNode)
+                          .map(if (_) step(Buttons.tournaments.start, "start") else emptyNode)
                     )
                 case TournamentStatus.Running =>
                     span(
@@ -572,7 +572,7 @@ object Tournaments {
                                 controlled(value <-- roundHours.signal, onInput.mapToValue --> roundHours)
                               )
                             ),
-                            busyButton(label = "Start Next Round", busy = startRoundBusy(t))(busy =>
+                            busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
                                 Store.runSignedIn(
                                   thenShown(d)(
                                     ApiClient.startRound(
@@ -591,7 +591,10 @@ object Tournaments {
                             subject = "Check Round",
                             text = Tips.competition.checkRound
                           )(
-                            busyButton(label = "Check Round", busy = heldBusy(s"check round ${t.tournamentId}"))(busy =>
+                            busyButton(
+                              label = Buttons.tournaments.checkRound,
+                              busy = heldBusy(s"check round ${t.tournamentId}")
+                            )(busy =>
                                 Store.run(ApiClient.checkRound(t.gameId, t.tournamentId), busy)(_ => checking.set(true))
                             )
                           )
@@ -604,12 +607,14 @@ object Tournaments {
                         )
                       ),
                       if (!t.isStopped && d.design.stages.exists(_.repeat == Repetition.UntilStopped))
-                          busyButton(label = "Stop Repeating", busy = heldBusy(s"stop repeating ${t.tournamentId}"))(
-                            busy =>
-                                Store.runSignedIn(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy) { _ =>
-                                    Views.announce("This stage will not repeat again.")
-                                    reload(d)
-                                }
+                          busyButton(
+                            label = Buttons.tournaments.stopRepeating,
+                            busy = heldBusy(s"stop repeating ${t.tournamentId}")
+                          )(busy =>
+                              Store.runSignedIn(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy) { _ =>
+                                  Views.announce("This stage will not repeat again.")
+                                  reload(d)
+                              }
                           )
                       else emptyNode
                     )
@@ -622,14 +627,14 @@ object Tournaments {
                   // Whether the form is open is the announced state, not a second label: "Close Edit, expanded"
                   // says the same thing twice and reads as a contradiction. The form itself shows it to a sighted user.
                   aria.expanded <-- editing.signal,
-                  "Edit",
+                  Buttons.tournaments.edit,
                   onClick --> (_ => editing.update(!_))
                 ),
             t.status match {
                 // Not started, so nothing has been played: stopping it deletes it, which is cancelling it.
                 case TournamentStatus.Open =>
                     stopButton(
-                      label = "Cancel Competition",
+                      label = Buttons.tournaments.cancel,
                       question = "Cancel this competition? It will be deleted, with its entries."
                     )(isStillHere => {
                         Store.reloadMyTournaments()
@@ -640,7 +645,7 @@ object Tournaments {
                     // The button goes with the reload, and the note that takes its place is drawn with the page, so
                     // it is said here. FocusKeeper takes the focus to this card's heading.
                     stopButton(
-                      label = "Stop Competition",
+                      label = Buttons.tournaments.stop,
                       question = "Stop this competition? Its current round is played out, and then it finishes."
                     )(isStillHere => {
                         if (isStillHere) Views.announce(stoppedNote)
@@ -677,19 +682,22 @@ object Tournaments {
                         !e.isWithdrawn && (mine
                             .contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
                       )
-                          busyButton(label = "Withdraw", busy = heldBusy(s"withdraw ${e.entrantId}"))(busy =>
-                              Store.runSignedIn(
-                                ApiClient.withdrawFromTournament(
-                                  gameId = t.gameId,
-                                  tournamentId = t.tournamentId,
-                                  entrantId = e.entrantId
-                                ),
-                                busy
-                              ) { _ =>
-                                  Views.announce(s"${nameOf(d)(e.entrantId.value)} withdrawn.")
-                                  reload(d)
-                              }
-                          ).amend(aria.label := s"Withdraw ${nameOf(d)(e.entrantId.value)}")
+                          busyButton(label = Buttons.tournaments.withdraw, busy = heldBusy(s"withdraw ${e.entrantId}"))(
+                            busy =>
+                                Store.runSignedIn(
+                                  ApiClient.withdrawFromTournament(
+                                    gameId = t.gameId,
+                                    tournamentId = t.tournamentId,
+                                    entrantId = e.entrantId
+                                  ),
+                                  busy
+                                ) { _ =>
+                                    Views.announce(s"${nameOf(d)(e.entrantId.value)} withdrawn.")
+                                    reload(d)
+                                }
+                          ).amend(
+                            aria.label := Buttons.tournaments.withdrawNamed(entrant = nameOf(d)(e.entrantId.value))
+                          )
                       else emptyNode
                     )
                 }
@@ -723,7 +731,7 @@ object Tournaments {
                     )
                 else emptyNode,
                 busyButton(
-                  label = if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter",
+                  label = if (mine.exists(_.isWithdrawn)) Buttons.tournaments.enterAgain else Buttons.tournaments.enter,
                   busy = answerBusy(t)
                 )(busy =>
                     Store.runSignedIn(
@@ -771,7 +779,7 @@ object Tournaments {
         val hasEntered = d.entries.exists(e => me.exists(m => e.playerId.contains(m.playerId)))
         if (declines.isEmpty || hasEntered) emptyNode
         else
-            busyButton(label = "Decline", busy = answerBusy(t))(busy =>
+            busyButton(label = Buttons.tournaments.decline, busy = answerBusy(t))(busy =>
                 // Reloaded even when one of them fails: the others went through, and the page would otherwise go on
                 // offering them.
                 Store.runSignedIn(thenShown(d)(Future.sequence(declines.map(_()))), busy, onFailure = _ => reload(d)) {
@@ -821,20 +829,22 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(inv.nickname),
-                      busyButton(label = "Remove", busy = heldBusy(s"uninvite ${inv.playerId} from ${t.tournamentId}"))(
-                        busy =>
-                            Store.runSignedIn(
-                              ApiClient.revokeTournamentInvitation(
-                                gameId = t.gameId,
-                                tournamentId = t.tournamentId,
-                                playerId = inv.playerId
-                              ),
-                              busy
-                            ) { _ =>
-                                Views.announce(s"Invitation of ${inv.nickname} removed.")
-                                reload(d)
-                            }
-                      ).amend(aria.label := s"Remove the invitation of ${inv.nickname}")
+                      busyButton(
+                        label = Buttons.tournaments.uninvite,
+                        busy = heldBusy(s"uninvite ${inv.playerId} from ${t.tournamentId}")
+                      )(busy =>
+                          Store.runSignedIn(
+                            ApiClient.revokeTournamentInvitation(
+                              gameId = t.gameId,
+                              tournamentId = t.tournamentId,
+                              playerId = inv.playerId
+                            ),
+                            busy
+                          ) { _ =>
+                              Views.announce(s"Invitation of ${inv.nickname} removed.")
+                              reload(d)
+                          }
+                      ).amend(aria.label := Buttons.tournaments.uninviteNamed(invitee = inv.nickname))
                     )
                 ) ++ d.invitedCharacters.map(inv =>
                     li(
@@ -842,7 +852,7 @@ object Tournaments {
                       span(inv.character.name),
                       span(cls := "detail", inv.owner.fold(" · nobody's")(o => s" · ${o.nickname}'s")),
                       busyButton(
-                        label = "Remove",
+                        label = Buttons.tournaments.uninvite,
                         busy = heldBusy(s"uninvite ${inv.character.characterId} from ${t.tournamentId}")
                       )(busy =>
                           Store.runSignedIn(
@@ -857,7 +867,7 @@ object Tournaments {
                               Views.announce(s"Invitation of ${inv.character.name} removed.")
                               reload(d)
                           }
-                      ).amend(aria.label := s"Remove the invitation of ${inv.character.name}")
+                      ).amend(aria.label := Buttons.tournaments.uninviteNamed(invitee = inv.character.name))
                     )
                 )
               ),
@@ -867,7 +877,7 @@ object Tournaments {
               Labels.competition.findPlayer,
               input(controlled(value <-- prefix.signal, onInput.mapToValue --> prefix))
             ),
-            busyButton(label = "Search", disabledWhen = prefix.signal.map(_.trim.isEmpty))(busy =>
+            busyButton(label = Buttons.tournaments.search, disabledWhen = prefix.signal.map(_.trim.isEmpty))(busy =>
                 Store.run(ApiClient.searchPlayers(prefix.now().trim), busy)(r => found.set(r.players))
             )
           ),
@@ -895,20 +905,22 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(p.nickname),
-                      busyButton(label = "Invite", busy = heldBusy(s"invite ${p.playerId} to ${t.tournamentId}"))(
-                        busy =>
-                            Store.runSignedIn(
-                              ApiClient.inviteToTournament(
-                                gameId = t.gameId,
-                                tournamentId = t.tournamentId,
-                                playerId = p.playerId
-                              ),
-                              busy
-                            ) { _ =>
-                                Views.announce(s"${p.nickname} invited.")
-                                reload(d)
-                            }
-                      ).amend(aria.label := s"Invite ${p.nickname}")
+                      busyButton(
+                        label = Buttons.tournaments.invite,
+                        busy = heldBusy(s"invite ${p.playerId} to ${t.tournamentId}")
+                      )(busy =>
+                          Store.runSignedIn(
+                            ApiClient.inviteToTournament(
+                              gameId = t.gameId,
+                              tournamentId = t.tournamentId,
+                              playerId = p.playerId
+                            ),
+                            busy
+                          ) { _ =>
+                              Views.announce(s"${p.nickname} invited.")
+                              reload(d)
+                          }
+                      ).amend(aria.label := Buttons.tournaments.inviteNamed(nickname = p.nickname))
                     )
             })
           )
@@ -1003,7 +1015,7 @@ object Tournaments {
             )
           ),
           busyButton(
-            label = "Choose Role",
+            label = Buttons.tournaments.pickRole,
             disabledWhen = picked.signal.map(_.isEmpty),
             busy = heldBusy(s"choose role in ${m.matchId}")
           )(busy =>
@@ -1042,7 +1054,7 @@ object Tournaments {
             button(
               tpe := "button",
               cls := "link",
-              child.text <-- open.signal.map(if (_) "Close" else "Decide by Hand"),
+              child.text <-- open.signal.map(if (_) Buttons.app.close else Buttons.tournaments.decideByHand),
               onClick --> (_ => open.update(!_))
             )
           ),
@@ -1062,7 +1074,7 @@ object Tournaments {
                           )
                         )
                     ),
-                    busyButton(label = "Save Ranks", busy = heldBusy(s"decide ${m.matchId}"))(busy =>
+                    busyButton(label = Buttons.tournaments.saveRanks, busy = heldBusy(s"decide ${m.matchId}"))(busy =>
                         val typed = ranks.map((e, v) => v.now().trim.toIntOption.filter(_ >= 1).map(EntrantRank(e, _)))
                         if (typed.exists(_.isEmpty)) Store.reportProblem(ErrorText.competitionForm.unranked)
                         else
@@ -1681,7 +1693,7 @@ object Tournaments {
                       tpe := "button",
                       // Gone with the pool size it fills in.
                       Views.shownWhen(labelOf("competition.poolSize", Labels.competition.poolSize)),
-                      s"One pool of everyone entered ($everyone)",
+                      Buttons.tournaments.onePool(count = everyone.toString),
                       onClick --> { _ =>
                           withdrawNotice(); poolSize.set(everyone.toString)
                       }
@@ -1840,7 +1852,7 @@ object Tournaments {
           div(
             cls := "row",
             busyButton(
-              label = if (existing.isDefined) "Save Changes" else "Create Competition",
+              label = if (existing.isDefined) Buttons.tournaments.save else Buttons.tournaments.create,
               busy = savingBusy(game.gameId, existing)
             )(busy =>
                 hasTriedSaving.set(true)
@@ -1990,7 +2002,7 @@ object Tournaments {
                 subject = "Sync Formats",
                 text = Tips.competition.syncFormats
               )(
-                busyButton(label = "Sync Formats")(busy =>
+                busyButton(label = Buttons.tournaments.syncFormats)(busy =>
                     Store.run(ApiClient.syncTournamentModels(), busy) { done =>
                         def count(n: Int, what: String) = Option.when(n > 0)(s"$n $what")
                         val parts = List(

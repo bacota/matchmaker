@@ -363,7 +363,7 @@ object SignIn {
               onInput.mapToValue --> password
             )
           ),
-          submit("Sign in"),
+          submit(Buttons.signIn.signIn),
           // The passwordless route, kept but not put first — which is the whole reason this form
           // exists instead of a redirect to managed login.
           div(
@@ -371,20 +371,20 @@ object SignIn {
             button(
               tpe := "button",
               cls := "link",
-              "Email me a code instead",
+              Buttons.signIn.emailCode,
               aria.disabled <-- busy.signal,
               onClick --> (_ => withEmailCode())
             ),
             button(
               tpe := "button",
               cls := "link",
-              "Forgot your password?",
+              Buttons.signIn.forgotPassword,
               onClick --> (_ => Auth.hostedForgotPassword().failed.foreach(Store.report))
             ),
             button(
               tpe := "button",
               cls := "link",
-              "Create an account",
+              Buttons.signIn.signUp,
               onClick --> (_ => Auth.hostedSignUp().failed.foreach(Store.report))
             )
           )
@@ -413,10 +413,10 @@ object SignIn {
               onInput.mapToValue --> code
             )
           ),
-          submit("Sign in"),
+          submit(Buttons.signIn.signIn),
           div(
             cls := "alternatives",
-            button(tpe := "button", cls := "link", "Start again", onClick --> (_ => startAgain()))
+            button(tpe := "button", cls := "link", Buttons.signIn.startAgain, onClick --> (_ => startAgain()))
           )
         )
 
@@ -436,10 +436,10 @@ object SignIn {
               onInput.mapToValue --> newPassword
             )
           ),
-          submit("Save and sign in"),
+          submit(Buttons.signIn.saveAndSignIn),
           div(
             cls := "alternatives",
-            button(tpe := "button", cls := "link", "Start again", onClick --> (_ => startAgain()))
+            button(tpe := "button", cls := "link", Buttons.signIn.startAgain, onClick --> (_ => startAgain()))
           )
         )
 }

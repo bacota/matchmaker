@@ -170,7 +170,7 @@ object Views {
               tpe := "button",
               // The glyph is decorative; the button needs a name a screen reader can read out, and
               // naming the section it belongs to is what distinguishes it from the others.
-              aria.label := s"Refresh $heading",
+              aria.label := Buttons.app.refreshNamed(section = heading),
               // Not disabled while the section reloads, which would drop the keyboard's focus: a press
               // made meanwhile is refused instead.
               aria.disabled <-- refreshing.signal,
@@ -262,7 +262,7 @@ object Views {
                         // Where a page like this puts it: top right, next to who you are signed in as.
                         Account.view,
                         if (Config.current.isHeaderAuth) emptyNode
-                        else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
+                        else button(cls := "link", Buttons.app.signOut, onClick --> (_ => Store.signOut()))
                       )
                   case _ => emptyNode
               },
@@ -282,7 +282,7 @@ object Views {
                   // never given a reason to read it out.
                   role := "alert",
                   span(message),
-                  button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
+                  button(cls := "link", Buttons.app.dismiss, onClick --> (_ => Store.error.set(None)))
                 )
             case None => emptyNode
         }
@@ -317,7 +317,7 @@ object Views {
           h2(ErrorText.loading.accountHeading),
           p(reason),
           p(cls := "detail", ErrorText.loading.accountDetail),
-          button("Try again", onClick --> (_ => Store.loadAll()))
+          button(Buttons.app.tryAgain, onClick --> (_ => Store.loadAll()))
         )
 
     private def registration: HtmlElement = {
@@ -334,7 +334,7 @@ object Views {
             Labels.register.nickname,
             input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))
           ),
-          busyButton(label = "Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
+          busyButton(label = Buttons.register.create, disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
                   if (Store.isStillSignedInAs(signIn)) {
                       Store.player.set(Store.PlayerState.Registered(player))
@@ -421,18 +421,18 @@ object Views {
     private def menu: HtmlElement =
         navTag(
           cls := "menu",
-          menuItem("Main page", Store.Page.Home),
+          menuItem(Buttons.menu.home, Store.Page.Home),
           // Above the games rather than below them: it is a way of getting to a player, and the
           // games below it are a way of getting to a game. The list of games can be long, and an
           // entry after it is an entry that has to be scrolled to.
-          menuItem("Find Players", Store.Page.FindPlayers),
+          menuItem(Buttons.menu.findPlayers, Store.Page.FindPlayers),
           listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
               div(games.map(gameMenuItem))
           ),
           // Only for admins, because only an admin can create a game: the server answers anyone else
           // with a 403, and a menu entry that always fails is worse than no entry.
           child <-- currentPlayer.map {
-              case Some(player) if player.isAdmin => menuItem("Add a Game", Store.Page.NewGame)
+              case Some(player) if player.isAdmin => menuItem(Buttons.menu.addGame, Store.Page.NewGame)
               case _                              => emptyNode
           }
         )
@@ -451,7 +451,7 @@ object Views {
           button(
             cls := "refresh",
             tpe := "button",
-            aria.label := s"Reload ${game.displayName}",
+            aria.label := Buttons.menu.reloadGameNamed(game = game.displayName),
             span(aria.hidden := true, "\u21bb"),
             onClick --> (_ => reloadGamePage(game.gameId))
           )
@@ -604,7 +604,7 @@ object Views {
     private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id = id, text = text, control = control, hasTip = Val(text.nonEmpty))(
           cls := "tip-toggle",
-          aria.label := s"About $subject",
+          aria.label := Buttons.app.tipNamed(subject = subject),
           tipIcon()
         )
 
@@ -619,7 +619,7 @@ object Views {
           hasTip = text.map(_.isDefined)
         )(
           cls := "tip-toggle",
-          aria.label <-- subject.map(s => s"About $s"),
+          aria.label <-- subject.map(s => Buttons.app.tipNamed(subject = s)),
           tipIcon()
         )
 
