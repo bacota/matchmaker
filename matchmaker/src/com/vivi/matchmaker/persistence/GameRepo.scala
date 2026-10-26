@@ -285,9 +285,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               )
             )
             _ <- upsertRoles(game.gameId, game.roles)
-            // A game without roles seats nobody in one, so whatever roles it had are retired: kept for the matches
-            // that named them, and no longer read as the game's. `GameService` decides whether that may happen.
-            _ <- IO.whenA(game.isRoleless)(session.execute(retireRolesStmt)(game.gameId).void)
+            // A game saved without roles seats nobody in one, so whatever roles it had are retired: kept for the
+            // matches that named them, and no longer read as the game's. `GameService` decides whether that may happen.
+            _ <- IO.whenA(game.roles.isEmpty)(session.execute(retireRolesStmt)(game.gameId).void)
             _ <- replaceParameters(game.gameId, game.parameters)
         } yield ()
 

@@ -369,18 +369,6 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), (false, Some(false), true))
     }
 
-    test("createOrUpdate refuses a game that defines no roles") {
-        val result = for {
-            admin <- makeAdmin()
-            game <- IO(Generators.genGame().sample.get)
-            attempt <- gameService
-                .createOrUpdate(externalUserId = admin.externalId, game = game.copy(roles = Seq.empty))
-                .attempt
-        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
-
-        assert(result.unsafeRunSync())
-    }
-
     // The schema would refuse this too — default_value is a foreign key to game_parameter_value —
     // but as a constraint violation, which reaches the caller as a 500 rather than an explanation.
     test("createOrUpdate refuses a parameter whose default is not one of its values") {
@@ -695,8 +683,7 @@ class GameServiceSpec extends PropertySuite {
     test("createOrUpdate refuses to let a game do without roles while a competition of it is open") {
         val result = for {
             admin <- makeAdmin()
-            // Made while its roles are required, since a game with no role a match must fill offers no challenge,
-            // and then they are made optional.
+            // Made while its roles are required, and then they are made optional.
             base <- IO(Generators.genGame(GameType.Plain).sample.get)
             withRoles <- gameService.createOrUpdate(
               externalUserId = admin.externalId,
@@ -875,13 +862,13 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(listed.map(g => (g.roles, g.minPlayers, g.maxPlayers)), Some((Seq.empty, Some(3), Some(12))))
     }
 
-    // A game has roles or a range of players, never both nor neither; a game without roles is played with everyone
-    // moving at once; and a range has to be one.
-    test("createOrUpdate refuses a game with both roles and a range, neither, a backwards range, or turns in order") {
+    // A game has roles or a range of players, never both; a game without roles is played with everyone moving at
+    // once; and a range has to be one.
+    test("createOrUpdate refuses a game with both roles and a range, a backwards range, or turns in order") {
         val roleless = Generators.genRolelessGame(least = 2, most = None)
         val bad = List(
           Generators.genGameWithRole.sample.get.copy(minPlayers = Some(2), moveType = MoveType.Simultaneous),
-          roleless.copy(minPlayers = None),
+          roleless.copy(minPlayers = None, maxPlayers = Some(4)),
           roleless.copy(minPlayers = Some(5), maxPlayers = Some(4)),
           roleless.copy(minPlayers = Some(0)),
           roleless.copy(moveType = MoveType.Sequential)
@@ -893,5 +880,39 @@ class GameServiceSpec extends PropertySuite {
         result.unsafeRunSync().zipWithIndex.foreach { (attempt, i) =>
             assert(attempt.left.exists(_.isInstanceOf[ValidationError]), s"case $i: $attempt")
         }
+    }
+
+    // Neither roles nor a range: its matches seat two or more players without roles, who may take turns.
+    test("createOrUpdate stores a game with neither roles nor a range, seating two or more a match without roles") {
+        val game =
+            Generators.genRolelessGame(least = 2, most = None).copy(minPlayers = None, moveType = MoveType.Sequential)
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield listed
+        val listed = result.unsafeRunSync().getOrElse(fail("the game was not stored"))
+        assert(listed.roles.isEmpty && listed.minPlayers.isEmpty && !listed.isRoleless, listed.toString)
+        assert(listed.isSeatedWithoutRoles)
+        assertEquals((listed.requiredSeats, listed.mostSeats, listed.moveType), (2, None, MoveType.Sequential))
+    }
+
+    test("createOrUpdate retires the roles of a game whose roles are all optional when an update leaves them all out") {
+        val result = for {
+            admin <- makeAdmin()
+            created <- optionalRolesGame(admin)
+            _ <- gameService.createOrUpdate(externalUserId = admin.externalId, game = created.copy(roles = Nil))
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            kept <- TestSession.resource.use { session =>
+                import skunk.implicits._
+                import skunk.codec.all.{bool, int4}
+                session.execute(
+                  sql"SELECT is_retired FROM game_role WHERE game_id = $int4".query(bool)
+                )(created.gameId.value)
+            }
+        } yield listed.exists(g => g.roles.isEmpty && !g.isRoleless && g.isSeatedWithoutRoles) &&
+            kept.sizeIs == created.roles.size && kept.forall(identity)
+
+        assert(result.unsafeRunSync())
     }
 }

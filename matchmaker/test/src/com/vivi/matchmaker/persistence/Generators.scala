@@ -59,9 +59,8 @@ object Generators {
             active <- Gen.oneOf(true, false)
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
-            // Two roles, always: every seat names one, so a game with no roles is a game nothing
-            // can be played in. Two rather than one because two players in one match may not share a
-            // role.
+            // Two required roles, always, so that every seat names one. Two rather than one because two
+            // players in one match may not share a role.
         } yield Game(
           gameId = GameId.unassigned,
           gameType = gameType,

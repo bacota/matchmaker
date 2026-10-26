@@ -401,6 +401,42 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(d.state.flatMap(_.root.ranking).map(_.size), Some(4))
     }
 
+    /** The players a match of `game`, of two players entered, is sent to the engine with, once its round begins: with
+      * nothing to choose, it is created in the engine as the round begins.
+      */
+    private def seatedWithoutChoosing(game: Game): (List[(TournamentMatchStatus, Int)], List[Option[String]]) =
+        run(
+          for {
+              f <- started(n = 2, design = RoundRobin.id, game = Some(game), poolSize = Some(2))
+              _ <- f.w.services.rounds.startRound(
+                gameId = f.game.gameId,
+                tournamentId = f.t.tournamentId,
+                callerExternalId = f.owner.externalId
+              )
+              matches <- round(f)
+              request = f.w.engine.lastRequest
+          } yield (
+            matches.map(m => (m.status, m.seats.size)),
+            request.map(_.players.map(_.role)).getOrElse(fail("the match was never created in the engine"))
+          )
+        )
+
+    test("a game whose roles are all optional starts its match with nobody choosing, every player without a role") {
+        val base = Generators.genGame(GameType.Plain).sample.get
+        val (sizes, roles) =
+            seatedWithoutChoosing(base.copy(roles = base.roles.map(_.copy(roleType = RoleType.Optional))))
+        assertEquals(sizes, List((TournamentMatchStatus.Started, 2)))
+        assertEquals(roles, List(None, None))
+    }
+
+    test("a game with neither roles nor a range of players starts its match with every player without a role") {
+        val game =
+            Generators.genRolelessGame(least = 2, most = None).copy(minPlayers = None, moveType = MoveType.Sequential)
+        val (sizes, roles) = seatedWithoutChoosing(game)
+        assertEquals(sizes, List((TournamentMatchStatus.Started, 2)))
+        assertEquals(roles, List(None, None))
+    }
+
     test("only the seat whose turn it is may choose, and only a role still free") {
         val (notTheirs, wrongRole) = run(for {
             f <- started(n = 2)

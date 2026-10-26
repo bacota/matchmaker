@@ -156,14 +156,31 @@ case class Game(
       */
     def isRoleless: Boolean = minPlayers.isDefined
 
-    /** The game's "R": how many seats a tournament pool is sized by — its required and recommended roles, or the fewest
-      * players a game without roles can start with, which is what a tournament that says no more starts from.
+    /** Whether a match of the game seats its players without roles, every seat alike: a game without roles, and one
+      * whose roles are all optional or retired, which no match needs -- retired roles are not read as the game's, so
+      * one whose roles are all retired has none. Unlike [[isRoleless]], the latter may move in turn.
       */
-    def poolSeats: Int = minPlayers.getOrElse(roles.count(_.roleType != RoleType.Optional))
+    def isSeatedWithoutRoles: Boolean = isRoleless || roles.forall(_.roleType == RoleType.Optional)
+
+    /** The fewest players a match seated without roles starts with: a game without roles' own least, and otherwise two.
+      * `None` for a game whose matches seat roles.
+      */
+    def fewestPlayers: Option[Int] = minPlayers.orElse(Option.when(isSeatedWithoutRoles)(Game.fewestWithoutRoles))
+
+    /** The game's "R": how many seats a tournament pool is sized by — its required and recommended roles, or the fewest
+      * players a match seated without roles can start with, which is what a tournament that says no more starts from.
+      */
+    def poolSeats: Int = fewestPlayers.getOrElse(roles.count(_.roleType != RoleType.Optional))
 
     /** How many seats must be filled for a match to start. */
-    def requiredSeats: Int = minPlayers.getOrElse(roles.count(_.roleType == RoleType.Required))
+    def requiredSeats: Int = fewestPlayers.getOrElse(roles.count(_.roleType == RoleType.Required))
 
     /** The most seats a match can have: one per role, or a game without roles' maximum, `None` for no limit. */
-    def mostSeats: Option[Int] = if (isRoleless) maxPlayers else Some(roles.size)
+    def mostSeats: Option[Int] = if (roles.isEmpty) maxPlayers else Some(roles.size)
+}
+
+object Game {
+
+    /** The fewest players a match seated without roles starts with, in a game that does not say. */
+    val fewestWithoutRoles: Int = 2
 }

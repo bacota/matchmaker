@@ -527,7 +527,7 @@ object Tournaments {
         val morePools = t.defaultPoolSize
             .filter(size =>
                 t.status == TournamentStatus.Open &&
-                    Store.games.now().exists(g => g.gameId == t.gameId && g.isRoleless) && entered > size
+                    Store.games.now().exists(g => g.gameId == t.gameId && g.isSeatedWithoutRoles) && entered > size
             )
             .map(size =>
                 p(
@@ -1231,8 +1231,8 @@ object Tournaments {
         val running = existing.exists(_.status == TournamentStatus.Running)
         val s0 = existing.map(_.settings).getOrElse(TournamentSettings())
         // A game without roles: whether each pool is one match, and otherwise how many players a match has, as typed.
-        val wholePool = Var(game.isRoleless && existing.isDefined && s0.playersPerMatch.isEmpty)
-        val perMatch = Var(s0.playersPerMatch.orElse(game.minPlayers).fold("")(_.toString))
+        val wholePool = Var(game.isSeatedWithoutRoles && existing.isDefined && s0.playersPerMatch.isEmpty)
+        val perMatch = Var(s0.playersPerMatch.orElse(game.fewestPlayers).fold("")(_.toString))
         val name = Var(existing.map(_.name).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val models: Signal[Seq[TournamentModel]] =
@@ -1304,12 +1304,12 @@ object Tournaments {
         def isKeeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
         def playersPerMatch: Option[Int] =
-            if (!game.isRoleless) None
+            if (!game.isSeatedWithoutRoles) None
             else
                 unlessLeftOut(
                   key = "competition.playersPerMatch",
                   value = Option.when(!wholePool.now())(perMatch.now().trim.toIntOption).flatten,
-                  default = game.minPlayers
+                  default = game.fewestPlayers
                 )
         // The game's R as this tournament plays it: its roles, or for a game without roles the players per match.
         def r: Int = TournamentGame.of(game, playersPerMatch).poolSeats
@@ -1404,7 +1404,7 @@ object Tournaments {
         def countProblem: List[Problem] =
             Option
                 .when(
-                  game.isRoleless && !isLeftOut("competition.playersPerMatch") && !wholePool.now() &&
+                  game.isSeatedWithoutRoles && !isLeftOut("competition.playersPerMatch") && !wholePool.now() &&
                       perMatch.now().trim.toIntOption.forall(_ < 1)
                 )(
                   Problem(
@@ -1532,7 +1532,7 @@ object Tournaments {
               withTip(
                 id = id,
                 subject = words,
-                text = game.maxPlayers.fold(
+                text = game.mostSeats.fold(
                   tipOf(
                     "competition.playersPerMatchAtLeast",
                     Tips.competition.playersPerMatchAtLeast(fewest = fewest),
@@ -1568,7 +1568,7 @@ object Tournaments {
                           tpe := "number",
                           inputMode := "numeric",
                           minAttr := game.requiredSeats.toString,
-                          game.maxPlayers.fold(emptyMod)(m => maxAttr := m.toString),
+                          game.mostSeats.fold(emptyMod)(m => maxAttr := m.toString),
                           controlled(value <-- perMatch.signal, onInput.mapToValue --> perMatch)
                         )
                       )
@@ -1668,15 +1668,15 @@ object Tournaments {
                         )
                     case _ => emptyNode
                 },
-                if (game.isRoleless) playersControl else emptyNode,
+                if (game.isSeatedWithoutRoles) playersControl else emptyNode,
                 number(
                   caption = labelOf("competition.poolSize", Labels.competition.poolSize),
                   v = poolSize,
                   tip = tipOf("competition.poolSize", Tips.competition.poolSize)
                 ),
                 // Everyone entered so far in one pool: as many as the game takes in a match, when it has a most.
-                if (game.isRoleless && entered > 0) {
-                    val everyone = game.maxPlayers.fold(entered)(math.min(entered, _))
+                if (game.isSeatedWithoutRoles && entered > 0) {
+                    val everyone = game.mostSeats.fold(entered)(math.min(entered, _))
                     button(
                       tpe := "button",
                       // Gone with the pool size it fills in.
@@ -1726,7 +1726,7 @@ object Tournaments {
             tip = tipOf("competition.isPublic", Tips.competition.isPublic)
           ),
           // Nothing to choose in a game without roles.
-          if (game.isRoleless) emptyNode
+          if (game.isSeatedWithoutRoles) emptyNode
           else
               checkbox(
                 caption = labelOf("competition.chooseRoles", Labels.competition.chooseRoles),
@@ -1925,7 +1925,7 @@ object Tournaments {
     private def formatsSection(game: Game, player: Player): HtmlElement = {
         val said = Var("")
         // Judged as the server judges an offer: a game without roles at its smallest matches.
-        val tg = TournamentGame.of(game, game.minPlayers)
+        val tg = TournamentGame.of(game, game.fewestPlayers)
         val offered: Signal[Set[TournamentModelId]] =
             Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty).map(_.tournamentModelId).toSet)
         val tipId = freshTipId("formats-tip")

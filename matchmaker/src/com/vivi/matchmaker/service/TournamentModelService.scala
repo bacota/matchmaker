@@ -192,7 +192,7 @@ object TournamentModelService {
         val repo = new TournamentModelRepo(session)
         // A game without roles is judged at its smallest matches: whether a format suits a whole pool in one match is
         // the tournament's to say, which validates it when it is made.
-        val tg = TournamentGame.of(game, game.minPlayers)
+        val tg = TournamentGame.of(game, game.fewestPlayers)
         lockSyncShared(session) *> repo.listActive.flatMap { models =>
             // None for a game with no role a match could start with.
             val playable =

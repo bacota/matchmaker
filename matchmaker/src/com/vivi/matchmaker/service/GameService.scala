@@ -118,13 +118,14 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * A role is recognised by its id: one carrying [[GameRoleId.unassigned]] is being added, and an existing id
       * missing from the update is a deletion asked for by omission.
       *
-      * A game whose roles are all optional may become one without roles: no match needs any of them, so none is lost.
-      * Its roles are retired rather than deleted (`GameRepo.update`). Not while a competition of it is open or under
-      * way, though, since that was made for, and may be seating, the roles. Its tournaments are read unlocked, as a
-      * tournament's creation reads the game: see the reference-table exception in `.claude/rules/backend.md`.
+      * A game whose roles are all optional may do without them -- with a range of players, or with neither, when it
+      * seats two or more a match: no match needs any of them, so none is lost. Its roles are retired rather than
+      * deleted (`GameRepo.update`). Not while a competition of it is open or under way, though, since that was made
+      * for, and may be seating, the roles. Its tournaments are read unlocked, as a tournament's creation reads the
+      * game: see the reference-table exception in `.claude/rules/backend.md`.
       */
     private def checkRoles(existing: Game, incoming: Game, tournaments: TournamentRepo): IO[Unit] =
-        if (incoming.isRoleless && existing.roles.nonEmpty) {
+        if (incoming.roles.isEmpty && existing.roles.nonEmpty) {
             val needed = existing.roles.filterNot(_.roleType == RoleType.Optional)
             for {
                 _ <- IO.raiseUnless(needed.isEmpty)(
@@ -201,15 +202,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** What the schema would refuse anyway, refused here first so that it is a 400 explaining itself rather than a
       * constraint violation surfacing as a 500.
       *
-      * The rules that are not the schema's: a game has roles or a range of players, exactly one of the two. A game with
-      * neither is a game nothing can be played in — it would take challenges no further than the form that tried to
-      * create one — and one with both would be asking its seats to be at once named and all alike.
+      * The rules that are not the schema's: a game has roles or a range of players, not both, which would be asking its
+      * seats to be at once named and all alike. A game with neither seats its players without roles, two or more a
+      * match (`Game.fewestPlayers`).
       */
     private def validate(game: Game): IO[Unit] =
         for {
-            _ <- IO.raiseWhen(game.roles.isEmpty && !game.isRoleless)(
-              ValidationError(ErrorText.game.noRolesNoPlayers(game.name))
-            )
             _ <- IO.raiseWhen(game.roles.nonEmpty && game.isRoleless)(
               ValidationError(ErrorText.game.rolesAndPlayers(game.name))
             )
