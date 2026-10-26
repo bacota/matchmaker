@@ -8,7 +8,7 @@ package standard
 object RoundRobin
     extends StandardModel(
       id = "RR",
-      version = 5,
+      version = 6,
       name = "Round Robin Challenge",
       description = "",
       classification = None,
