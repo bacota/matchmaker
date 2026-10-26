@@ -128,13 +128,18 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           RETURNING game_role_id""".query(gameRoleId)
 
     private val selectRoles: Query[GameId, (GameRoleId, String, RoleType, String, Option[Int])] =
-        sql"""SELECT game_role_id, name, type, display_name, preference_level FROM game_role WHERE game_id = $gameId
+        sql"""SELECT game_role_id, name, type, display_name, preference_level FROM game_role
+          WHERE game_id = $gameId AND NOT is_retired
           ORDER BY game_role_id"""
             .query(gameRoleId *: text *: roleType *: text *: int4.opt)
 
     private val updateRoleStmt: Command[(String, RoleType, String, Option[Int], GameId, GameRoleId)] =
         sql"""UPDATE game_role SET name = $text, type = $roleType, display_name = $text, preference_level = ${int4.opt}
           WHERE game_id = $gameId AND game_role_id = $gameRoleId""".command
+
+    private val retireRolesStmt: Command[GameId] =
+        sql"""UPDATE game_role SET is_retired = true, update_date = now()
+          WHERE game_id = $gameId AND NOT is_retired""".command
 
     private val insertParameterStmt: Query[(GameId, String, String), GameParameterId] =
         sql"""INSERT INTO game_parameter (game_id, name, display_name) VALUES ($gameId, $text, $text)
@@ -280,6 +285,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               )
             )
             _ <- upsertRoles(game.gameId, game.roles)
+            // A game without roles seats nobody in one, so whatever roles it had are retired: kept for the matches
+            // that named them, and no longer read as the game's. `GameService` decides whether that may happen.
+            _ <- IO.whenA(game.isRoleless)(session.execute(retireRolesStmt)(game.gameId).void)
             _ <- replaceParameters(game.gameId, game.parameters)
         } yield ()
 
@@ -415,7 +423,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
                  v.value
           FROM game g
-          LEFT JOIN game_role r ON r.game_id = g.game_id
+          LEFT JOIN game_role r ON r.game_id = g.game_id AND NOT r.is_retired
           LEFT JOIN game_parameter p ON p.game_id = g.game_id
           LEFT JOIN game_parameter_value v
                  ON v.game_id = p.game_id AND v.game_parameter_id = p.game_parameter_id

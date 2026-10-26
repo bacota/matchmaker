@@ -6,7 +6,7 @@ import cats.syntax.all._
 import skunk.SqlState
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.auth.ApiKeys
-import com.vivi.matchmaker.persistence.{GameApiKeyRepo, GameRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.persistence.{GameApiKeyRepo, GameRepo, PlayerRepo, TextCodec, TournamentRepo}
 
 /** Creates or updates a Game, together with all of its roles, parameters, and parameter values. Only an admin may do
   * this.
@@ -58,7 +58,11 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                             gameRepo.lockForUpdate(trimmed.gameId) *> gameRepo.read(trimmed.gameId).flatMap {
                                 case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                                 case Some(existing) =>
-                                    checkRoles(existing, trimmed) *> gameRepo
+                                    checkRoles(
+                                      existing = existing,
+                                      incoming = trimmed,
+                                      tournaments = new TournamentRepo(session)
+                                    ) *> gameRepo
                                         .update(trimmed) *> gameRepo.read(trimmed.gameId).flatMap {
                                         case Some(updated) => IO.pure(updated)
                                         case None =>
@@ -105,7 +109,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         }
 
     /** What an update may do to a game's roles: rename them, make them optional or not, and add new ones. Not remove
-      * one.
+      * one — except by doing without roles altogether.
       *
       * `participant` carries a `game_role_id`, so a role that is deleted is a played match with no record of who played
       * what. A role that has outlived its usefulness is made optional instead, which stops a challenge needing it while
@@ -113,8 +117,28 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       *
       * A role is recognised by its id: one carrying [[GameRoleId.unassigned]] is being added, and an existing id
       * missing from the update is a deletion asked for by omission.
+      *
+      * A game whose roles are all optional may become one without roles: no match needs any of them, so none is lost.
+      * Its roles are retired rather than deleted (`GameRepo.update`). Not while a competition of it is open or under
+      * way, though, since that was made for, and may be seating, the roles. Its tournaments are read unlocked, as a
+      * tournament's creation reads the game: see the reference-table exception in `.claude/rules/backend.md`.
       */
-    private def checkRoles(existing: Game, incoming: Game): IO[Unit] = {
+    private def checkRoles(existing: Game, incoming: Game, tournaments: TournamentRepo): IO[Unit] =
+        if (incoming.isRoleless && existing.roles.nonEmpty) {
+            val needed = existing.roles.filterNot(_.roleType == RoleType.Optional)
+            for {
+                _ <- IO.raiseUnless(needed.isEmpty)(
+                  ValidationError(
+                    ErrorText.game
+                        .rolesNotOptional(game = existing.name, roles = needed.map(r => s"'${r.name}'").mkString(", "))
+                  )
+                )
+                inPlay <- tournaments.hasUnfinished(existing.gameId)
+                _ <- IO.raiseWhen(inPlay)(ValidationError(ErrorText.game.rolesInPlay(existing.name)))
+            } yield ()
+        } else checkKeptRoles(existing = existing, incoming = incoming)
+
+    private def checkKeptRoles(existing: Game, incoming: Game): IO[Unit] = {
         val existingIds = existing.roles.map(_.gameRoleId).toSet
         val incomingIds = incoming.roles.map(_.gameRoleId).filterNot(_ == GameRoleId.unassigned).toSet
         val unknown = incomingIds -- existingIds
