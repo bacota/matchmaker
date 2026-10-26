@@ -8,48 +8,25 @@ package com.vivi.matchmaker.model
   * with `is_notified_of_` in front of it in lower case, names the column.
   *
   * `participant` is the exception, and holds only [[onSeat]]: a seat is asked about the match it is in, and the first
-  * seven kinds are about the entries of a challenge or tournament before it starts.
+  * four kinds are about the entries of a challenge or tournament before it starts.
   *
   * The order of `values` is the order the columns are bound in (`SkunkCodecs.notificationPreferences`) and the order
   * the forms list them in, which is why it is the order a player meets these events in rather than alphabetical:
-  * offering a challenge, filling it, entering someone else's, playing, finishing. The codes, and so the columns, keep
-  * the names they had when a challenge was accepted rather than entered.
+  * entries in a competition, invitations to one, playing, finishing.
   */
 enum NotificationType(val code: String, val label: String, val detail: String) {
 
-    /** (1) Somebody entered a challenge or tournament you own, or withdrew from one. */
-    case ChallengeAccepted
+    /** (1) Somebody entered a challenge or tournament you own, or withdrew from one — including the entry that fills
+      * it.
+      */
+    case CompetitionEntered
         extends NotificationType(
-          code = "CHALLENGE_ACCEPTED",
-          label = "Someone enters my challenge",
-          detail = "Or my competition. Also when someone withdraws."
+          code = "COMPETITION_ENTERED",
+          label = "Someone enters a competition I manage",
+          detail = "Also when someone withdraws, and when it is full."
         )
 
-    /** (2) A challenge or tournament you own is full, so you can start it. */
-    case ChallengeReady
-        extends NotificationType(
-          code = "CHALLENGE_READY",
-          label = "My challenge can start",
-          detail = "Or my competition: it is full."
-        )
-
-    /** (3) Somebody else entered a challenge or tournament you had entered, or withdrew from one. */
-    case AcceptanceChanged
-        extends NotificationType(
-          code = "ACCEPTANCE_CHANGED",
-          label = "Someone joins a challenge",
-          detail = "Or a competition you entered. Also when one of them withdraws."
-        )
-
-    /** (4) A challenge or tournament you entered is full, so its owner can start it. */
-    case AcceptedChallengeReady
-        extends NotificationType(
-          code = "ACCEPTED_CHALLENGE_READY",
-          label = "A challenge can start",
-          detail = "Or a competition you entered: you are waiting on its owner."
-        )
-
-    /** (5) Somebody has invited you to a challenge or tournament of theirs.
+    /** (2) Somebody has invited you to a challenge or tournament of theirs.
       *
       * The only notification here that is the first a player hears of the thing it is about: every other kind is news
       * about a challenge, tournament or match they are already in. So it is also the only one whose recipient may have
@@ -58,11 +35,11 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case InvitationReceived
         extends NotificationType(
           code = "INVITATION_RECEIVED",
-          label = "Someone invites me to a challenge",
-          detail = "Or to a competition, offered to you in particular."
+          label = "I am invited to a competition",
+          detail = "Offered to you in particular."
         )
 
-    /** (6) Somebody has accepted an invitation you sent, by entering. */
+    /** (3) Somebody has accepted an invitation you sent, by entering. */
     case InvitationAccepted
         extends NotificationType(
           code = "INVITATION_ACCEPTED",
@@ -70,7 +47,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "Someone you invited has entered."
         )
 
-    /** (7) Somebody has turned down an invitation you sent.
+    /** (4) Somebody has turned down an invitation you sent.
       *
       * Worth its own kind rather than silence: the challenge or tournament stays as it was, so nothing else would tell
       * its owner that a player they were waiting on is not going to enter.
@@ -82,7 +59,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "Also when they simply say no."
         )
 
-    /** (8) A match you are a participant in has begun. */
+    /** (5) A match you are a participant in has begun. */
     case MatchStarted
         extends NotificationType(
           code = "MATCH_STARTED",
@@ -90,7 +67,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "With whose turn it is first."
         )
 
-    /** (7) Somebody took a turn in a match you are playing. */
+    /** (6) Somebody took a turn in a match you are playing. */
     case TurnTaken
         extends NotificationType(
           code = "TURN_TAKEN",
@@ -98,7 +75,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "Every move in every match you are playing."
         )
 
-    /** (8) It is your turn. */
+    /** (7) It is your turn. */
     case YourTurn
         extends NotificationType(
           code = "YOUR_TURN",
@@ -106,7 +83,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "Including when a turn is nearly due."
         )
 
-    /** (9) A match you are in has ended or been called off. */
+    /** (8) A match you are in has ended or been called off. */
     case MatchEnded
         extends NotificationType(
           code = "MATCH_ENDED",
@@ -114,7 +91,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           detail = "However it ends, including cancellation."
         )
 
-    /** (10) Every match of a round of a tournament you own is over, and the next waits on you to start it.
+    /** (9) Every match of a round of a tournament you own is over, and the next waits on you to start it.
       *
       * Not about a match, so a seat holds no answer for it; and sent only for a tournament whose rounds its owner
       * starts, since one that starts its own rounds waits on nobody.
@@ -134,9 +111,9 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
 
     /** Whether this kind of news can still arrive about a match that has already started.
       *
-      * The first eight are all about entries, or about the start itself: by the time there is a match to have an
-      * opinion about, every one of them has either happened or can no longer happen. Only playing and finishing are
-      * still ahead.
+      * The first five are all about entries, or about the start itself: by the time there is a match to have an opinion
+      * about, every one of them has either happened or can no longer happen. Only playing and finishing are still
+      * ahead.
       *
       * A seat carries an answer for [[NotificationType.onSeat]] and no more: these three plus `MatchStarted`, which
       * fires while the seat is new. The rest have no column on `participant` to be stamped into, which is why asking a
@@ -180,10 +157,7 @@ object NotificationType {
   * ever looks up.
   */
 case class NotificationPreferences(
-    isNotifiedOfChallengeAccepted: Option[Boolean] = None,
-    isNotifiedOfChallengeReady: Option[Boolean] = None,
-    isNotifiedOfAcceptanceChanged: Option[Boolean] = None,
-    isNotifiedOfAcceptedChallengeReady: Option[Boolean] = None,
+    isNotifiedOfCompetitionEntered: Option[Boolean] = None,
     isNotifiedOfInvitationReceived: Option[Boolean] = None,
     isNotifiedOfInvitationAccepted: Option[Boolean] = None,
     isNotifiedOfInvitationRejected: Option[Boolean] = None,
@@ -195,40 +169,34 @@ case class NotificationPreferences(
 ) {
 
     def apply(kind: NotificationType): Option[Boolean] = kind match {
-        case NotificationType.ChallengeAccepted      => isNotifiedOfChallengeAccepted
-        case NotificationType.ChallengeReady         => isNotifiedOfChallengeReady
-        case NotificationType.AcceptanceChanged      => isNotifiedOfAcceptanceChanged
-        case NotificationType.AcceptedChallengeReady => isNotifiedOfAcceptedChallengeReady
-        case NotificationType.InvitationReceived     => isNotifiedOfInvitationReceived
-        case NotificationType.InvitationAccepted     => isNotifiedOfInvitationAccepted
-        case NotificationType.InvitationRejected     => isNotifiedOfInvitationRejected
-        case NotificationType.MatchStarted           => isNotifiedOfMatchStarted
-        case NotificationType.TurnTaken              => isNotifiedOfTurnTaken
-        case NotificationType.YourTurn               => isNotifiedOfYourTurn
-        case NotificationType.MatchEnded             => isNotifiedOfMatchEnded
-        case NotificationType.TournamentRoundDone    => isNotifiedOfTournamentRoundDone
+        case NotificationType.CompetitionEntered  => isNotifiedOfCompetitionEntered
+        case NotificationType.InvitationReceived  => isNotifiedOfInvitationReceived
+        case NotificationType.InvitationAccepted  => isNotifiedOfInvitationAccepted
+        case NotificationType.InvitationRejected  => isNotifiedOfInvitationRejected
+        case NotificationType.MatchStarted        => isNotifiedOfMatchStarted
+        case NotificationType.TurnTaken           => isNotifiedOfTurnTaken
+        case NotificationType.YourTurn            => isNotifiedOfYourTurn
+        case NotificationType.MatchEnded          => isNotifiedOfMatchEnded
+        case NotificationType.TournamentRoundDone => isNotifiedOfTournamentRoundDone
     }
 
     /** This, with one kind answered differently. `None` for `choice` is the "Use Default" the forms offer. */
     def updated(kind: NotificationType, choice: Option[Boolean]): NotificationPreferences = kind match {
-        case NotificationType.ChallengeAccepted      => copy(isNotifiedOfChallengeAccepted = choice)
-        case NotificationType.ChallengeReady         => copy(isNotifiedOfChallengeReady = choice)
-        case NotificationType.AcceptanceChanged      => copy(isNotifiedOfAcceptanceChanged = choice)
-        case NotificationType.AcceptedChallengeReady => copy(isNotifiedOfAcceptedChallengeReady = choice)
-        case NotificationType.InvitationReceived     => copy(isNotifiedOfInvitationReceived = choice)
-        case NotificationType.InvitationAccepted     => copy(isNotifiedOfInvitationAccepted = choice)
-        case NotificationType.InvitationRejected     => copy(isNotifiedOfInvitationRejected = choice)
-        case NotificationType.MatchStarted           => copy(isNotifiedOfMatchStarted = choice)
-        case NotificationType.TurnTaken              => copy(isNotifiedOfTurnTaken = choice)
-        case NotificationType.YourTurn               => copy(isNotifiedOfYourTurn = choice)
-        case NotificationType.MatchEnded             => copy(isNotifiedOfMatchEnded = choice)
-        case NotificationType.TournamentRoundDone    => copy(isNotifiedOfTournamentRoundDone = choice)
+        case NotificationType.CompetitionEntered  => copy(isNotifiedOfCompetitionEntered = choice)
+        case NotificationType.InvitationReceived  => copy(isNotifiedOfInvitationReceived = choice)
+        case NotificationType.InvitationAccepted  => copy(isNotifiedOfInvitationAccepted = choice)
+        case NotificationType.InvitationRejected  => copy(isNotifiedOfInvitationRejected = choice)
+        case NotificationType.MatchStarted        => copy(isNotifiedOfMatchStarted = choice)
+        case NotificationType.TurnTaken           => copy(isNotifiedOfTurnTaken = choice)
+        case NotificationType.YourTurn            => copy(isNotifiedOfYourTurn = choice)
+        case NotificationType.MatchEnded          => copy(isNotifiedOfMatchEnded = choice)
+        case NotificationType.TournamentRoundDone => copy(isNotifiedOfTournamentRoundDone = choice)
     }
 
     /** The kinds this and `other` answer differently: what a save actually changed.
       *
       * What a cascade is allowed to touch. A player who changes one question and asks for it to reach the matches they
-      * are playing has asked about that question, not about the seven they left alone — and a seat may well be holding
+      * are playing has asked about that question, not about the eight they left alone — and a seat may well be holding
       * an answer of its own to one of those.
       *
       * A kind that went from an answer to unsaid counts as changed: "I no longer have a view on this" is a change like
@@ -241,7 +209,7 @@ case class NotificationPreferences(
     def unsaid: Seq[NotificationType] = NotificationType.values.toSeq.filter(apply(_).isEmpty)
 
     /** The four a seat holds, or `None` if any of those is unsaid. What the per-match form saves: a match's form asks
-      * the four its seat can answer, and must not be blocked by the seven it never shows.
+      * the four its seat can answer, and must not be blocked by the five it never shows.
       */
     def completeForSeat: Option[SeatNotifications] =
         for {
@@ -265,8 +233,8 @@ object NotificationPreferences {
 
 /** What one seat in one match says it wants to hear about that match.
   *
-  * Four kinds, not twelve. A seat used to carry a column per kind for uniformity with the three levels behind it, and
-  * the rest could never fire about the match a seat is in. The columns were written at creation, re-stamped by every
+  * Four kinds, not nine. A seat used to carry a column per kind for uniformity with the three levels behind it, and the
+  * rest could never fire about the match a seat is in. The columns were written at creation, re-stamped by every
   * cascade, and read by nothing.
   *
   * No chain behind it: a seat's row is the answer, so a player who mutes one match stays muted there however they later
@@ -290,7 +258,7 @@ case class SeatNotifications(
         case _                             => false
     }
 
-    /** These four as choices a form can edit, the seven it does not hold left unsaid. */
+    /** These four as choices a form can edit, the five it does not hold left unsaid. */
     def asPreferences: NotificationPreferences =
         NotificationType.onSeat.foldLeft(NotificationPreferences.unset)((preferences, kind) =>
             preferences.updated(kind, Some(apply(kind)))

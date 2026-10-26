@@ -281,6 +281,13 @@ class TournamentRepo(session: Session[IO]) {
         sql"""SELECT tournament_id, $columns FROM tournament WHERE game_id = $gameId
           ORDER BY create_date DESC, tournament_id DESC""".query(tournamentId *: row)
 
+    private val selectHasUnfinished: Query[GameId, Boolean] =
+        sql"""SELECT EXISTS (SELECT 1 FROM tournament WHERE game_id = $gameId AND status IN ('open', 'running'))"""
+            .query(bool)
+
+    /** Whether a game has a tournament still open for entries or under way. */
+    def hasUnfinished(game: GameId): IO[Boolean] = session.unique(selectHasUnfinished)(game)
+
     /** Every tournament of a game, newest first. */
     def listForGame(game: GameId): IO[List[Tournament]] =
         session.execute(selectForGame)(game).map(_.map { case id *: r => tournamentOf(game = game, id = id, r = r) })

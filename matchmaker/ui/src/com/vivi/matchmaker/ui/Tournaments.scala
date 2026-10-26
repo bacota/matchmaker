@@ -1314,15 +1314,25 @@ object Tournaments {
         // The game's R as this tournament plays it: its roles, or for a game without roles the players per match.
         def r: Int = TournamentGame.of(game, playersPerMatch).poolSeats
 
+        // The number of participants choosing a model last filled in, while the field still holds it.
+        var filledEntrants: Option[String] = None
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
          * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
-         * model whose players always choose, which every tournament made from it does. */
+         * model whose players always choose, which every tournament made from it does. A model whose pool is everyone
+         * taking part fills in the number of participants as well, the game's R and at least 2, unless one has been
+         * typed; and a model chosen after it takes that filled-in number back out. */
         def choose(m: TournamentModel): Unit = {
             modelId.set(Some(m.tournamentModelId))
             chosen.set(Some(m))
             poolSize.set(m.poolSize.getOrElse(r).toString)
             lateEntries.set(m.hasLateEntries)
             chooseRoles.set(m.hasRoleChoice)
+            val typed = maxEntrants.now().trim
+            val isUntyped = typed.isEmpty || filledEntrants.contains(typed)
+            if (isUntyped) {
+                filledEntrants = Option.when(m.hasPoolOfEveryone)(math.max(r, 2).toString)
+                maxEntrants.set(filledEntrants.getOrElse(""))
+            }
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
@@ -1441,12 +1451,17 @@ object Tournaments {
         var acceptedProblems: List[Problem] = Nil
         // Whether the next check is of the format the form fills in as the formats arrive: not a change to undo.
         var isFillingIn = false
-        /* The banner saying a change was undone, while it may still be up. The undoing has already put the problem
-         * right, so the banner comes down at the next change made on the form, or when the form closes. */
-        var undoneNotice: Option[String] = None
-        def withdrawUndoneNotice(): Unit = {
-            undoneNotice.foreach(Store.withdrawProblem)
-            undoneNotice = None
+        /* The banner the form last raised -- a change undone, or a save refused for what the form lacks -- while it may
+         * still be up. It is about what the form held then, so it comes down at the next change made on the form, or
+         * when the form closes. */
+        var raisedNotice: Option[String] = None
+        def raiseNotice(notice: String): Unit = {
+            Store.reportProblem(notice)
+            raisedNotice = Some(notice)
+        }
+        def withdrawNotice(): Unit = {
+            raisedNotice.foreach(Store.withdrawProblem)
+            raisedNotice = None
         }
         def checkChange(): Unit = {
             val now = found
@@ -1470,8 +1485,7 @@ object Tournaments {
                 )
                 problems.set(acceptedProblems)
                 val notice = ErrorText.competitionForm.undone(raised.map(_.describe).mkString("; "))
-                Store.reportProblem(notice)
-                undoneNotice = Some(notice)
+                raiseNotice(notice)
             }
         }
 
@@ -1565,9 +1579,9 @@ object Tournaments {
         div(
           cls := "card competition-form",
           // Any field's input or change bubbles up to here; setting the fields from code, as an undo does, does not.
-          onInput --> (_ => withdrawUndoneNotice()),
-          onChange --> (_ => withdrawUndoneNotice()),
-          onUnmountCallback(_ => withdrawUndoneNotice()),
+          onInput --> (_ => withdrawNotice()),
+          onChange --> (_ => withdrawNotice()),
+          onUnmountCallback(_ => withdrawNotice()),
           // Headed when it is a dialog of its own, which is named by its heading.
           headingId.fold(emptyNode)(id => h3(idAttr := id, Headings.tournaments.create)),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
@@ -1669,7 +1683,7 @@ object Tournaments {
                       Views.shownWhen(labelOf("competition.poolSize", Labels.competition.poolSize)),
                       s"One pool of everyone entered ($everyone)",
                       onClick --> { _ =>
-                          withdrawUndoneNotice(); poolSize.set(everyone.toString)
+                          withdrawNotice(); poolSize.set(everyone.toString)
                       }
                     )
                 } else emptyNode
@@ -1832,13 +1846,13 @@ object Tournaments {
                 hasTriedSaving.set(true)
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
-                if (name.now().trim.isEmpty) Store.reportProblem(ErrorText.competitionForm.noName)
+                if (name.now().trim.isEmpty) raiseNotice(ErrorText.competitionForm.noName)
                 // Asked for where it is shown; a format that leaves it out saves the default.
                 else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
-                    Store.reportProblem(ErrorText.competitionForm.noTimeLimit)
-                else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
+                    raiseNotice(ErrorText.competitionForm.noTimeLimit)
+                else if (errors.nonEmpty) raiseNotice(errors.map(_.describe).mkString("; "))
                 else if (isJoining && isCharacterGame && joinWith.now().isEmpty)
-                    Store.reportProblem(ErrorText.competitionForm.noCharacter)
+                    raiseNotice(ErrorText.competitionForm.noCharacter)
                 else
                     modelId.now().foreach { id =>
                         val request = TournamentRequest(

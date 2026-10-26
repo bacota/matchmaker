@@ -120,8 +120,8 @@ class NotificationPolicySpec extends FunSuite {
     }
 
     /* What the per-match form asks about. Stated as the two lists rather than as a count, because the
-     * mistake to catch is a kind on the wrong side of the start -- a form that asks about "my challenge
-     * is ready" for a match already being played offers a choice that cannot change anything, and one
+     * mistake to catch is a kind on the wrong side of the start -- a form that asks about "someone enters
+     * a competition I manage" for a match already being played offers a choice that cannot change anything, and one
      * that stops asking about "it is my turn" takes away the setting the form exists for. */
     test("only playing and finishing can still happen to a match under way") {
         assertEquals(
@@ -130,10 +130,7 @@ class NotificationPolicySpec extends FunSuite {
         )
         assert(
           NotificationType.values.toSeq.filterNot(_.isInProgress) == Seq(
-            NotificationType.ChallengeAccepted,
-            NotificationType.ChallengeReady,
-            NotificationType.AcceptanceChanged,
-            NotificationType.AcceptedChallengeReady,
+            NotificationType.CompetitionEntered,
             // An invitation cannot be made to a match: by the time there is one, the challenge it was
             // offered on is spoken for and its invitations are about to be deleted with it. So a match's
             // own settings form does not ask about these three.

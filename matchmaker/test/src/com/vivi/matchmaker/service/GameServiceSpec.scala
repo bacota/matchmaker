@@ -636,6 +636,90 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    /** A game whose roles are all optional, saved, and the same game asking to do without roles. */
+    private def optionalRolesGame(admin: Player): IO[Game] =
+        for {
+            base <- IO(Generators.genGame(GameType.Plain).sample.get)
+            created <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = base.copy(isActive = true, roles = base.roles.map(_.copy(roleType = RoleType.Optional)))
+            )
+        } yield created
+
+    private def withoutRoles(game: Game): Game =
+        game.copy(roles = Nil, minPlayers = Some(2), maxPlayers = None, moveType = MoveType.Simultaneous)
+
+    test("createOrUpdate lets a game whose roles are all optional do without them, keeping the roles' rows") {
+        val result = for {
+            admin <- makeAdmin()
+            created <- optionalRolesGame(admin)
+            updated <- gameService.createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            // Retired, not deleted: played seats and role ratings still name them.
+            kept <- TestSession.resource.use { session =>
+                import skunk.implicits._
+                import skunk.codec.all.{bool, int4}
+                session.execute(
+                  sql"SELECT is_retired FROM game_role WHERE game_id = $int4".query(bool)
+                )(created.gameId.value)
+            }
+        } yield updated.isRoleless && updated.roles.isEmpty &&
+            listed.exists(g => g.isRoleless && g.roles.isEmpty) &&
+            kept.sizeIs == created.roles.size && kept.forall(identity)
+
+        assert(result.unsafeRunSync())
+    }
+
+    test("createOrUpdate refuses to let a game with a role that is not optional do without roles") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGame(GameType.Plain).sample.get)
+            created <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = base.copy(roles = base.roles.zipWithIndex.map { (role, i) =>
+                  role.copy(roleType = if (i == 0) RoleType.Recommended else RoleType.Optional)
+              })
+            )
+            attempt <- gameService
+                .createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
+                .attempt
+            after <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield attempt.left.exists {
+            case e: ValidationError => e.getMessage.contains("once every role is optional")
+            case _                  => false
+        } && after.exists(g => !g.isRoleless && g.roles.sizeIs == created.roles.size)
+
+        assert(result.unsafeRunSync())
+    }
+
+    test("createOrUpdate refuses to let a game do without roles while a competition of it is open") {
+        val result = for {
+            admin <- makeAdmin()
+            // Made while its roles are required, since a game with no role a match must fill offers no challenge,
+            // and then they are made optional.
+            base <- IO(Generators.genGame(GameType.Plain).sample.get)
+            withRoles <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = base.copy(isActive = true)
+            )
+            _ <- Challenges.offeredIn(withRoles)
+            _ <- Challenges.create(tournaments = TestServices.services.tournaments, game = withRoles, owner = admin)
+            created <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = withRoles.copy(roles = withRoles.roles.map(_.copy(roleType = RoleType.Optional)))
+            )
+            attempt <- gameService
+                .createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
+                .attempt
+            after <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield attempt.left.exists {
+            case e: ValidationError => e.getMessage.contains("open or under way")
+            case _                  => false
+        } && after.exists(g => !g.isRoleless && g.roles.sizeIs == created.roles.size)
+
+        assert(result.unsafeRunSync())
+    }
+
     test("createOrUpdate refuses a role id that belongs to no role of the game") {
         val result = for {
             admin <- makeAdmin()

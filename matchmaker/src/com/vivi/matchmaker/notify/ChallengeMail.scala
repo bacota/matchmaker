@@ -24,6 +24,8 @@ import com.vivi.matchmaker.model.NotificationType
   * @param room
   *   how many more entries it takes before it is full, for one that takes a limited number; `None` for one that does
   *   not. `Some(0)` is full.
+  * @param isReady
+  *   whether this entry has just filled it and it waits on its owner to start it
   */
 case class ChallengeNews(
     gameName: String,
@@ -32,17 +34,17 @@ case class ChallengeNews(
     actor: String,
     isJoined: Boolean,
     challenger: String,
-    room: Option[Int]
+    room: Option[Int],
+    isReady: Boolean = false
 )
 
-/** What a player is told when a challenge or tournament they own or have entered changes.
+/** What a player is told about the entries in, or invitations to, a challenge or tournament.
   *
-  * Seven of the twelve notification kinds land here, and they are two pairs: something happened (an entry, a
-  * withdrawal) and it is now full. Each pair is said once to its owner and once to the players who entered it, because
-  * those are different pieces of news — only one of them can start it.
+  * Four of the nine notification kinds land here. One is about the entries, and is told to the owner: somebody entered
+  * or withdrew, and, when that entry filled it, that it can now be started.
   *
-  * The other three are the invitation kinds, which are the same shape one level out: an invitation is made, taken up,
-  * or turned down, and the first of those is the only mail here addressed to somebody who is not yet in it at all.
+  * The other three are the invitation kinds: an invitation is made, taken up, or turned down, and the first of those is
+  * the only mail here addressed to somebody who is not yet in it at all.
   *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
   * can be tested without a tournament or a database. The deciding half is `Notifications`.
@@ -67,25 +69,9 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
 
         kind match {
             // To the owner, about somebody else's decision. The roster line matters most here: they are the one
-            // who can start it, so what they need to know is how far off that is.
-            case NotificationType.ChallengeAccepted =>
-                val prefix = if (news.isJoined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
-                Some(
-                  (
-                    MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name, "what" -> what),
-                    MailTemplates.render(
-                      s"$prefix.body",
-                      "actor" -> news.actor,
-                      "game" -> name,
-                      "what" -> what,
-                      "quoted" -> quoted,
-                      "roster" -> roster
-                    )
-                  )
-                )
-
-            // Also to the owner, and the one mail here that asks them to do something.
-            case NotificationType.ChallengeReady =>
+            // who can start it, so what they need to know is how far off that is -- and, when this entry has
+            // filled it, that it is now theirs to start.
+            case NotificationType.CompetitionEntered if news.isReady =>
                 Some(
                   (
                     MailTemplates.render("mail.challenge.ready.subject", "game" -> name, "what" -> what),
@@ -99,45 +85,18 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                   )
                 )
 
-            // To the other entrants. They cannot start it and are not being asked to do anything, so this says
-            // who they will be playing with and how far it is from full.
-            case NotificationType.AcceptanceChanged =>
-                val event =
-                    if (news.isJoined)
-                        MailTemplates.render("mail.challenge.changed.accepted.event", "actor" -> news.actor)
-                    else MailTemplates.render("mail.challenge.changed.withdrawn.event", "actor" -> news.actor)
-
-                val subject =
-                    if (news.isJoined) "mail.challenge.changed.accepted.subject"
-                    else "mail.challenge.changed.withdrawn.subject"
-
+            case NotificationType.CompetitionEntered =>
+                val prefix = if (news.isJoined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
                 Some(
                   (
-                    MailTemplates.render(subject, "actor" -> news.actor, "game" -> name, "what" -> what),
+                    MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name, "what" -> what),
                     MailTemplates.render(
-                      "mail.challenge.changed.body",
-                      "challenger" -> news.challenger,
+                      s"$prefix.body",
+                      "actor" -> news.actor,
                       "game" -> name,
                       "what" -> what,
                       "quoted" -> quoted,
-                      "event" -> event,
                       "roster" -> roster
-                    )
-                  )
-                )
-
-            // And to the other entrants when it fills up: nothing for them to do, but it says who they are now
-            // waiting on, which is the honest answer to "when does this start?".
-            case NotificationType.AcceptedChallengeReady =>
-                Some(
-                  (
-                    MailTemplates.render("mail.challenge.acceptedReady.subject", "game" -> name, "what" -> what),
-                    MailTemplates.render(
-                      "mail.challenge.acceptedReady.body",
-                      "challenger" -> news.challenger,
-                      "game" -> name,
-                      "what" -> what,
-                      "quoted" -> quoted
                     )
                   )
                 )
@@ -160,7 +119,7 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                   )
                 )
 
-            // Back to the owner, with the roster line for the reason it is on ChallengeAccepted.
+            // Back to the owner, with the roster line for the reason it is on CompetitionEntered.
             case NotificationType.InvitationAccepted =>
                 Some(
                   (
