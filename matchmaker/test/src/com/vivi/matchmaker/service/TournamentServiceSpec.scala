@@ -327,6 +327,63 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(invited.isRight && owner.isRight)
     }
 
+    test("a private invitational's page is not found by a player with no part in it, and is seen by one invited") {
+        val (stranger, invited, owner) = run(for {
+            f <- fixture(2)
+            t <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(
+                f = f,
+                settings = TournamentSettings(isPublic = false, roundDuration = Some(Duration.ofDays(1)))
+              ),
+              callerExternalId = f.owner.externalId
+            )
+            _ <- tournaments.invite(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              playerId = f.players(1).playerId,
+              callerExternalId = f.owner.externalId
+            )
+            look = (p: Player) =>
+                tournaments
+                    .detail(gameId = f.game.gameId, tournamentId = t.tournamentId, callerExternalId = p.externalId)
+                    .attempt
+            stranger <- look(f.players.head)
+            invited <- look(f.players(1))
+            owner <- look(f.owner)
+        } yield (stranger, invited, owner))
+        assert(stranger.left.exists(_.isInstanceOf[NotFoundError]), stranger)
+        assert(invited.isRight && owner.isRight)
+    }
+
+    test("a stranger sees the page of a public invitational, and of a private one open to all while it takes entries") {
+        val (publicInvitational, privateOpen) = run(for {
+            f <- fixture(1)
+            create = (settings: TournamentSettings) =>
+                tournaments.create(
+                  gameId = f.game.gameId,
+                  request = request(f = f, settings = settings),
+                  callerExternalId = f.owner.externalId
+                )
+            look = (t: Tournament) =>
+                tournaments
+                    .detail(
+                      gameId = f.game.gameId,
+                      tournamentId = t.tournamentId,
+                      callerExternalId = f.players.head.externalId
+                    )
+                    .attempt
+            invitational <- create(TournamentSettings(roundDuration = Some(Duration.ofDays(1))))
+            open <- create(
+              TournamentSettings(isInvitational = false, isPublic = false, roundDuration = Some(Duration.ofDays(1)))
+            )
+            publicInvitational <- look(invitational)
+            privateOpen <- look(open)
+        } yield (publicInvitational, privateOpen))
+        assert(publicInvitational.isRight, publicInvitational)
+        assert(privateOpen.isRight, privateOpen)
+    }
+
     private def characterOf(f: Fixture, owner: Player): IO[Character[String]] =
         TestSession.resource.use(
           new CharacterRepo[String](_).create(Generators.genCharacter(f.game.gameId, Some(owner.playerId)).sample.get)

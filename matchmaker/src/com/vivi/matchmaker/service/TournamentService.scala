@@ -79,8 +79,10 @@ class TournamentService[T](
             )
         }
 
-    /** A tournament's page: the tournament, its entries and invitations, its state, and the round being played. Any
-      * registered player may look.
+    /** A tournament's page: the tournament, its entries and invitations, its state, and the round being played. Its
+      * owner, entrants and those invited -- themselves or a character of theirs -- may look, and anybody else at a
+      * public one or one open to all and taking entries, as a game's list offers it. Anybody else is told there is no
+      * such tournament.
       */
     def detail(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[TournamentDetail] =
         sessionPool.use { session =>
@@ -89,8 +91,8 @@ class TournamentService[T](
                 summary <- new TournamentRepo(session)
                     .summary(game = gameId, id = tournamentId, viewer = caller.playerId)
                     .flatMap {
-                        case Some(s) => IO.pure(s)
-                        case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
+                        case Some(s) if canSee(s) => IO.pure(s)
+                        case _                    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
                     }
                 design <- new StageRepo(session).design(gameId, tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
@@ -921,6 +923,14 @@ class TournamentService[T](
     /* Each of the game's parameters by name, with the values a tournament may choose for it. */
     private def parameterValues(game: Game): Map[String, Seq[String]] =
         game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap
+
+    /* Whether the viewer a summary was read for may see the tournament's page: one they have a part in, a public one,
+     * or one anybody may enter while it takes entries. */
+    private def canSee(s: TournamentSummary): Boolean = {
+        val settings = s.tournament.settings
+        s.isOwner || s.isEntered || s.isInvited || settings.isPublic ||
+        (!settings.isInvitational && s.tournament.status == TournamentStatus.Open)
+    }
 
     /* That `player` administers `game`: an overall admin, or one of the game's own. Their admin row is held FOR SHARE,
      * so that losing it waits for what it is permitting to be written. */
