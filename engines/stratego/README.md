@@ -138,3 +138,14 @@ any other. The deploy scripts print the urls; the form wants:
 - **Type**: plain (leave "Requires characters" unticked)
 - **Roles**: `Red` and `Blue`, neither optional
 - **Parameters**: none
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** the rank of every opponent's piece that has not been revealed in play. During setup the opponent's
+  army is not sent at all, only the fact that it is down. The public board sees only ranks revealed in play. None of
+  this changes when the match is over. The replay (`replayOf`) hides the same ranks. A rank left in the response is
+  readable in the developer tools even if the page doesn't draw it, so hiding happens in `Engine.stateOf`.
+- **Text players write:** the match's title and nicknames. The page escapes them with `escapeHtml`.
+- **Routes of its own:** none. A setup, a move and a concession all go through the common moves route.

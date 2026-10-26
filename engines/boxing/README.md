@@ -198,3 +198,18 @@ any other. The deploy scripts print the urls; the form wants:
   `refresh` repairs.
 - **Matchmaker's UI still says "character".** The game calls them fighters, and so do this engine's
   pages, but matchmaker has no per-game name for its characters.
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** a fighter's characteristics, from everyone but its own corner, before, during and after the bout.
+  The other corner and the public board get its `impression` instead. A corner's plan for a round is its own too,
+  even after the round resolves: the round's totals are everyone's, and a plan beside them would give the
+  characteristics away. So the other corner learns only that a plan has been made (`isPlanned`).
+- **Text players write:** the match's title, nicknames, a fighter's name and its description. The board escapes
+  them with `escapeHtml`. The fighters page sets them as `textContent`.
+- **Routes of its own:** `GET /rules` and `GET /fighters` are pages anyone may load, and show nothing that is
+  anybody's. `GET /fighters/mine`, `POST /fighters`, `PUT /fighters/{id}` and `PUT /fighters/{id}/owner` act for
+  the signed-in caller. Matchmaker decides whether the fighter is theirs to edit or give away, so the engine
+  passes the caller's Cognito id, never one from the request.

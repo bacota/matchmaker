@@ -60,3 +60,12 @@ the urls; the form wants:
   simultaneous game's turns, and refuses a challenge for one that gives no number. Most matches
   are decided in a round or two; the engine plays on until one is.
 - **Parameters**: none
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** the picks of the round being played, except the viewer's own (`yourPick`). Every viewer learns only
+  who has picked. A round's picks are shown once everyone has picked.
+- **Text players write:** the match's title and nicknames. The page escapes them with `escapeHtml`.
+- **Routes of its own:** none.
