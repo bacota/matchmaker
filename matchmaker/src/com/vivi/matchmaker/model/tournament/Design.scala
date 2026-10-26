@@ -162,18 +162,28 @@ case class TournamentGame(
 
 object TournamentGame {
 
-    /** `playersPerMatch` is the tournament's, for a game without roles; a game with roles ignores it. */
+    /** `playersPerMatch` is the tournament's, for a game whose matches seat no roles; a game with roles ignores it. A
+      * game whose roles are all optional is played as one without roles, up to one player per role.
+      */
     def of(game: com.vivi.matchmaker.model.Game, playersPerMatch: Option[Int] = None): TournamentGame =
         TournamentGame(
-          roles = game.roles.toList
-              .sortBy(_.gameRoleId.value)
-              .map(r =>
-                  TournamentRole(id = r.gameRoleId.value, roleType = r.roleType, preferenceLevel = r.preferenceLevel)
-              ),
+          // None for a game whose matches seat no roles, even one with optional roles.
+          roles =
+              if (game.isSeatedWithoutRoles) Nil
+              else
+                  game.roles.toList
+                      .sortBy(_.gameRoleId.value)
+                      .map(r =>
+                          TournamentRole(
+                            id = r.gameRoleId.value,
+                            roleType = r.roleType,
+                            preferenceLevel = r.preferenceLevel
+                          )
+                      ),
           moveType = game.moveType,
           maxTurns = game.maxTurns,
-          open = game.minPlayers.map(least =>
-              OpenSeats(minPlayers = least, maxPlayers = game.maxPlayers, playersPerMatch = playersPerMatch)
+          open = game.fewestPlayers.map(least =>
+              OpenSeats(minPlayers = least, maxPlayers = game.mostSeats, playersPerMatch = playersPerMatch)
           )
         )
 }

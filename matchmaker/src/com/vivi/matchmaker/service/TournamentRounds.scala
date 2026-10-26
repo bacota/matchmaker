@@ -366,8 +366,8 @@ class TournamentRounds[T](
             players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
             active = tm.seats.filter { s =>
                 val isSeated = players.get(s.entrantId).flatten.isDefined
-                // A seat of a game without roles has no role to wait for.
-                !s.isForfeit && (s.gameRoleId.isDefined || game.isRoleless) && isSeated
+                // A seat of a match seated without roles has no role to wait for.
+                !s.isForfeit && (s.gameRoleId.isDefined || game.isSeatedWithoutRoles) && isSeated
             }
             prepared <-
                 if (active.sizeIs < math.max(game.requiredSeats, 2) || active.sizeIs < tm.seats.count(!_.isForfeit)) {
@@ -418,7 +418,7 @@ class TournamentRounds[T](
               session = session,
               gameId = t.gameId,
               seats = seatsOf,
-              byRole = !game.isRoleless
+              byRole = !game.isSeatedWithoutRoles
             )
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get

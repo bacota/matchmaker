@@ -233,7 +233,6 @@ object GameForm {
         val (blank, named) = all.partition(_._2.isEmpty)
         if (blank.exists(_._1 != GameRoleId.unassigned))
             Left(ErrorText.gameForm.unnamedRole)
-        else if (named.isEmpty) Left(ErrorText.gameForm.noRoles)
         else if (named.map(_._2).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameRoleName)
         else if (named.map(_._4).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameRoleDisplayName)
         else if (named.exists((_, _, _, _, p) => p.nonEmpty && p.toIntOption.isEmpty))
@@ -365,8 +364,8 @@ object GameForm {
         // be — the control does not have to change when the second arrives, only the enum.
         val timeoutAction: Var[TimeoutAction] =
             Var(existing.map(_.timeoutAction).getOrElse(TimeoutAction.Forfeit))
-        // A new game starts with one empty role, because a game with roles cannot be created without one, and no
-        // parameters, because plenty of games have none. An existing one starts with what it has.
+        // A new game starts with one empty role, since most games have roles -- left blank, it is dropped, and the game
+        // seats its players without roles -- and no parameters, because plenty of games have none. An existing one starts with what it has.
         val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
         val parameters = Var(
           existing.map(_.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList).getOrElse(Nil)

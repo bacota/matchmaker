@@ -841,7 +841,7 @@ class TournamentService[T](
               Option.when(s.maxTurns.exists(_ < 1))(ErrorText.tournament.noTurns),
               Option.when(s.maxEntrants.exists(_ < 1))(ErrorText.tournament.noEntries),
               // A game with roles seats one player per role, which is not the owner's to change.
-              Option.when(s.playersPerMatch.isDefined && !game.isRoleless)(
+              Option.when(s.playersPerMatch.isDefined && !game.isSeatedWithoutRoles)(
                 ErrorText.tournament.seatsByRole(game.displayName)
               ),
               // The engine plays a live match against the clock it is given, which is the round's.
