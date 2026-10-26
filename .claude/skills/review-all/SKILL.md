@@ -47,7 +47,7 @@ let it say what it needs. A marker already at `HEAD` is not started.
 
 A reviewer with no changed paths has nothing in its area to review. For a review with no scope, write `HEAD`'s full
 hash to its marker, so the next run does not diff the same range again, and say so in the summary. For `uncommitted`,
-leave its marker alone. If no reviewer is left to start, say so and stop.
+leave its marker alone. If no reviewer is left to start, say so, commit the markers you moved (below) and stop.
 
 ## Starting them
 
@@ -67,6 +67,19 @@ report, and give it the model the file's frontmatter names (`model: sonnet`), or
 
 Wait for all of them to finish. Don't guess at a report that has not come back.
 
+## Committing the markers
+
+Once every reviewer has finished, commit the markers, and nothing else:
+
+1. Run `git diff --cached --name-only`. If anything is staged, don't commit: the user is putting a commit together,
+   and the markers must not go into it or take it over. Leave the markers uncommitted and say so, naming the staged
+   files.
+2. Otherwise run `git status --short -- agents/review-status`. If no marker changed — an `uncommitted` review, or
+   every reviewer left its marker where it was — there is nothing to commit.
+3. Otherwise `git add agents/review-status` and commit on the checked-out branch, with a message naming the reviewers
+   whose markers moved and the short hash they now hold, e.g. `ui-reviewer, security-reviewer have reviewed up to
+   674bd65`. The reports under `agents/reviews/` stay uncommitted.
+
 ## Reporting back
 
 Each reviewer answers in a few lines: its report's path, its findings one line each, and its marker. Don't read the
@@ -76,6 +89,7 @@ cites, and confirm it before relaying it; say which you confirmed and which you 
 - the report paths, and any reviewer that wrote none and why;
 - the reviewers skipped as outside the change, and the markers moved for them;
 - the most serious findings across all of them, most serious first, one or two lines each with `path:line`;
-- which markers each reviewer updated and to what, and that the markers and reports are uncommitted.
+- which markers each reviewer updated and to what, and whether you committed them (with the commit's short hash) or
+  left them uncommitted because other files were staged; the reports are uncommitted.
 
-Don't fix anything and don't commit anything. Findings are for the user to decide on.
+Don't fix anything, and commit nothing but the markers. Findings are for the user to decide on.
