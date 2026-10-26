@@ -91,7 +91,6 @@ class Engine(
           players = m.seats.map(s =>
               SeatView(
                 side = s.side.toString,
-                cognitoId = s.cognitoId,
                 participantId = s.participantId,
                 isThrown = m.hasThrown(s),
                 shape = Option.when(over)(m.throwOf(s).map(_.shape.toString)).flatten,

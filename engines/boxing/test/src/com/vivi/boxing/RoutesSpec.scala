@@ -188,4 +188,17 @@ class RoutesSpec extends FunSuite {
         assert(!get(routes = routes, path = "/matches/m-9/board").body.contains("\"offense\":4"))
         assertEquals(get(routes = routes, path = "/matches/m-9/board").status, 200)
     }
+
+    test("no page or state names a player by their sign-in subject, to the other player or on the public board") {
+        val routes = fixture()._1
+        def text(path: String, query: Map[String, String] = Map.empty) =
+            routes(EngineRequest(method = "GET", path = path, query = query)).body
+        val watched = List(text("/matches/m-9/board"), text("/matches/m-9/board/state"))
+        assert(watched.forall(t => !t.contains("sub-alice") && !t.contains("sub-bob")))
+        val alices = List(
+          text(path = "/matches/m-9/play", query = as("sub-alice")),
+          text(path = "/matches/m-9/state", query = as("sub-alice"))
+        )
+        assert(alices.forall(!_.contains("sub-bob")))
+    }
 }

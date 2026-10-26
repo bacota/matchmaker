@@ -228,7 +228,6 @@ class Engine(
           corners = m.corners.map(c =>
               CornerView(
                 side = c.side.toString,
-                cognitoId = c.cognitoId,
                 participantId = c.participantId,
                 characterId = c.characterId,
                 fighter = c.fighter.filter(_ => yours(c)).map(view),

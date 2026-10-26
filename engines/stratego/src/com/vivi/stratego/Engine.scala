@@ -199,7 +199,6 @@ class Engine(
           players = m.seats.map(s =>
               SeatView(
                 side = s.side.toString,
-                cognitoId = s.cognitoId,
                 participantId = s.participantId,
                 moves = m.moves.count(_.side == s.side),
                 captured = m.captured(s.side),

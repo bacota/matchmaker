@@ -83,7 +83,6 @@ object Protocol {
 
     case class SeatView(
         side: String,
-        cognitoId: String,
         participantId: Long,
         moves: Int,
         captured: Int,

@@ -77,7 +77,6 @@ class Engine(
           players = m.seats.map(s =>
               SeatView(
                 mark = s.mark.toString,
-                cognitoId = s.cognitoId,
                 participantId = s.participantId,
                 moves = m.moveCount(s.mark),
                 nickname = s.nickname

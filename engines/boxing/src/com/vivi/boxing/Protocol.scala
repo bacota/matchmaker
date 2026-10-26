@@ -92,7 +92,6 @@ object Protocol {
       */
     case class CornerView(
         side: String,
-        cognitoId: String,
         participantId: Long,
         characterId: Long,
         fighter: Option[FighterView],
