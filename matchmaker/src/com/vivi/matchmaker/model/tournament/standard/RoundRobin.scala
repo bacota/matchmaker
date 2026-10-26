@@ -12,13 +12,14 @@ object RoundRobin
       name = "Round Robin Challenge",
       description = "",
       classification = None,
-      hasRoleChoice = true,
+        hasRoleChoice = true,
+        hasLateEntries = false,
       hasPoolOfEveryone = true,
       formOverrides = Map(
         "labels.competition.poolSize" -> None,
         "labels.competition.maxEntrants" -> Some("Number of participants"),
         "tips.competition.maxEntrants" -> Some(
-          "Everyone who enters plays everyone else. Leave blank for no limit: you then start it yourself."
+          "Everyone who enters plays everyone else. Leave blank for no limit."
         ),
         "tips.competition.autoStart" -> Some(
           "Start as soon as everybody signs up. If there is more than one round, then start each round as soon as the " +
