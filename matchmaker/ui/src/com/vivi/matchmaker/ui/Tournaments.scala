@@ -274,7 +274,7 @@ object Tournaments {
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
         s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
-    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Edit button, and
+    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Manage button, and
       * the step it waits on them for -- starting it, or starting its next round -- when it waits on one.
       */
     private def runningRow(s: TournamentSummary): HtmlElement = {
@@ -322,14 +322,14 @@ object Tournaments {
         )
     }
 
-    /* The Edit button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
+    /* The Manage button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
     private def actions(s: TournamentSummary): Seq[Modifier[HtmlElement]] = {
         val t = s.tournament
         Seq(
           button(
             tpe := "button",
-            "Edit",
-            aria.label := s"Edit ${t.name}",
+            "Manage",
+            aria.label := s"Manage ${t.name}",
             onClick --> { _ =>
                 editOnArrival = Some(t.tournamentId)
                 Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
@@ -366,7 +366,7 @@ object Tournaments {
     private def hasEnoughToStart(gameId: GameId, entered: Int): Signal[Boolean] =
         Store.games.signal.map(_.find(_.gameId == gameId).exists(g => entered >= Tournament.leastToStart(g))).distinct
 
-    /* The tournament whose page is to open with its Edit form open: set by a main-page Edit button, and taken by the
+    /* The tournament whose page is to open with its Edit form open: set by a main-page Manage button, and taken by the
      * page as it is drawn. */
     private var editOnArrival: Option[TournamentId] = None
 
