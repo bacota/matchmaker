@@ -187,3 +187,12 @@ And one of its own:
   need three of them to make it.
 
 The character fields of a seat (`characterId`, `characterState`) are accepted and ignored.
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** the other player's throw, until the match is over. Every viewer learns only that a seat has thrown
+  (`isThrown`). A tied round's throw is the same for both seats, so the tied rounds (`tiedRounds`) are shown.
+- **Text players write:** the match's title and nicknames. The page escapes them with `escapeHtml`.
+- **Routes of its own:** none.

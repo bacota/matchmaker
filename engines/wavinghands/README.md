@@ -110,3 +110,15 @@ the urls; the form wants:
   simultaneous game's turns, and refuses a challenge for one that gives no number. Twenty is a
   typical duel; the engine itself plays on until the duel is decided, or to 100 turns.
 - **Parameters**: none
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** the orders given for the turn being played. Every viewer learns only who has given orders
+  (`hasOrdered`). A turn's gestures are shown once every wizard has given orders. Blindness and invisibility, which
+  hide gestures in the full rules, are not played. Adding either one adds hidden information, and this section
+  changes with it.
+- **Text players write:** the match's title and nicknames, which are the wizards' names and appear in the battle
+  reports. The page escapes them with `esc`.
+- **Routes of its own:** none.

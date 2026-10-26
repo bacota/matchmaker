@@ -23,6 +23,13 @@ The play pages poll their state route every two seconds. `EngineRoutes` answers 
 new engine whose page polls a different route uses it too. DevTools and Playwright report a 304 as 200; confirm one
 with `curl -H 'If-None-Match: …'`. A page's render never triggers a fetch.
 
+## Each game's README has a security section
+
+Every engine's `README.md` ends with a `## Security` section. It says what the game hides and from whom, which text
+players write that it displays, and any routes beyond the common ones. The security reviewer checks the game against
+it. A new engine writes one. A change that hides or shows something, displays new player-written text, or adds a route
+updates it.
+
 ## Replays
 
 Before giving an engine a replay, read `design/game-replay.md`: the decisions made for Stratego's apply to every

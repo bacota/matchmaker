@@ -190,3 +190,11 @@ One shortcut, deliberate:
 The character fields of a seat (`characterId`, `characterState`) are accepted and ignored:
 tic-tac-toe has nothing to carry in them. A character game's engine would read the state, and
 write it back through matchmaker's character-state route.
+
+## Security
+
+What the security reviewer checks this engine against, beside what every engine shares.
+
+- **Hidden:** nothing. The whole board is everyone's.
+- **Text players write:** the match's title and nicknames. The page escapes them with `escapeHtml`.
+- **Routes of its own:** none.
