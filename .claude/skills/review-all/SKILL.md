@@ -1,6 +1,6 @@
 ---
 name: review-all
-description: Runs the four review agents — ui-reviewer, db-performance-reviewer, backend-concurrency-reviewer, ui-concurrency-reviewer — side by side on the ones whose area a change touches; each writes its report to agents/reviews/<day>/<agent>-<commit>.md, and this summarises them.
+description: Runs the five review agents — ui-reviewer, db-performance-reviewer, backend-concurrency-reviewer, ui-concurrency-reviewer, security-reviewer — side by side on the ones whose area a change touches; each writes its report to agents/reviews/<day>/<agent>-<commit>.md, and this summarises them.
 argument-hint: "[browser] [uncommitted | sweep | since <hash> | last <n> commits | files… | <reviewer names>]"
 disable-model-invocation: true
 ---
@@ -20,7 +20,7 @@ out any reviewer names too: naming reviewers runs exactly those, with no filteri
 Work out what the rest of the scope means:
 
 - **Nothing given:** each reviewer reviews from its own marker in `agents/review-status/` to `HEAD`, as its definition
-  says. If all four markers already hold `HEAD`, there is nothing to review: say so, mention any uncommitted changes
+  says. If all five markers already hold `HEAD`, there is nothing to review: say so, mention any uncommitted changes
   `git status` shows and that `/review-all uncommitted` reviews them, and stop.
 - **`uncommitted`:** the changes in the working tree and the index against `HEAD` — `git diff HEAD` — and the new
   untracked files `git status` lists, which `git diff` does not show. Tell each reviewer both, naming the untracked
@@ -43,6 +43,7 @@ let it say what it needs. A marker already at `HEAD` is not started.
 | `backend-concurrency-reviewer` | `matchmaker/src matchmaker/api/src ':(glob)engines/*/src/**' ':(exclude,glob)engines/*/src/**/Html.scala' ':(exclude,glob)engines/common/src/**/SignIn.scala' ':(exclude,glob)engines/common/src/**/PlayLive.scala' ':(exclude,glob)engines/common/src/**/Finale.scala' ':(exclude,glob)engines/common/src/**/TurnTimer.scala'` |
 | `ui-reviewer`                  | `matchmaker/ui ':(glob)engines/*/src/**/Html.scala' ':(glob)engines/*/resources/**/*.js' ':(glob)engines/*/resources/**/*.css' ':(glob)engines/common/src/**/SignIn.scala' ':(glob)engines/common/src/**/PlayLive.scala' ':(glob)engines/common/src/**/Finale.scala' ':(glob)engines/common/src/**/TurnTimer.scala'` |
 | `ui-concurrency-reviewer`      | `matchmaker/ui/src ':(glob)engines/*/src/**/Html.scala' ':(glob)engines/*/resources/**/*.js' ':(glob)engines/common/src/**/SignIn.scala' ':(glob)engines/common/src/**/PlayLive.scala' ':(glob)engines/common/src/**/TurnTimer.scala'` |
+| `security-reviewer`            | `matchmaker/src matchmaker/api/src matchmaker/ui/src matchmaker/mailer/src ':(glob)engines/*/src/**' ':(glob)engines/*/resources/**/*.js' terraform/modules ':(glob)terraform/*.tf'` |
 
 A reviewer with no changed paths has nothing in its area to review. For a review with no scope, write `HEAD`'s full
 hash to its marker, so the next run does not diff the same range again, and say so in the summary. For `uncommitted`,
