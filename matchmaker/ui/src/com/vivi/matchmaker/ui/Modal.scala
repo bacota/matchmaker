@@ -88,7 +88,7 @@ object Modal {
                 tpe := "button",
                 cls := "link",
                 aria.disabled <-- saving,
-                "Close",
+                Buttons.app.close,
                 onClick --> (_ => close())
               )
             )

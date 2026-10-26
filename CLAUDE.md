@@ -93,7 +93,8 @@ The text of an error or warning a person can read lives in `matchmaker/errors.pr
 (`com.vivi.engine.ErrorText`) for what every engine says alike and `engines/<game>/errors.properties` for a game's own,
 not in the code. A game's file is merged with common's into an `ErrorText` in the game's package, which its code uses
 in place of common's, and a common key it gives overrides common's text in that engine, common's code included;
-`headings.properties` works the same way. A new one adds a key there; each file's header gives its rules.
+`headings.properties` and `buttons.properties` work the same way. A new one adds a key there; each file's header gives
+its rules.
 
 ## Boolean names
 

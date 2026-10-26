@@ -158,15 +158,15 @@ object GameForm {
                     button(
                       cls := "link",
                       aria.label <-- draft.name.signal.map(n =>
-                          if (n.trim.isEmpty) "Remove this role" else s"Remove role $n"
+                          if (n.trim.isEmpty) Buttons.game.removeUnnamedRole else Buttons.game.removeRoleNamed(role = n)
                       ),
-                      "Remove",
+                      Buttons.game.removeRole,
                       onClick --> (_ => roles.update(_.filterNot(_ eq draft)))
                     )
                 else emptyNode
               )
           }),
-          button(cls := "link", "Add a Role", onClick --> (_ => roles.update(_ :+ emptyRole)))
+          button(cls := "link", Buttons.game.addRole, onClick --> (_ => roles.update(_ :+ emptyRole)))
         )
 
     private def parameterEditor(formKey: String, parameters: Var[List[ParameterDraft]]): HtmlElement =
@@ -204,14 +204,15 @@ object GameForm {
                 button(
                   cls := "link",
                   aria.label <-- draft.name.signal.map(n =>
-                      if (n.trim.isEmpty) "Remove this parameter" else s"Remove parameter $n"
+                      if (n.trim.isEmpty) Buttons.game.removeUnnamedParameter
+                      else Buttons.game.removeParameterNamed(parameter = n)
                   ),
-                  "Remove",
+                  Buttons.game.removeParameter,
                   onClick --> (_ => parameters.update(_.filterNot(_ eq draft)))
                 )
               )
           }),
-          button(cls := "link", "Add a Parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
+          button(cls := "link", Buttons.game.addParameter, onClick --> (_ => parameters.update(_ :+ emptyParameter)))
         )
 
     /** The drafted roles as the model, or the first thing wrong with them.
@@ -598,7 +599,7 @@ object GameForm {
           },
           parameterEditor(formKey, parameters),
           busyButton(
-            label = if (existing.isDefined) "Save Changes" else "Create Game",
+            label = if (existing.isDefined) Buttons.game.save else Buttons.game.create,
             busy = savingBusy(existing),
             // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
             // to be long enough, as the server checks too.

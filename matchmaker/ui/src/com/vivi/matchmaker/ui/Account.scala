@@ -334,7 +334,7 @@ object Account {
           cls := "account",
           button(
             cls := "link",
-            "Account",
+            Buttons.account.menu,
             aria.expanded <-- open.signal,
             htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
             onMountCallback(context => trigger = Some(context.thisNode.ref)),
@@ -385,7 +385,7 @@ object Account {
               div(emailForm, passwordForm),
           div(
             cls := "alternatives",
-            button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeToTrigger()))
+            button(tpe := "button", cls := "link", Buttons.app.close, onClick --> (_ => closeToTrigger()))
           )
         )
 
@@ -502,7 +502,7 @@ object Account {
                             .getOrElse(Headings.account.thisGame),
                         explanation = "Leave a question on \"Use Default\" to answer it from your settings above.",
                         preferences = forGame,
-                        saveLabel = "Save for this game",
+                        saveLabel = Buttons.account.saveForGame,
                         cascades = Seq(alsoMatches)
                       ) { preferences =>
                           // Guarded like the save above, and for the same reason: this writes one
@@ -537,7 +537,7 @@ object Account {
             explanation = "What we email you about, unless you say otherwise for a particular game or match. " +
                 "Anything left on \"Use Default\" is sent.",
             preferences = overall,
-            saveLabel = "Save notifications",
+            saveLabel = Buttons.account.saveNotifications,
             cascades = Seq(allGames, allMatches),
             deferred = Some(Notifications.Deferred("Saving your notification preferences", Seq(oneGame)))
           ) { preferences =>
@@ -601,7 +601,7 @@ object Account {
               controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
             )
           ),
-          submit(label = "Save nickname", busy = busy),
+          submit(label = Buttons.account.saveNickname, busy = busy),
           report(nicknameOutcome)
         )
     }
@@ -709,14 +709,14 @@ object Account {
                       button(
                         tpe := "button",
                         cls := "link",
-                        "Send a new code",
+                        Buttons.account.resendCode,
                         aria.disabled <-- busy.signal,
                         onClick --> (_ => if (!busy.now()) sendEmailCode(busy))
                       ),
                       button(
                         tpe := "button",
                         cls := "link",
-                        "Use a different address",
+                        Buttons.account.otherAddress,
                         aria.disabled <-- busy.signal,
                         onClick --> (_ => if (!busy.now()) restartEmailChange())
                       )
@@ -726,11 +726,11 @@ object Account {
           child <-- emailStage.signal.map {
               case EmailStage.Idle =>
                   submit(
-                    label = "Send verification code",
+                    label = Buttons.account.sendCode,
                     busy = busy,
                     blocked = email.signal.map(!isPlausibleEmail(_))
                   )
-              case EmailStage.Sent(_) => submit(label = "Confirm new address", busy = busy)
+              case EmailStage.Sent(_) => submit(label = Buttons.account.confirmAddress, busy = busy)
           },
           report(emailOutcome)
         )
@@ -759,7 +759,7 @@ object Account {
               controlled(value <-- newPassword.signal, onInput.mapToValue --> newPassword)
             )
           ),
-          submit(label = "Change password", busy = busy),
+          submit(label = Buttons.account.changePassword, busy = busy),
           report(passwordOutcome)
         )
     }
@@ -827,7 +827,7 @@ object Account {
           // second press instead.
           aria.disabled <-- busy.signal,
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-          "Try sending to this address again",
+          Buttons.account.retryAddress,
           onClick --> { _ =>
               if (!busy.now()) {
                   busy.set(true)

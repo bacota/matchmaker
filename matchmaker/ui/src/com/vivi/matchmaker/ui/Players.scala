@@ -53,7 +53,7 @@ object Players {
                 child <-- searchingPlayers.signal.map(
                   if (_) span(cls := "spinner", aria.hidden := true) else emptyNode
                 ),
-                "Search"
+                Buttons.players.search
               )
             ),
             // The live region is this container, which is mounted once, rather than the message
@@ -135,7 +135,7 @@ object Players {
           button(
             tpe := "button",
             cls := "link",
-            "Back to search",
+            Buttons.players.backToSearch,
             onClick --> (_ => Store.show(Store.Page.FindPlayers))
           ),
           inviteControl(player),
@@ -297,7 +297,7 @@ object Players {
                     button(
                       tpe := "button",
                       disabled <-- chosen.signal.map(_.isEmpty),
-                      s"Invite ${invitee.nickname} to a new competition",
+                      Buttons.players.inviteToNew(nickname = invitee.nickname),
                       // One call, because `Store.show` forgets the invitee, so that arriving at a game any other way
                       // cannot inherit one.
                       onClick --> (_ => chosen.now().foreach(gameId => Store.showGameToInvite(gameId, invitee)))
@@ -414,7 +414,9 @@ object Players {
                   li(
                     cls := "row",
                     div(cls := "title", c.name),
-                    busyButton(label = s"Invite ${c.name}", classes = Some("link"))(busy => invite(c, busy))
+                    busyButton(label = Buttons.players.inviteCharacter(character = c.name), classes = Some("link"))(
+                      busy => invite(c, busy)
+                    )
                   )
               )
             )

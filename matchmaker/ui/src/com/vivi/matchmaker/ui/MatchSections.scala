@@ -182,7 +182,7 @@ object MatchSections {
               cls := "link",
               aria.disabled <-- busy,
               child <-- busy.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-              "Try again",
+              Buttons.app.tryAgain,
               onClick --> (_ => retry()),
               onUnmountCallback(button => retryHadFocus = dom.document.activeElement == button.ref)
             )
@@ -201,22 +201,22 @@ object MatchSections {
 
         /* Named by the window it goes to -- "Previous week", "Next 24 hours" -- in the frame shown. */
         def step(
-            word: String,
+            caption: String => String,
+            label: String => String,
             direction: String,
             shown: CompletedPage => Boolean,
             to: CompletedPage => Int
         ) =
             child <-- view.map {
                 case Some(page) if shown(page) =>
-                    val caption = s"$word ${page.frame.period}"
                     button(
                       tpe := "button",
                       cls := s"link $direction",
                       // The visible words first, then which way they go, which "next" alone does not say.
-                      aria.label := s"$caption: $direction completed matches",
+                      aria.label := label(page.frame.period),
                       // Not disabled while a window is on its way, which would drop the keyboard's focus.
                       aria.disabled <-- busy,
-                      caption,
+                      caption(page.frame.period),
                       onClick --> (_ => if (!Store.completedLoading.now().contains(list)) move(to)),
                       // Gone as the window it asked for arrives, so a step that had the focus hands it to the
                       // line saying which window is now shown, rather than letting it fall to the top of the
@@ -273,8 +273,20 @@ object MatchSections {
           div(
             cls := "completed-steps",
             // Earlier on the left, later on the right, as time reads.
-            step(word = "Previous", direction = "older", shown = _.hasOlder, to = _.page + 1),
-            step(word = "Next", direction = "newer", shown = _.page > 0, to = _.page - 1)
+            step(
+              caption = Buttons.matches.older,
+              label = Buttons.matches.olderNamed,
+              direction = "older",
+              shown = _.hasOlder,
+              to = _.page + 1
+            ),
+            step(
+              caption = Buttons.matches.newer,
+              label = Buttons.matches.newerNamed,
+              direction = "newer",
+              shown = _.page > 0,
+              to = _.page - 1
+            )
           )
         )
     }

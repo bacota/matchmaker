@@ -64,6 +64,11 @@ generated into `Headings` the same way: `account.nickname` there is `Headings.ac
 there. A heading that comes from data, such as a game's or a competition's name, stays in the code, and one that heads
 an error stays with the error in `errors.properties`.
 
+A button's name -- the words on it, and the `aria-label` it is read out by where those are not enough -- lives in
+`matchmaker/ui/buttons.properties`, generated into `Buttons` the same way: `tournaments.manage` there is
+`Buttons.tournaments.manage`, and its spoken name is `tournaments.manageNamed`. A new button adds a key there. A button
+whose words come from data, such as a game's or a competition's name, stays in the code.
+
 A competition format can reword the competition form's captions and tips while it is the one chosen, or leave them
 out: `StandardModel.formOverrides`, keyed `labels.<key>` or `tips.<key>`, reaches the form on the stored model, and a
 caption's `None` leaves out its field, a tip's `None` the tip. So a caption or tip on that form goes through the form's

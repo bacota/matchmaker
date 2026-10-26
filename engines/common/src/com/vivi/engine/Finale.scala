@@ -27,10 +27,10 @@ object Finale {
     case class Art(svg: String, caption: String)
 
     val markup: String =
-        """<section id="finale" class="finale" hidden aria-labelledby="finale-caption">
+        s"""<section id="finale" class="finale" hidden aria-labelledby="finale-caption">
     <div id="finale-art" class="finale-art"></div>
     <p id="finale-caption" class="finale-caption"></p>
-    <button type="button" id="finale-close" class="finale-close">Close</button>
+    <button type="button" id="finale-close" class="finale-close">${HtmlText.escape(Buttons.finale.close)}</button>
   </section>"""
 
     val css: String =

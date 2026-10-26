@@ -54,7 +54,7 @@ class SignIn(storagePrefix: String) {
 <!-- Announced: the page changes from "signing in…" to a failure without anything being pressed. -->
 <p id="error" role="status" aria-live="polite">signing in…</p>
 <div class="actions" id="actions" hidden>
-  <button type="button" id="retry" hidden>Try again</button>
+  <button type="button" id="retry" hidden>${escape(Buttons.signIn.tryAgain)}</button>
   <a id="back" href="/">Back to the match</a>
 </div>
 </main>
@@ -447,13 +447,13 @@ ${authScript(Some(login))}
         "<form><h2>" + ${jsString(escape(Headings.signIn.signIn))} + "</h2>" +
         field("si-email", "email", "username", "Email", signInEmail) +
         field("si-password", "password", "current-password", "Password", signInPassword) +
-        '<button type="submit" id="si-submit"' + off + ">Sign in</button>" +
+        '<button type="submit" id="si-submit"' + off + ">" + ${jsString(escape(Buttons.signIn.signIn))} + "</button>" +
         '<div class="alternatives">' +
         // The passwordless route, kept but not put first — which is the whole reason this form
         // exists instead of a redirect to managed login.
-        '<button type="button" id="si-code"' + off + ">Email me a code instead</button>" +
-        '<button type="button" id="si-forgot">Forgot your password?</button>' +
-        '<button type="button" id="si-signup">Create an account</button>' +
+        '<button type="button" id="si-code"' + off + ">" + ${jsString(escape(Buttons.signIn.emailCode))} + "</button>" +
+        '<button type="button" id="si-forgot">' + ${jsString(escape(Buttons.signIn.forgotPassword))} + "</button>" +
+        '<button type="button" id="si-signup">' + ${jsString(escape(Buttons.signIn.signUp))} + "</button>" +
         "</div></form>";
 
       const email = document.getElementById("si-email");
@@ -485,8 +485,11 @@ ${authScript(Some(login))}
         "</p>" +
         // one-time-code lets phones offer the code straight from the notification.
         field("si-code-value", "text", "one-time-code", "Code", "", ' inputmode="numeric"') +
-        '<button type="submit" id="si-submit"' + off + ">Sign in</button>" +
-        '<div class="alternatives"><button type="button" id="si-restart">Start again</button></div></form>';
+        '<button type="submit" id="si-submit"' + off + ">" + ${jsString(escape(Buttons.signIn.signIn))} + "</button>" +
+        '<div class="alternatives"><button type="button" id="si-restart">' + ${jsString(
+              escape(Buttons.signIn.startAgain)
+            )} +
+        "</button></div></form>";
 
       const code = document.getElementById("si-code-value");
       box.querySelector("form").addEventListener("submit", e => {
@@ -502,8 +505,13 @@ ${authScript(Some(login))}
         "<form><h2>" + ${jsString(escape(Headings.signIn.newPassword))} + "</h2>" +
         "<p>This account is signed in with a temporary password. Pick a permanent one to continue.</p>" +
         field("si-new-password", "password", "new-password", "New password", "") +
-        '<button type="submit" id="si-submit"' + off + ">Save and sign in</button>" +
-        '<div class="alternatives"><button type="button" id="si-restart">Start again</button></div></form>';
+        '<button type="submit" id="si-submit"' + off + ">" + ${jsString(
+              escape(Buttons.signIn.saveAndSignIn)
+            )} + "</button>" +
+        '<div class="alternatives"><button type="button" id="si-restart">' + ${jsString(
+              escape(Buttons.signIn.startAgain)
+            )} +
+        "</button></div></form>";
 
       const chosen = document.getElementById("si-new-password");
       box.querySelector("form").addEventListener("submit", e => {
