@@ -9,7 +9,7 @@ import com.vivi.matchmaker.persistence._
 /** Everything matchmaker decides about notifications: who is told what, and when nobody is.
   *
   * A class of its own, and one method per thing that happens, because none of this is any of the services' business.
-  * What a service knows is that somebody has entered a tournament or moved; which of eleven kinds of news that is to
+  * What a service knows is that somebody has entered a tournament or moved; which of nine kinds of news that is to
   * which of the players in it, whether any of them has asked not to hear about it, and what the mail then says are all
   * questions with one right answer wherever the event came from. Those answers used to be spread across four services,
   * where the same thirty lines appeared twice and the largest of them sat inline in `GameEngineService`.
@@ -50,15 +50,13 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     // Things that happen to a challenge or tournament's entries
     // -------------------------------------------------------------------------
 
-    /** Somebody has entered a challenge or tournament. Told to its owner, and to everyone else who has entered it.
+    /** Somebody has entered a challenge or tournament. Told to its owner, unless they are the one who entered.
       *
       * @param actor
-      *   the player who entered. Passed rather than read because the caller has just had it in hand, and because they
-      *   are the one person not told.
+      *   the player who entered. Passed rather than read because the caller has just had it in hand.
       * @param wasInvited
       *   whether this entry answers an invitation. It changes what the *owner* can be told — their invitation was taken
-      *   up, which is more than that somebody entered — and nothing else: being invited is between them and the
-      *   invitee, so the other entrants hear what they always hear. One mail either way, with
+      *   up, which is more than that somebody entered. One mail either way, with
       *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the owner has not refused.
       */
     def entered(session: Session[IO], tournament: Tournament, actor: Player, wasInvited: Boolean = false): IO[Unit] =
@@ -71,7 +69,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
           wasInvited = wasInvited
         )
 
-    /** Somebody's entry has been withdrawn. Told to the same audience, minus whoever did it.
+    /** Somebody's entry has been withdrawn. Told to its owner, unless they are the one who withdrew it.
       *
       * @param entrant
       *   the player whose entry it was.
@@ -117,9 +115,6 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     /* The invitation mails, which differ only in who is written to and whose name the sentence
      * carries. `addressee` answers both from the owner: the invitee for an invitation made, the owner
      * for an answer to one.
-     *
-     * The recipient's preferences are read by `levelsForPlayer` rather than `levelsForTournament`,
-     * because an invited player has not entered.
      *
      * One kind rather than a list, unlike a change to the entries: there is no second, plainer thing
      * any of these could say, so a recipient who has turned the kind off hears nothing -- which is what
@@ -174,7 +169,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         actor: String,
         joined: Boolean,
         owner: Player,
-        room: Option[Int]
+        room: Option[Int],
+        isReady: Boolean = false
     ): ChallengeNews = {
         val challenge = tournament.tournamentModelId == com.vivi.matchmaker.model.tournament.standard.RoundRobin.modelId
         ChallengeNews(
@@ -184,7 +180,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
           actor = actor,
           isJoined = joined,
           challenger = owner.nickname,
-          room = room
+          room = room,
+          isReady = isReady
         )
     }
 
@@ -374,16 +371,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * and one sentence -- so they are one method with two entry points rather than the same thirty lines
      * twice.
      *
-     * Two audiences, from one query:
+     * Told to the owner and nobody else: they are the one who manages it, and the other entrants are not
+     * written to about each other's entries. One mail, which says it is full when this entry filled it
+     * and the owner is the one to start it.
      *
-     *   - the owner. They are the only one who can start it, so when it has just become full that is
-     *     the news; otherwise they get the plainer "somebody entered".
-     *   - everyone else who has entered. Nothing is being asked of them, so their pair of kinds is the
-     *     other one: "one you entered is ready" over "somebody else entered it".
-     *
-     * At most one mail each, which is why the kinds go to `choose` as a list rather than being tested
-     * one at a time: an entry that fills it is two reasons to write to the owner, and they are owed one
-     * email. */
+     * An entry that answers an invitation is two reasons to write to the owner, so the kinds go to
+     * `choose` as a list: "your invitation was accepted" over the plainer "somebody entered". */
     private def entriesChanged(
         session: Session[IO],
         tournament: Tournament,
@@ -398,10 +391,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                 // A game that is not there is not a thing to write about, and this is the reporting path: it
                 // sends nothing rather than failing the entry that got here.
                 case None => IO.pure(Seq.empty[MailMessage])
+                case Some(_) if tournament.owner == actor.playerId || except.contains(tournament.owner) =>
+                    IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
                         room <- roomIn(session, tournament)
-                        audience <- notificationRepo.levelsForTournament(tournament.gameId, tournament.tournamentId)
+                        levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
                         owner <- new PlayerRepo(session).read(tournament.owner)
                     } yield owner.toSeq.flatMap { offeredBy =>
                         val news = newsOf(
@@ -410,53 +405,21 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                           actor = actor.nickname,
                           joined = joined,
                           owner = offeredBy,
-                          room = room
+                          room = room,
+                          // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
+                          isReady = joined && room.contains(0) && !tournament.settings.isAutoStarted
                         )
-                        // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
-                        val ready = joined && room.contains(0) && !tournament.settings.isAutoStarted
-                        audience
-                            .filter(recipient =>
-                                recipient.player.playerId != actor.playerId &&
-                                    !except.contains(recipient.player.playerId)
-                            )
-                            .flatMap(recipient =>
-                                NotificationPolicy
-                                    .choose(
-                                      kindsFor(
-                                        isOwner = recipient.player.playerId == tournament.owner,
-                                        ready = ready,
-                                        wasInvited = wasInvited
-                                      ),
-                                      recipient.levels.apply
-                                    )
-                                    .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
-                            )
+                        val kinds =
+                            if (wasInvited)
+                                Seq(NotificationType.InvitationAccepted, NotificationType.CompetitionEntered)
+                            else Seq(NotificationType.CompetitionEntered)
+                        NotificationPolicy
+                            .choose(kinds, levels.apply)
+                            .flatMap(ChallengeMail.compose(from, uiBaseUrl, offeredBy, _, news))
+                            .toSeq
                     }
             }
         }
-
-    /* What a recipient could be told about a change to the entries, most informative first.
-     *
-     * The "ready" kinds are offered only for an entry that has just filled it. A withdrawal never makes
-     * anything ready, and telling an owner their challenge can start because a player walked out of it
-     * would be actively misleading. */
-    private def kindsFor(isOwner: Boolean, ready: Boolean, wasInvited: Boolean): Seq[NotificationType] =
-        if (isOwner)
-            // `InvitationAccepted` sits between the two for an entry that answers an invitation: less useful than
-            // "you can start it now", more than "somebody entered", and offered only to the owner because they
-            // are the only one whose invitation it was. An owner who has turned it off still hears the plain
-            // version, which is the whole point of asking in order rather than picking one kind and testing it.
-            if (ready && wasInvited)
-                Seq(
-                  NotificationType.ChallengeReady,
-                  NotificationType.InvitationAccepted,
-                  NotificationType.ChallengeAccepted
-                )
-            else if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
-            else if (wasInvited) Seq(NotificationType.InvitationAccepted, NotificationType.ChallengeAccepted)
-            else Seq(NotificationType.ChallengeAccepted)
-        else if (ready) Seq(NotificationType.AcceptedChallengeReady, NotificationType.AcceptanceChanged)
-        else Seq(NotificationType.AcceptanceChanged)
 
     /* The reads every event about a match needs, done once: what the game is called and what it asks
      * for, who is in the match with what they want to hear about it, and the seats as they now stand.

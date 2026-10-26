@@ -59,23 +59,23 @@ object SkunkCodecs {
     /** `match.status`: where a match is in its life, by its one-letter code. */
     val matchStatus: Codec[MatchStatus] = text.imap(MatchStatus.fromCode)(_.code)
 
-    /** The eleven `notify_*` columns of `player` and `player_game`, as one value.
+    /** The nine `notify_*` columns of `player` and `player_game`, as one value.
       *
-      * Bound positionally, in `NotificationType.values` order: the eleven fields of
+      * Bound positionally, in `NotificationType.values` order: the nine fields of
       * [[com.vivi.matchmaker.model.NotificationPreferences]] are in that order, and so is every column list that uses
       * this codec. A kind added to the enum in the wrong place would compile and silently store answers under the wrong
       * heading, which is why the enum's order is documented as part of it.
       *
-      * One codec rather than eleven `bool.opt` at each site so that the statements read as being about preferences
-      * rather than about eleven booleans, and so that adding a kind is one change here instead of one per query.
+      * One codec rather than nine `bool.opt` at each site so that the statements read as being about preferences rather
+      * than about nine booleans, and so that adding a kind is one change here instead of one per query.
       */
     val notificationPreferences: Codec[NotificationPreferences] =
-        (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
-            bool.opt *: bool.opt *: bool.opt).to[NotificationPreferences]
+        (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt)
+            .to[NotificationPreferences]
 
     /** The four `notify_*` columns of `participant`, as one value.
       *
-      * Four rather than eleven, and so its own codec rather than [[notificationPreferences]]: a seat can only be asked
+      * Four rather than nine, and so its own codec rather than [[notificationPreferences]]: a seat can only be asked
       * about a match it is in, and the kinds about entries and rounds have no column here to answer from. Bound
       * positionally in `NotificationType.onSeat` order, which is `values` order narrowed — the same rule as the other
       * codec, so a kind added to the enum in the wrong place is wrong in one way rather than two.

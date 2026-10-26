@@ -3,13 +3,13 @@ package com.vivi.matchmaker.notify
 import munit.FunSuite
 import com.vivi.matchmaker.model._
 
-/** What the seven mails about a challenge's or tournament's entries actually say.
+/** What the mails about a challenge's or tournament's entries and invitations actually say.
   *
   * Pure, like `MatchMailSpec`, and for the same reason: the decisions worth pinning down — who the mail is addressed as
   * being about, whether it asks the player to do anything, how far from full it says it is — are all made here, with no
   * tournament and no database in sight.
   *
-  * Four are about an entry and three about an invitation. The invitation three are the same shape one level out — an
+  * One kind is about an entry and three about an invitation. The invitation three are the same shape one level out — an
   * offer is made, taken up, or turned down — and what is worth a test of its own in each is the thing that makes it
   * *not* the entry mail beside it: who it is addressed to, and whether how full it is is any of their business.
   */
@@ -22,7 +22,8 @@ class ChallengeMailSpec extends FunSuite {
         joined: Boolean = true,
         room: Option[Int] = Some(1),
         what: String = "challenge",
-        title: String = ""
+        title: String = "",
+        isReady: Boolean = false
     ) =
         ChallengeNews(
           gameName = "Tic-Tac-Toe",
@@ -31,7 +32,8 @@ class ChallengeMailSpec extends FunSuite {
           actor = "bob",
           isJoined = joined,
           challenger = "carol",
-          room = room
+          room = room,
+          isReady = isReady
         )
 
     private def compose(kind: NotificationType, news: ChallengeNews, recipient: Player = player("alice")) =
@@ -45,13 +47,13 @@ class ChallengeMailSpec extends FunSuite {
 
     test("a player with no address gets nothing") {
         assertEquals(
-          compose(kind = NotificationType.ChallengeAccepted, news = news(), recipient = player("alice", None)),
+          compose(kind = NotificationType.CompetitionEntered, news = news(), recipient = player("alice", None)),
           None
         )
     }
 
     test("the owner is told who entered, and how many more it takes") {
-        val mail = compose(kind = NotificationType.ChallengeAccepted, news = news(room = Some(2))).get
+        val mail = compose(kind = NotificationType.CompetitionEntered, news = news(room = Some(2))).get
 
         assertEquals(mail.sender, "matchmaker@example.com")
         assertEquals(mail.recipient, "player@example.com")
@@ -63,7 +65,7 @@ class ChallengeMailSpec extends FunSuite {
     }
 
     test("the owner is told who withdrew") {
-        val mail = compose(kind = NotificationType.ChallengeAccepted, news = news(joined = false)).get
+        val mail = compose(kind = NotificationType.CompetitionEntered, news = news(joined = false)).get
 
         assertEquals(mail.subject, "bob has withdrawn from your Tic-Tac-Toe challenge")
         assert(mail.body.contains("bob has withdrawn from your Tic-Tac-Toe challenge."))
@@ -72,7 +74,7 @@ class ChallengeMailSpec extends FunSuite {
     // A tournament is named, where a challenge's name would only say that it is one.
     test("a tournament is called one, and named") {
         val mail = compose(
-          kind = NotificationType.ChallengeAccepted,
+          kind = NotificationType.CompetitionEntered,
           news = news(what = "tournament", title = "Spring Open")
         ).get
 
@@ -82,45 +84,33 @@ class ChallengeMailSpec extends FunSuite {
 
     // One that takes any number of entries has no "how full" to say.
     test("one with no limit on entries says nothing about room") {
-        val mail = compose(kind = NotificationType.ChallengeAccepted, news = news(room = None)).get
+        val mail = compose(kind = NotificationType.CompetitionEntered, news = news(room = None)).get
 
         assert(!mail.body.contains("room for"), mail.body)
         assert(!mail.body.contains("now full"), mail.body)
     }
 
-    // The one mail of the seven that asks the player to do something.
+    // The one mail of these that asks the player to do something.
     test("the owner is asked to start it once it is full") {
-        val mail = compose(kind = NotificationType.ChallengeReady, news = news(room = Some(0))).get
+        val mail =
+            compose(kind = NotificationType.CompetitionEntered, news = news(room = Some(0), isReady = true)).get
 
         assertEquals(mail.subject, "Your Tic-Tac-Toe challenge is ready to start")
         assert(mail.body.contains("It is now full, so you can start it whenever you like."))
     }
 
-    // To the other entrants, who cannot start it: named by whoever owns it, because that is how they know which
-    // challenge this is -- it is not theirs.
-    test("another entrant is told whose challenge it is and who has entered it") {
-        val mail = compose(kind = NotificationType.AcceptanceChanged, news = news(room = Some(1))).get
+    // One that starts itself once full is starting, not waiting on its owner.
+    test("an entry that fills one that is not waiting on its owner says only that it is full") {
+        val mail = compose(kind = NotificationType.CompetitionEntered, news = news(room = Some(0))).get
 
-        assertEquals(mail.subject, "bob has entered a Tic-Tac-Toe challenge you entered")
-        assert(mail.body.contains("You have entered carol's Tic-Tac-Toe challenge."))
-        assert(mail.body.contains("bob has also entered it."))
-        assert(mail.body.contains("It has room for 1 more."))
-    }
-
-    test("another entrant is told who they are now waiting on") {
-        val mail = compose(kind = NotificationType.AcceptedChallengeReady, news = news(room = Some(0))).get
-
-        assertEquals(mail.subject, "A Tic-Tac-Toe challenge you entered is ready to start")
-        assert(mail.body.contains("carol owns it, so it is up to them to start it."))
+        assertEquals(mail.subject, "bob has entered your Tic-Tac-Toe challenge")
+        assert(mail.body.contains("It is now full."))
     }
 
     // A challenge has no name worth repeating, so nothing is quoted.
     test("a challenge is not quoted") {
         Seq(
-          NotificationType.ChallengeAccepted,
-          NotificationType.ChallengeReady,
-          NotificationType.AcceptanceChanged,
-          NotificationType.AcceptedChallengeReady,
+          NotificationType.CompetitionEntered,
           NotificationType.InvitationReceived,
           NotificationType.InvitationAccepted,
           NotificationType.InvitationRejected

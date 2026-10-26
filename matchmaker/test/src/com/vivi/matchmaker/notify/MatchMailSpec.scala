@@ -182,7 +182,11 @@ class MatchMailSpec extends FunSuite {
     }
 
     test("a kind this template is not for produces nothing") {
-        Seq(NotificationType.ChallengeAccepted, NotificationType.ChallengeReady, NotificationType.AcceptanceChanged)
+        Seq(
+          NotificationType.CompetitionEntered,
+          NotificationType.InvitationReceived,
+          NotificationType.InvitationAccepted
+        )
             .foreach(kind => assertEquals(compose(kind = kind, news = news()), None, s"$kind"))
     }
 }

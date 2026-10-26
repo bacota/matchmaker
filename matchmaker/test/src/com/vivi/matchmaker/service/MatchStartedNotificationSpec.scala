@@ -129,7 +129,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
             t <- Challenges.offered(services = services, game = game, seats = seats, isPublic = true)
             _ <- beforeStart(services, accepter, game)
             // The fixture above has sent mail of its own: an entry is news to the challenger, who is told
-            // about it (and, since this challenge is then full, told that it is ready to start). Every
+            // about it (and, since this challenge is then full, that it is ready to start). Every
             // property here is about what the *start* sends, so the record is cleared at the moment the
             // start begins.
             _ <- IO(notifier.clear())

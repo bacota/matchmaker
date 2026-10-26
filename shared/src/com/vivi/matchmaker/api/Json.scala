@@ -54,8 +54,8 @@ object Json {
     // Seconds, matching how the persistence layer stores time_limit.
     given ReadWriter[Duration] = readwriter[Long].bimap(_.getSeconds, Duration.ofSeconds)
 
-    /** Preferences are plain objects of eleven named fields, so a client reads them by name rather than by position —
-      * the one thing about this wire format that must not depend on `NotificationType.values` order, since the database
+    /** Preferences are plain objects of nine named fields, so a client reads them by name rather than by position — the
+      * one thing about this wire format that must not depend on `NotificationType.values` order, since the database
       * binding already does.
       *
       * The tri-state is upickle's `Option`, which writes the value itself and omits the field entirely when there is
