@@ -1441,12 +1441,17 @@ object Tournaments {
         var acceptedProblems: List[Problem] = Nil
         // Whether the next check is of the format the form fills in as the formats arrive: not a change to undo.
         var isFillingIn = false
-        /* The banner saying a change was undone, while it may still be up. The undoing has already put the problem
-         * right, so the banner comes down at the next change made on the form, or when the form closes. */
-        var undoneNotice: Option[String] = None
-        def withdrawUndoneNotice(): Unit = {
-            undoneNotice.foreach(Store.withdrawProblem)
-            undoneNotice = None
+        /* The banner the form last raised -- a change undone, or a save refused for what the form lacks -- while it may
+         * still be up. It is about what the form held then, so it comes down at the next change made on the form, or
+         * when the form closes. */
+        var raisedNotice: Option[String] = None
+        def raiseNotice(notice: String): Unit = {
+            Store.reportProblem(notice)
+            raisedNotice = Some(notice)
+        }
+        def withdrawNotice(): Unit = {
+            raisedNotice.foreach(Store.withdrawProblem)
+            raisedNotice = None
         }
         def checkChange(): Unit = {
             val now = found
@@ -1470,8 +1475,7 @@ object Tournaments {
                 )
                 problems.set(acceptedProblems)
                 val notice = ErrorText.competitionForm.undone(raised.map(_.describe).mkString("; "))
-                Store.reportProblem(notice)
-                undoneNotice = Some(notice)
+                raiseNotice(notice)
             }
         }
 
@@ -1565,9 +1569,9 @@ object Tournaments {
         div(
           cls := "card competition-form",
           // Any field's input or change bubbles up to here; setting the fields from code, as an undo does, does not.
-          onInput --> (_ => withdrawUndoneNotice()),
-          onChange --> (_ => withdrawUndoneNotice()),
-          onUnmountCallback(_ => withdrawUndoneNotice()),
+          onInput --> (_ => withdrawNotice()),
+          onChange --> (_ => withdrawNotice()),
+          onUnmountCallback(_ => withdrawNotice()),
           // Headed when it is a dialog of its own, which is named by its heading.
           headingId.fold(emptyNode)(id => h3(idAttr := id, Headings.tournaments.create)),
           // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
@@ -1669,7 +1673,7 @@ object Tournaments {
                       Views.shownWhen(labelOf("competition.poolSize", Labels.competition.poolSize)),
                       s"One pool of everyone entered ($everyone)",
                       onClick --> { _ =>
-                          withdrawUndoneNotice(); poolSize.set(everyone.toString)
+                          withdrawNotice(); poolSize.set(everyone.toString)
                       }
                     )
                 } else emptyNode
@@ -1832,13 +1836,13 @@ object Tournaments {
                 hasTriedSaving.set(true)
                 check()
                 val errors = problems.now().filterNot(_.isWarning)
-                if (name.now().trim.isEmpty) Store.reportProblem(ErrorText.competitionForm.noName)
+                if (name.now().trim.isEmpty) raiseNotice(ErrorText.competitionForm.noName)
                 // Asked for where it is shown; a format that leaves it out saves the default.
                 else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
-                    Store.reportProblem(ErrorText.competitionForm.noTimeLimit)
-                else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
+                    raiseNotice(ErrorText.competitionForm.noTimeLimit)
+                else if (errors.nonEmpty) raiseNotice(errors.map(_.describe).mkString("; "))
                 else if (isJoining && isCharacterGame && joinWith.now().isEmpty)
-                    Store.reportProblem(ErrorText.competitionForm.noCharacter)
+                    raiseNotice(ErrorText.competitionForm.noCharacter)
                 else
                     modelId.now().foreach { id =>
                         val request = TournamentRequest(
