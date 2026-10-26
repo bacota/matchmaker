@@ -1314,15 +1314,25 @@ object Tournaments {
         // The game's R as this tournament plays it: its roles, or for a game without roles the players per match.
         def r: Int = TournamentGame.of(game, playersPerMatch).poolSeats
 
+        // The number of participants choosing a model last filled in, while the field still holds it.
+        var filledEntrants: Option[String] = None
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
          * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
-         * model whose players always choose, which every tournament made from it does. */
+         * model whose players always choose, which every tournament made from it does. A model whose pool is everyone
+         * taking part fills in the number of participants as well, the game's R and at least 2, unless one has been
+         * typed; and a model chosen after it takes that filled-in number back out. */
         def choose(m: TournamentModel): Unit = {
             modelId.set(Some(m.tournamentModelId))
             chosen.set(Some(m))
             poolSize.set(m.poolSize.getOrElse(r).toString)
             lateEntries.set(m.hasLateEntries)
             chooseRoles.set(m.hasRoleChoice)
+            val typed = maxEntrants.now().trim
+            val isUntyped = typed.isEmpty || filledEntrants.contains(typed)
+            if (isUntyped) {
+                filledEntrants = Option.when(m.hasPoolOfEveryone)(math.max(r, 2).toString)
+                maxEntrants.set(filledEntrants.getOrElse(""))
+            }
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
