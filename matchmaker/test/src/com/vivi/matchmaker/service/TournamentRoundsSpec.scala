@@ -607,7 +607,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         val (stranger, again, entry, next) = refused
         val (d, created) = finished
         assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
-        // Still under way while its round is played, and stopped.
+        // Still under way while its round is played, and stopped: its matches had begun, so it is not deleted.
+        assert(stopped.hasBegunMatch)
         assertEquals(stopped.summary.tournament.status, TournamentStatus.Running)
         assert(stopped.summary.tournament.isStopped)
         assert(again.left.exists(_.isInstanceOf[ConflictError]), again)
@@ -656,6 +657,32 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         }
         assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
         assertEquals(gone, None)
+    }
+
+    test("stopping a tournament under way none of whose matches has begun deletes it, matches and all") {
+        val (before, gone, matches, created) = run(for {
+            // With roles, so that the round's matches wait on choosing and none is created.
+            f <- started(n = 2)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            before <- detail(f)
+            _ <- f.w.services.rounds.stop(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            gone <- TestSession.resource.use(new TournamentRepo(_).read(f.game.gameId, f.t.tournamentId))
+            matches <- round(f)
+        } yield (before, gone, matches, f.w.engine.created.get()))
+        assertEquals(before.summary.tournament.status, TournamentStatus.Running)
+        assert(before.round.nonEmpty)
+        assert(!before.hasBegunMatch)
+        assertEquals(gone, None)
+        assertEquals(matches, Nil)
+        assertEquals(created, 0)
     }
 
     test("a seat whose time to choose has run out forfeits at Check round, and the match is decided without it") {

@@ -708,7 +708,8 @@ class TournamentRounds[T](
 
     /** The owner stopping a tournament, so that no match of it is scheduled from now on.
       *
-      * One that has not started has no match, and is deleted, entries and all. One under way is marked stopped: its
+      * One that has not started, or none of whose matches has begun ([[TournamentRepo.hasBegunMatch]]), is deleted,
+      * matches, entries and all: nothing has been played that anybody would look for. One under way is marked stopped: its
       * matches already scheduled are played out, no further round is begun, and it finishes as the round being played
       * completes ([[settle]]) -- at once, if that round is already over. Its matches of later rounds are left scheduled
       * and never played, as are those of every tournament that finishes before its pools do. A tournament that is over
@@ -723,8 +724,12 @@ class TournamentRounds[T](
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
                       UnauthorizedError(ErrorText.round.stopNotOwner)
                     )
+                    hasBegun <-
+                        if (t.status == TournamentStatus.Running)
+                            new TournamentRepo(session).hasBegunMatch(gameId, tournamentId)
+                        else IO.pure(false)
                     _ <- t.status match {
-                        case TournamentStatus.Open =>
+                        case TournamentStatus.Open | TournamentStatus.Running if !hasBegun =>
                             new TournamentRepo(session).delete(gameId, tournamentId)
                         case TournamentStatus.Running if t.isStopped =>
                             IO.raiseError(ConflictError(ErrorText.round.alreadyStopped))

@@ -577,6 +577,16 @@ class TournamentRepo(session: Session[IO]) {
     def anyEntrantMadeFrom(model: TournamentModelId): IO[Boolean] =
         session.unique(selectAnyEntrantMadeFrom)(model)
 
+    private val selectHasBegunMatch: Query[(GameId, TournamentId), Boolean] =
+        sql"""SELECT EXISTS (SELECT 1 FROM match
+                              WHERE game_id = $gameId AND tournament_id = $tournamentId AND status IN ('P', 'F'))"""
+            .query(bool)
+
+    /** Whether the engine has been asked to create the game of any match of the tournament: one has begun, or is over.
+      * One decided by its owner without being played is over too.
+      */
+    def hasBegunMatch(game: GameId, id: TournamentId): IO[Boolean] = session.unique(selectHasBegunMatch)((game, id))
+
     private def deleting(table: String): Command[(GameId, TournamentId)] =
         sql"DELETE FROM #$table WHERE game_id = $gameId AND tournament_id = $tournamentId".command
 
@@ -585,9 +595,14 @@ class TournamentRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
     // Each table after every one that names it. pool names itself and is emptied in one statement; tournament names
-    // round through current_round, cleared first, and stage through the deferred first_stage_id.
+    // round through current_round, cleared first, and stage through the deferred first_stage_id; participant names its
+    // player_participant or character_participant through a deferred key.
     private val deletes: List[Command[(GameId, TournamentId)]] =
         List(
+          "player_participant",
+          "character_participant",
+          "participant",
+          "match",
           "seed",
           "pool_member",
           "atomic_pool",
@@ -606,8 +621,9 @@ class TournamentRepo(session: Session[IO]) {
           "tournament"
         ).map(deleting)
 
-    /** Removes a tournament that has no match, with its entries, invitations, stages and root pool. Refused by the
-      * database, as a foreign key violation, if it has a match.
+    /** Removes a tournament none of whose matches has begun ([[hasBegunMatch]]), with its matches and their seats,
+      * entries, invitations, stages and pools. Refused by the database, as a foreign key violation, if a match has a
+      * turn or a result.
       */
     def delete(game: GameId, id: TournamentId): IO[Unit] =
         session.execute(clearCurrentRound)((game, id)) *> deletes.traverse_(session.execute(_)((game, id)))

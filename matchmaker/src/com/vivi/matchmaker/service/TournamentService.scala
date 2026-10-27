@@ -102,6 +102,9 @@ class TournamentService[T](
                 state <-
                     if (summary.tournament.startedAt.isEmpty) IO.pure(None)
                     else new TournamentRepo(session).readState(gameId, tournamentId)
+                hasBegunMatch <-
+                    if (summary.tournament.startedAt.isEmpty) IO.pure(false)
+                    else new TournamentRepo(session).hasBegunMatch(gameId, tournamentId)
                 round <- state.filter(_.round > 0) match {
                     case Some(s) =>
                         new TournamentMatchRepo(session).listRound(
@@ -134,7 +137,8 @@ class TournamentService[T](
                   val v = TournamentService.view(m)
                   v.copy(seats = v.seats.map(s => if (s.isChoosing) s.copy(chooseBy = by) else s))
               },
-              invitedCharacters = invitedCharacters
+              invitedCharacters = invitedCharacters,
+              hasBegunMatch = hasBegunMatch
             )
         }
 

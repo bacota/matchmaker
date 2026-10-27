@@ -669,8 +669,9 @@ object Tournaments {
                   onClick --> (_ => editing.update(!_))
                 ),
             t.status match {
-                // Not started, so nothing has been played: stopping it deletes it, which is cancelling it.
-                case TournamentStatus.Open =>
+                // Not started, or no match of it begun, so nothing has been played: stopping it deletes it, which is
+                // cancelling it.
+                case TournamentStatus.Open | TournamentStatus.Running if !d.hasBegunMatch =>
                     stopButton(
                       label = Buttons.tournaments.cancel,
                       question = "Cancel this competition? It will be deleted, with its entries."

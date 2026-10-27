@@ -265,7 +265,9 @@ case class TournamentDetail(
     invited: List[PlayerName],
     state: Option[com.vivi.matchmaker.model.tournament.TournamentState],
     round: List[TournamentMatchView] = Nil,
-    invitedCharacters: List[InvitedCharacter] = Nil
+    invitedCharacters: List[InvitedCharacter] = Nil,
+    /** Whether any of its matches has begun: until one has, stopping it deletes it. */
+    hasBegunMatch: Boolean = false
 )
 
 /** A character invited to a tournament of a character game, with whoever owns it now: the invitation is the

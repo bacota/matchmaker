@@ -858,12 +858,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               request = request(f = f, standard = "world-cup").copy(name = "Renamed"),
               callerExternalId = f.owner.externalId
             )
-            // Stopped before its owner begins a round, so it finishes at once.
-            _ <- services.rounds.stop(
-              gameId = f.game.gameId,
-              tournamentId = t.tournamentId,
-              callerExternalId = f.owner.externalId
-            )
+            // Over: written so, since stopping one before any match has begun would delete it.
+            _ <- TestSession.resource.use { session =>
+                val repo = new TournamentRepo(session)
+                repo.read(f.game.gameId, t.tournamentId)
+                    .flatMap(r => repo.update(r.get.copy(status = TournamentStatus.Finished)))
+            }
             over <- tournaments
                 .update(
                   gameId = f.game.gameId,
