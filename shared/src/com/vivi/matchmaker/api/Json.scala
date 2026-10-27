@@ -148,7 +148,9 @@ object Json {
         maxPlayers: Option[Int] = None,
         // How players take turns, and how many a simultaneous game lasts. Defaulted as above.
         moveType: MoveType = MoveType.Sequential,
-        maxTurns: Option[Int] = None
+        maxTurns: Option[Int] = None,
+        // Whether the engine is handed a player's refresh token. Defaulted to the safe answer.
+        isTrusted: Boolean = false
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -172,7 +174,8 @@ object Json {
             minPlayers = game.minPlayers,
             maxPlayers = game.maxPlayers,
             moveType = game.moveType,
-            maxTurns = game.maxTurns
+            maxTurns = game.maxTurns,
+            isTrusted = game.isTrusted
           ),
       dto =>
           Game(
@@ -192,7 +195,8 @@ object Json {
             minPlayers = dto.minPlayers,
             maxPlayers = dto.maxPlayers,
             moveType = dto.moveType,
-            maxTurns = dto.maxTurns
+            maxTurns = dto.maxTurns,
+            isTrusted = dto.isTrusted
           )
     )
 

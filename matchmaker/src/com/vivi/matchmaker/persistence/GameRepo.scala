@@ -35,14 +35,15 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           Option[Int],
           Option[Int],
           MoveType,
-          Option[Int]
+          Option[Int],
+          Boolean
       ),
       GameId
     ] =
         sql"""INSERT INTO game (game_type, name, display_name, description, url, character_url, is_active, external_id,
-                                timeout_action, min_players, max_players, move_type, max_turns)
+                                timeout_action, min_players, max_players, move_type, max_turns, is_trusted)
           VALUES ($gameType, $text, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction, ${int4.opt},
-                  ${int4.opt}, $moveType, ${int4.opt})
+                  ${int4.opt}, $moveType, ${int4.opt}, $bool)
           RETURNING game_id""".query(gameId)
 
     private val updateGameRow: Command[
@@ -60,13 +61,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           Option[Int],
           MoveType,
           Option[Int],
+          Boolean,
           GameId
       )
     ] =
         sql"""UPDATE game SET game_type = $gameType, name = $text, display_name = $text, description = $text, url = $text,
           character_url = ${text.opt}, is_active = $bool,
           external_id = $text, timeout_action = $timeoutAction, min_players = ${int4.opt}, max_players = ${int4.opt},
-          move_type = $moveType, max_turns = ${int4.opt}
+          move_type = $moveType, max_turns = ${int4.opt}, is_trusted = $bool
           WHERE game_id = $gameId""".command
 
     private val selectGameRow: Query[
@@ -85,18 +87,19 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           Option[Int],
           Option[Int],
           MoveType,
-          Option[Int]
+          Option[Int],
+          Boolean
       )
     ] =
         // Whether a key is stored, never the key: no read of a game carries it.
         sql"""SELECT game_type, name, display_name, description, url, character_url, is_active, external_id, timeout_action,
                  EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), min_players, max_players,
-                 move_type, max_turns
+                 move_type, max_turns, is_trusted
           FROM game
           WHERE game_id = $gameId"""
             .query(
               gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
-                  int4.opt *: int4.opt *: moveType *: int4.opt
+                  int4.opt *: int4.opt *: moveType *: int4.opt *: bool
             )
 
     /* Confirms a game exists and holds it that way for the rest of the transaction.
@@ -185,7 +188,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.minPlayers,
                 game.maxPlayers,
                 game.moveType,
-                game.maxTurns
+                game.maxTurns,
+                game.isTrusted
               )
             )
             roles <- game.roles.toList.traverse(insertRole(gameId, _))
@@ -235,7 +239,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     minPlayers,
                     maxPlayers,
                     moveType,
-                    maxTurns
+                    maxTurns,
+                    trusted
                   )
                 ) =>
                 for {
@@ -259,7 +264,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     minPlayers = minPlayers,
                     maxPlayers = maxPlayers,
                     moveType = moveType,
-                    maxTurns = maxTurns
+                    maxTurns = maxTurns,
+                    isTrusted = trusted
                   )
                 )
         }
@@ -281,6 +287,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.maxPlayers,
                 game.moveType,
                 game.maxTurns,
+                game.isTrusted,
                 game.gameId
               )
             )
@@ -397,6 +404,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         maxPlayers: Option[Int],
         moveType: MoveType,
         maxTurns: Option[Int],
+        isTrusted: Boolean,
         roleId: Option[Int],
         roleName: Option[String],
         roleType: Option[RoleType],
@@ -418,7 +426,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.is_active, g.external_id,
                  g.timeout_action, EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = g.game_id), g.min_players,
                  g.max_players,
-                 g.move_type, g.max_turns,
+                 g.move_type, g.max_turns, g.is_trusted,
                  r.game_role_id, r.name, r.type, r.display_name, r.preference_level,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
                  v.value
@@ -431,7 +439,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           ORDER BY g.game_id"""
             .query(
               gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
-                  int4.opt *: int4.opt *: moveType *: int4.opt *: int4.opt *: text.opt *: roleType.opt *: text.opt *: int4.opt *:
+                  int4.opt *: int4.opt *: moveType *: int4.opt *: bool *: int4.opt *: text.opt *: roleType.opt *: text.opt *: int4.opt *:
                   int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
 
@@ -518,7 +526,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       minPlayers = head.minPlayers,
                       maxPlayers = head.maxPlayers,
                       moveType = head.moveType,
-                      maxTurns = head.maxTurns
+                      maxTurns = head.maxTurns,
+                      isTrusted = head.isTrusted
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.
