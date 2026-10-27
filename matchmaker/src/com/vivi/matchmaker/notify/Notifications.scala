@@ -363,6 +363,41 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             }
         }
 
+    /** A match of the tournament its engine would not create. Told to the owner and every admin -- the site's and the
+      * game's -- since fixing it may be any of theirs, and not a preference anybody can turn off: it is a fault, not
+      * news, and is said once, the first time a try fails.
+      */
+    def matchNotCreated(session: Session[IO], tournament: Tournament, game: Game): IO[Unit] =
+        dispatch(
+          session,
+          s"a match not created in tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
+        ) { (from, uiBaseUrl) =>
+            val players = new PlayerRepo(session)
+            for {
+                owner <- players.read(tournament.owner)
+                admins <- players.listAdmins
+                gameAdmins <- new GameAdminRepo(session)
+                    .listForGame(game.gameId)
+                    .flatMap(_.getOrElse(Nil).traverse(a => players.read(a.player.playerId)))
+            } yield {
+                val values = Seq("game" -> game.displayName, "tournament" -> tournament.name)
+                (owner.toList ++ admins ++ gameAdmins.flatten).distinctBy(_.playerId).flatMap { recipient =>
+                    recipient.email.map(address =>
+                        MailMessage(
+                          sender = from,
+                          recipient = address,
+                          subject = MailTemplates.render("mail.tournament.matchNotCreated.subject", values*),
+                          body = MailText.letter(
+                            recipient = recipient,
+                            body = MailTemplates.render("mail.tournament.matchNotCreated.body", values*),
+                            uiBaseUrl = uiBaseUrl
+                          )
+                        )
+                    )
+                }
+            }
+        }
+
     // -------------------------------------------------------------------------
     // The two shapes those five events come in
     // -------------------------------------------------------------------------

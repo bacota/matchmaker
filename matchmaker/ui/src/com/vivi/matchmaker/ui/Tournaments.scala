@@ -1018,6 +1018,13 @@ object Tournaments {
                               m.seats.find(_.isChoosing).flatMap(_.chooseBy).fold("")(by => s" · choose by ${when(by)}")
                         )
                       ),
+                      m.createFailure.fold(emptyNode)(f =>
+                          p(
+                            cls := "error",
+                            if (f.isStopped) ErrorText.round.notCreatedStopped(error = f.error, at = when(f.at))
+                            else ErrorText.round.notCreated(error = f.error, tries = f.tries.toString, at = when(f.at))
+                          )
+                      ),
                       myTurn.fold(emptyNode)(_ => chooser(t = t, m = m, game = game)),
                       if (d.summary.isOwner && m.status != TournamentMatchStatus.Done)
                           decider(t = t, m = m, names = names, d = d)

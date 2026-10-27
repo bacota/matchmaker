@@ -34,8 +34,10 @@ class TournamentMatchRepo(session: Session[IO]) {
         case TournamentMatchStatus.Done     => "F"
     }
 
-    private type MatchRow = (GameId, TournamentId, MatchId, Long, Int, TournamentMatchStatus, Boolean)
-    private val matchRow = gameId *: tournamentId *: matchId *: int8 *: int4 *: status *: bool
+    private type MatchRow =
+        (GameId, TournamentId, MatchId, Long, Int, TournamentMatchStatus, Boolean, Int, Option[Instant], Option[String])
+    private val matchRow =
+        gameId *: tournamentId *: matchId *: int8 *: int4 *: status *: bool *: int4 *: instant.opt *: text.opt
 
     private type SeatRow = (MatchId, Long, Long, Option[Int], Option[Int], Option[Instant], Option[Instant], Boolean)
     private val seatRow =
@@ -59,7 +61,7 @@ class TournamentMatchRepo(session: Session[IO]) {
 
     private def assemble(matches: List[MatchRow], seats: List[SeatRow]): List[TournamentMatch] = {
         val byMatch = seats.groupBy(_._1)
-        matches.map { case (g, t, id, pool, round, st, ties) =>
+        matches.map { case (g, t, id, pool, round, st, ties, failures, failedAt, error) =>
             TournamentMatch(
               gameId = g,
               tournamentId = t,
@@ -68,18 +70,19 @@ class TournamentMatchRepo(session: Session[IO]) {
               round = round,
               status = st,
               canTie = ties,
-              seats = byMatch.getOrElse(id, Nil).map(seatOf)
+              seats = byMatch.getOrElse(id, Nil).map(seatOf),
+              createFailure = failedAt.map(at => CreateFailure(at = at, tries = failures, error = error.getOrElse("")))
             )
         }
     }
 
     private val selectRound: Query[(GameId, TournamentId, Int), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie, create_failures, create_failed_at, create_error FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND status <> 'S'
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
     private val selectOpen: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie, create_failures, create_failed_at, create_error FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND status IN ('C', 'D', 'P')
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
@@ -102,12 +105,12 @@ class TournamentMatchRepo(session: Session[IO]) {
             .mapN(assemble)
 
     private val selectOne: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie, create_failures, create_failed_at, create_error FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'"""
             .query(matchRow)
 
     private val selectOneForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie, create_failures, create_failed_at, create_error FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'
           FOR UPDATE""".query(matchRow)
 
@@ -213,6 +216,33 @@ class TournamentMatchRepo(session: Session[IO]) {
       */
     def backToDue(game: GameId, id: MatchId): IO[Unit] = session.execute(relaunchable)((game, id)).void
 
+    private val createFailedCommand: Query[(Instant, String, GameId, MatchId), Int] =
+        sql"""UPDATE match SET create_failures = create_failures + 1, create_failed_at = $instant, create_error = $text
+          WHERE game_id = $gameId AND match_id = $matchId
+          RETURNING create_failures""".query(int4)
+
+    /** Another try at creating the match's engine game failed, at `at`, the engine saying `error`. How many tries in a
+      * row have now failed.
+      */
+    def createFailed(game: GameId, id: MatchId, at: Instant, error: String): IO[Int] =
+        session.unique(createFailedCommand)((at, error, game, id))
+
+    private val createdCommand: Command[(GameId, MatchId)] =
+        sql"""UPDATE match SET create_failures = 0, create_failed_at = NULL, create_error = NULL
+          WHERE game_id = $gameId AND match_id = $matchId AND create_failed_at IS NOT NULL""".command
+
+    /** The match's engine game made at last: whatever failed before is forgotten. */
+    def created(game: GameId, id: MatchId): IO[Unit] = session.execute(createdCommand)((game, id)).void
+
+    private val retryCreateCommand: Command[(GameId, MatchId)] =
+        sql"""UPDATE match SET create_failures = 0
+          WHERE game_id = $gameId AND match_id = $matchId AND create_failures > 0""".command
+
+    /** The count of failed tries started again, for a match its owner's Check round queues once more: what the engine
+      * said last stays, to be shown until a try succeeds or fails anew.
+      */
+    def retryCreate(game: GameId, id: MatchId): IO[Unit] = session.execute(retryCreateCommand)((game, id)).void
+
     private val launchSeatCommand: Command[(Long, Option[Int], Option[Int], GameId, ParticipantId)] =
         sql"""UPDATE participant SET player_id = $int8, elo_start = ${int4.opt}, elo_role_start = ${int4.opt}
           WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
@@ -251,7 +281,8 @@ class TournamentMatchRepo(session: Session[IO]) {
     // the predicate of the partial index participant_player_choosing, so only their unchosen seats are read, not every
     // seat they have had.
     private val selectChoosingFor: Query[PlayerId, MatchRow] =
-        sql"""SELECT m.game_id, m.tournament_id, m.match_id, m.pool_id, m.round, m.status, m.can_tie
+        sql"""SELECT m.game_id, m.tournament_id, m.match_id, m.pool_id, m.round, m.status, m.can_tie,
+                 m.create_failures, m.create_failed_at, m.create_error
           FROM participant s
           JOIN match m ON m.game_id = s.game_id AND m.match_id = s.match_id
           WHERE s.player_id = ${SkunkIdCodecs.playerId} AND s.game_role_id IS NULL AND NOT s.is_forfeit AND m.status = 'C'

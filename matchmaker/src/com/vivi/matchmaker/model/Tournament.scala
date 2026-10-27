@@ -194,8 +194,24 @@ case class TournamentMatch(
     round: Int,
     status: TournamentMatchStatus,
     canTie: Boolean,
-    seats: List[TournamentSeat]
+    seats: List[TournamentSeat],
+    createFailure: Option[CreateFailure] = None
 )
+
+/** Why a tournament match is still due: its engine would not create its game. `tries` is how many tries in a row have
+  * failed, `at` when the last did, and `error` what the engine said. Cleared once the game is made.
+  */
+case class CreateFailure(at: Instant, tries: Int, error: String) {
+
+    /** Whether the queue has stopped trying, leaving it to the owner's Check round. */
+    def isStopped: Boolean = tries >= CreateFailure.maxTries
+}
+
+object CreateFailure {
+
+    /** How many tries in a row may fail before the queue stops trying to create a match. */
+    val maxTries: Int = 3
+}
 
 /** What a tournament is created or edited with: the model it is made from, its default pool size (`None` for the
   * model's suggestion), and its settings. `owner` hands an existing tournament to another player; a new one is its
@@ -242,12 +258,15 @@ case class TournamentSeatView(
     chooseBy: Option[Instant]
 )
 
-/** A match of the round being played: its pool, the match itself, where it is, and its seats. */
+/** A match of the round being played: its pool, the match itself, where it is, and its seats. `createFailure` is why
+  * its engine has not made its game, given only to the tournament's owner and admins.
+  */
 case class TournamentMatchView(
     poolId: Int,
     matchId: MatchId,
     status: TournamentMatchStatus,
-    seats: List[TournamentSeatView]
+    seats: List[TournamentSeatView],
+    createFailure: Option[CreateFailure] = None
 )
 
 /** Everything a tournament's page shows: the tournament and its design, who has entered and who is invited -- players

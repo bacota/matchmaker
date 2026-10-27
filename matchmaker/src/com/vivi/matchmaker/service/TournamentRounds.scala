@@ -330,13 +330,36 @@ class TournamentRounds[T](
                               undo = undo(session = session, gameId = gameId, matchId = matchId)
                             )
                             .attempt
-                            .map {
-                                case Right(_) => Settlement.Settled
-                                case Left(e)  => Settlement.Owed(s"its engine could not create it: $e")
+                            .flatMap {
+                                case Right(_) =>
+                                    new TournamentMatchRepo(session).created(gameId, matchId).as(Settlement.Settled)
+                                case Left(e) =>
+                                    createFailed(session = session, saved = saved, game = game, error = e)
                             }
                 }
             } yield settled
         }
+
+    /* A failed try at creating a match, recorded where its owner and admins will see it, and mailed to them the first
+     * time. Owed, and so tried again, until it has failed [[CreateFailure.maxTries]] times in a row; then settled, and
+     * the owner's Check round is what tries again. */
+    private def createFailed(session: Session[IO], saved: Match, game: Game, error: Throwable): IO[Settlement] =
+        new TournamentMatchRepo(session)
+            .createFailed(game = game.gameId, id = saved.matchId, at = now(), error = error.getMessage)
+            .flatTap(tries =>
+                IO.whenA(tries == 1)(
+                  new TournamentRepo(session).read(game.gameId, saved.tournamentId).flatMap(
+                    _.traverse_(t => notifications.matchNotCreated(session = session, tournament = t, game = game))
+                  )
+                )
+            )
+            .map { tries =>
+                val why = s"its engine could not create it: $error"
+                if (tries >= CreateFailure.maxTries) {
+                    System.err.println(s"$why; $tries tries have failed, so it waits on its owner's Check round")
+                    Settlement.Settled
+                } else Settlement.Owed(why)
+            }
 
     private enum Prepared {
         case Nothing
@@ -669,7 +692,9 @@ class TournamentRounds[T](
                               .attempt
                               .void
                       case TournamentMatchStatus.Due =>
-                          endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
+                          // A match the queue gave up creating gets its full count of tries again.
+                          sessionPool.use(new TournamentMatchRepo(_).retryCreate(gameId, tm.matchId)) *>
+                              endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
                       case TournamentMatchStatus.Choosing =>
                           forfeitChooser(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
                       case TournamentMatchStatus.Done => IO.unit

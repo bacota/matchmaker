@@ -784,6 +784,51 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(owed, 1)
     }
 
+    // A refusal is recorded on the match, for its owner to see, and mailed once; after the last try the queue stops,
+    // and the owner's Check round is what tries again.
+    test("a match its engine keeps refusing is shown to its owner, mailed once, and left to Check round".tag(Quiet)) {
+        val (settlements, ownerSees, playerSees, subjects, afterCheck) = run(for {
+            f <- started(n = 2, roles = false, isMailed = true)
+            _ = f.w.engine.refusals.set(CreateFailure.maxTries)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.head)
+            settlements <- List
+                .fill(CreateFailure.maxTries - 1)(())
+                .traverse(_ =>
+                    f.w.services.rounds
+                        .createMatch(gameId = f.game.gameId, tournamentId = f.t.tournamentId, matchId = m.matchId)
+                )
+            ownerSees <- detail(f).map(_.round.head.createFailure)
+            playerSees <- f.w.services.tournaments
+                .detail(
+                  gameId = f.game.gameId,
+                  tournamentId = f.t.tournamentId,
+                  callerExternalId = f.players.head.externalId
+                )
+                .map(_.round.head.createFailure)
+            _ <- f.w.services.rounds.checkRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            afterCheck <- detail(f).map(_.round.head)
+            // The owner's mail alone: any site admin another spec has made is written to as well.
+            toOwner = f.w.mail.messages.filter(m => f.owner.email.contains(m.recipient)).map(_.subject)
+        } yield (settlements, ownerSees, playerSees, toOwner, afterCheck))
+        assert(settlements.init.forall(_.isInstanceOf[Settlement.Owed]), settlements)
+        assertEquals(settlements.last, Settlement.Settled)
+        assertEquals(ownerSees.map(_.tries), Some(CreateFailure.maxTries))
+        assert(ownerSees.exists(f => f.isStopped && f.error == "engine down"), ownerSees)
+        assertEquals(playerSees, None)
+        assertEquals(subjects.count(_.contains("could not be started")), 1, subjects)
+        assertEquals(afterCheck.status, TournamentMatchStatus.Started)
+        assertEquals(afterCheck.createFailure, None)
+    }
+
     /** A round of two begun and its match created, then stranded as a creation that died between its claim and the
       * engine's answer leaves it: begun `startedAgo`, with no urls. What the engine created, the match's status and
       * whether it has a status url, after a Check round.

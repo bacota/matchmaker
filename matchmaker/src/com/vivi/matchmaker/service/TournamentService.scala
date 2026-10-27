@@ -118,6 +118,10 @@ class TournamentService[T](
                     case Some(g) => IO.pure(g)
                     case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                 }
+                // Why a match is stuck is for whoever can do something about it.
+                canSeeFailures <-
+                    if (summary.isOwner || caller.isAdmin || round.forall(_.createFailure.isEmpty)) IO.pure(true)
+                    else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
             } yield TournamentDetail(
               summary = summary,
               gameType = game.gameType,
@@ -135,7 +139,10 @@ class TournamentService[T](
               round = round.map { m =>
                   val by = TournamentRounds.chooseBy(t = summary.tournament, game = game, tm = m)
                   val v = TournamentService.view(m)
-                  v.copy(seats = v.seats.map(s => if (s.isChoosing) s.copy(chooseBy = by) else s))
+                  v.copy(
+                    seats = v.seats.map(s => if (s.isChoosing) s.copy(chooseBy = by) else s),
+                    createFailure = m.createFailure.filter(_ => canSeeFailures)
+                  )
               },
               invitedCharacters = invitedCharacters,
               hasBegunMatch = hasBegunMatch

@@ -193,6 +193,18 @@ class PlayerRepo(session: Session[IO]) {
                 Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
             })
 
+    private val selectAdmins: Query[Void, (PlayerId, String, Boolean, String, Option[String])] =
+        sql"""SELECT player_id, nickname, is_admin, external_id, email FROM player WHERE is_admin
+          ORDER BY player_id""".query(playerId *: text *: bool *: text *: text.opt)
+
+    /** Every site admin. */
+    def listAdmins: IO[List[Player]] =
+        session
+            .execute(selectAdmins)
+            .map(_.map { case (id, nickname, isAdmin, externalId, email) =>
+                Player(playerId = id, nickname = nickname, isAdmin = isAdmin, externalId = externalId, email = email)
+            })
+
     /** Writes everything about a player except their address. See `updatePlayer` for why the exception, and
       * `updateEmail` for the one thing that writes it.
       */
