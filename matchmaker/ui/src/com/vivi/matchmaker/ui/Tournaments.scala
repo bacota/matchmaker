@@ -577,10 +577,6 @@ object Tournaments {
             )
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
         val checking = Var(false)
-        // This round's own length, in hours; blank for the tournament's.
-        val roundHours = Var("")
-        def roundLength =
-            roundHours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round))
         div(
           cls := "card",
           h3(Headings.tournaments.run),
@@ -597,31 +593,11 @@ object Tournaments {
                     span(
                       if (roundOpen) emptyNode
                       else
-                          span(
-                            Views.tipField(
-                              id = freshTipId("round-length-tip"),
-                              caption = Labels.competition.roundLength,
-                              text = Tips.competition.roundLength
-                            )(
-                              input(
-                                tpe := "number",
-                                inputMode := "decimal",
-                                minAttr := "0",
-                                controlled(value <-- roundHours.signal, onInput.mapToValue --> roundHours)
-                              )
-                            ),
-                            busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
-                                Store.runSignedIn(
-                                  thenShown(d)(
-                                    ApiClient.startRound(
-                                      gameId = t.gameId,
-                                      tournamentId = t.tournamentId,
-                                      duration = roundLength
-                                    )
-                                  ),
-                                  busy
-                                )(_ => reload(d))
-                            )
+                          busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
+                              Store.runSignedIn(
+                                thenShown(d)(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
+                                busy
+                              )(_ => reload(d))
                           ),
                       if (roundOpen)
                           withTip(

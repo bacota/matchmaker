@@ -724,21 +724,12 @@ object Router {
             // Playing a tournament's rounds: the owner beginning the next, checking the one being played
             // for clocks run out, and stopping a stage that repeats until stopped; a seat choosing its
             // role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
-            // The owner may give this round a duration of its own; with no body, it lasts the tournament's.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "rounds" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    (if (Option(request.body).forall(_.trim.isEmpty)) IO.pure(TournamentJson.StartRoundRequest())
-                     else body[TournamentJson.StartRoundRequest](request)).flatMap(r =>
-                        ok(
-                          services.rounds
-                              .startRound(
-                                gameId = gid,
-                                tournamentId = t,
-                                callerExternalId = caller,
-                                duration = r.roundDurationSeconds.map(java.time.Duration.ofSeconds)
-                              )
-                              .map(TournamentJson.RoundStarted(_))
-                        )
+                    ok(
+                      services.rounds
+                          .startRound(gameId = gid, tournamentId = t, callerExternalId = caller)
+                          .map(TournamentJson.RoundStarted(_))
                     )
                 )
 

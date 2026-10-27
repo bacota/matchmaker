@@ -372,16 +372,12 @@ object ApiClient {
           body = None
         )
 
-    /** Begins the next round: for `duration` if given, and otherwise for the tournament's round duration. */
-    def startRound(
-        gameId: GameId,
-        tournamentId: TournamentId,
-        duration: Option[java.time.Duration] = None
-    ): Future[TournamentJson.RoundStarted] =
+    /** Begins the next round, for the tournament's round duration. */
+    def startRound(gameId: GameId, tournamentId: TournamentId): Future[TournamentJson.RoundStarted] =
         send[TournamentJson.RoundStarted](
           method = HttpMethod.POST,
           path = s"${tournamentPath(gameId, tournamentId)}/rounds",
-          body = Some(write(TournamentJson.StartRoundRequest(duration.map(_.getSeconds))))
+          body = None
         )
 
     def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =

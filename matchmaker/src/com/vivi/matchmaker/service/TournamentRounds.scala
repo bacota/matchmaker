@@ -62,15 +62,13 @@ class TournamentRounds[T](
 
     // ---- beginning a round -----------------------------------------------------------------
 
-    /** The owner beginning the next round, for `duration` if they give one and the tournament's round duration if not.
-      * Its matches whose roles are settled are queued to be created at once; the rest wait on their seats' choices. The
+    /** The owner beginning the next round, for the tournament's round duration. Its matches whose roles are settled are queued to be created at once; the rest wait on their seats' choices. The
       * number of the round begun, or none if that finished the tournament.
       */
     def startRound(
         gameId: GameId,
         tournamentId: TournamentId,
-        callerExternalId: String,
-        duration: Option[Duration] = None
+        callerExternalId: String
     ): IO[Option[Int]] =
         sessionPool.use { session =>
             for {
@@ -84,10 +82,7 @@ class TournamentRounds[T](
                         _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
                           ConflictError(ErrorText.round.notUnderWayIs(t.status.label.toLowerCase))
                         )
-                        _ <- IO.raiseWhen(duration.exists(d => d.isZero || d.isNegative))(
-                          ValidationError(ErrorText.tournament.roundNotPositive)
-                        )
-                        begun <- begin(session = session, t = t, duration = duration)
+                        begun <- begin(session, t)
                     } yield begun
                 }
                 (round, due) = begun
@@ -106,7 +101,7 @@ class TournamentRounds[T](
                         case Some(t)
                             if t.status == TournamentStatus.Running && t.settings.isAutoStarted && !t.isStopped =>
                             stateRepo(session).isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
-                                if (isComplete) begin(session = session, t = t, duration = None).map(_._2)
+                                if (isComplete) begin(session, t).map(_._2)
                                 else IO.pure(Nil)
                             }
                         case _ => IO.pure(Nil)
@@ -123,8 +118,7 @@ class TournamentRounds[T](
       */
     private def begin(
         session: Session[IO],
-        t: Tournament,
-        duration: Option[Duration]
+        t: Tournament
     ): IO[(Option[Int], List[MatchId])] =
         for {
             _ <- IO.raiseWhen(t.isStopped)(ConflictError(ErrorText.round.stopped))
@@ -152,7 +146,7 @@ class TournamentRounds[T](
                           tournament = t.tournamentId,
                           round = next.round,
                           at = at,
-                          deadline = duration.orElse(t.settings.roundDuration).map(at.plus)
+                          deadline = t.settings.roundDuration.map(at.plus)
                         )
                         matches <- new TournamentMatchRepo(session).listRound(
                           game = t.gameId,

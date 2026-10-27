@@ -452,8 +452,8 @@ state through `TournamentStateRepo`. A tournament match is identified by its `Ma
 queue, the views.
 
 - **Beginning a round** loads the state, gives the next slot of each pool its round (`nextRound`, then a save that
-  moves those matches from `S` to `C` or `D`), and sets the round row's `start_date` and `deadline`. The deadline uses
-  the owner's duration for this round if given (`POST .../rounds` takes `roundDurationSeconds`), else the tournament's.
+  moves those matches from `S` to `C` or `D`), and sets the round row's `start_date` and `deadline`. The deadline is
+  the tournament's round duration, the same one every match's clock is built from.
   Then each match of the round is seated: who forfeits before play (withdrawn, a second entry of a player already
   seated, a character with nobody to play it), and the first chooser's clock started.
 - **Choosing a role** is unchanged in its rules, on `participant` under the match's lock.
