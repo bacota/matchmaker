@@ -8,16 +8,16 @@ package standard
 object RoundRobin
     extends StandardModel(
       id = "RR",
-      version = 6,
+      version = 7,
       name = "Round Robin Challenge",
       description = "",
       classification = None,
-        hasRoleChoice = true,
-        hasLateEntries = false,
+      hasRoleChoice = true,
+      hasLateEntries = false,
       hasPoolOfEveryone = true,
       formOverrides = Map(
         "labels.competition.poolSize" -> None,
-        "labels.competition.maxEntrants" -> Some("Number of participants"),
+        "labels.competition.maxEntrants" -> Some("Players in competition"),
         "tips.competition.maxEntrants" -> Some(
           "Everyone who enters plays everyone else. Leave blank for no limit."
         ),

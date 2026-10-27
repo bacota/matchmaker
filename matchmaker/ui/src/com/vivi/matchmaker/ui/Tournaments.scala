@@ -1421,7 +1421,7 @@ object Tournaments {
                 )(
                   Problem(
                     where = "",
-                    message = "players per match has to be a whole number above 0, or choose everyone in the pool"
+                    message = "players per match has to be a whole number above 0, or choose Entire Pool"
                   )
                 )
                 .toList
@@ -1532,13 +1532,19 @@ object Tournaments {
               input(tpe := "number", inputMode := "numeric", controlled(value <-- v.signal, onInput.mapToValue --> v))
             )
 
-        /* How many players a match of a game without roles has: a number in the game's range, or everyone in the
-         * pool. */
+        /* How many players a match of a game without roles has: a number in the game's range, or the entire pool. */
+        val uncappedCounts = 18
         def playersControl: HtmlElement = {
             val fewest = game.requiredSeats.toString
             val id = freshTipId(s"$key-tip")
             val caption = labelOf("competition.playersPerMatch", Labels.competition.playersPerMatch)
             val words = caption.map(_.getOrElse(""))
+            // The counts offered: the game's range, up to `uncappedCounts` more for a game with no most, and the count
+            // already saved should it lie outside them.
+            val counts = {
+                val range = game.requiredSeats to game.mostSeats.getOrElse(game.requiredSeats + uncappedCounts)
+                (range ++ s0.playersPerMatch.filterNot(range.contains)).sorted
+            }
             div(
               Views.shownWhen(caption),
               withTip(
@@ -1564,26 +1570,17 @@ object Tournaments {
                   child.text <-- words,
                   select(
                     aria.describedBy := id,
-                    onChange.mapToValue --> (v => wholePool.set(v == "pool")),
-                    value <-- wholePool.signal.map(if (_) "pool" else "count"),
-                    option(value := "count", "A number of players"),
-                    option(value := "pool", "Everyone in the pool")
+                    onChange.mapToValue --> { v =>
+                        wholePool.set(v == "pool")
+                        if (v != "pool") perMatch.set(v)
+                    },
+                    value <-- wholePool.signal
+                        .combineWith(perMatch.signal)
+                        .map((isPool, n) => if (isPool) "pool" else n.trim),
+                    counts.map(n => option(value := n.toString, n.toString)),
+                    option(value := "pool", "Entire Pool")
                   )
                 )
-              ),
-              child <-- wholePool.signal.map(isPool =>
-                  if (isPool) emptyNode
-                  else
-                      field(
-                        "Players in each match",
-                        input(
-                          tpe := "number",
-                          inputMode := "numeric",
-                          minAttr := game.requiredSeats.toString,
-                          game.mostSeats.fold(emptyMod)(m => maxAttr := m.toString),
-                          controlled(value <-- perMatch.signal, onInput.mapToValue --> perMatch)
-                        )
-                      )
               )
             )
         }
