@@ -124,11 +124,12 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request(method = "POST", path = "/register", body = "not json")).statusCode, 400)
     }
 
-    test("a body missing a required field is a bad request") {
-        assertEquals(
-          dispatch(request(method = "POST", path = "/register", body = """{"wrong":"field"}""")).statusCode,
-          400
-        )
+    test("a body missing a required field is a bad request that does not repeat the parser's complaint") {
+        val response = dispatch(request(method = "POST", path = "/register", body = """{"wrong":"field"}"""))
+        assertEquals(response.statusCode, 400)
+        assert(response.body.contains(ErrorText.request.malformedBody), response.body)
+        assert(!response.body.contains("nickname"), response.body)
+        assert(!response.body.contains("wrong"), response.body)
     }
 
     test("a match id that is not a number is a bad request") {

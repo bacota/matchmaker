@@ -112,7 +112,7 @@ abstract class RoutesContract extends FunSuite with QuietTests {
         val answer =
             routes(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = """{"nonsense":true}"""))
         assertEquals(answer.status, 400)
-        assert(ujson.read(answer.body).obj.contains("error"))
+        assertEquals(ujson.read(answer.body)("error").str, ErrorText.request.unreadableBody)
     }
 
     test("a request that fails inside the engine is a 500 that says nothing of the failure".tag(Quiet)) {

@@ -852,10 +852,9 @@ object Router {
     private def noContent(result: IO[Unit]): IO[Response] =
         result.as(Response(204, ""))
 
+    // The parser's message is not passed on: it echoes the body and names the types it expected.
     private def body[A: ReadWriter](request: Request): IO[A] =
-        IO(read[A](request.body)).handleErrorWith(e =>
-            IO.raiseError(ValidationError(ErrorText.request.malformedBody(e.getMessage)))
-        )
+        IO(read[A](request.body)).handleErrorWith(_ => IO.raiseError(ValidationError(ErrorText.request.malformedBody)))
 
     private def withGameId(raw: String)(f: GameId => IO[Response]): IO[Response] =
         raw.toIntOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "game"))))(id =>

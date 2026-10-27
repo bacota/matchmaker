@@ -349,9 +349,10 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case Right(m)                => f(m)
         }
 
+    // The parser's message is not passed on: it echoes the body and names the types it expected.
     protected def parse[A: Reader](body: String): Either[String, A] =
         try Right(read[A](body))
-        catch { case NonFatal(e) => Left(ErrorText.request.unreadableBody(e.getMessage)) }
+        catch { case NonFatal(_) => Left(ErrorText.request.unreadableBody) }
 
     /** Whether matchmaker's link said the match is archived (`archived=1`): a hint about where to look first, and
       * nothing more. A link without it still finds an archived match.
