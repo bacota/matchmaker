@@ -236,10 +236,6 @@
     return "waiting for " + state.waitingFor.join(" and ");
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  }
-
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
   async function submit(url, body, button) {

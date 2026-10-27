@@ -3,7 +3,7 @@ package com.vivi.boxing
 import munit.FunSuite
 import com.vivi.engine.QuietTests
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, InMemoryMatchStore, MatchmakerRefusal, PlayAuth, RecordingMatchmaker}
+import com.vivi.engine.{EngineRequest, HtmlText, InMemoryMatchStore, MatchmakerRefusal, PlayAuth, RecordingMatchmaker}
 import Protocol.given
 
 /** Building a fighter: made here, checked against the rules, and reported to matchmaker as a character — which is how a
@@ -174,6 +174,15 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
         assertEquals(page.status, 200)
         assert(page.body.contains("Spread 25 points"), page.body.take(200))
         assert(page.body.contains("""<label for="f-name">"""))
+    }
+
+    // Not one of the pages `RoutesContract` checks, so checked here: one shared helper, ahead of the sign-in form.
+    test("the fighters page carries the one shared escapeHtml, ahead of the sign-in form") {
+        val (routes, _) = fixture()
+        val page = routes(EngineRequest(method = "GET", path = "/fighters")).body
+        val at = page.indexOf(HtmlText.escapeScript)
+        assert(at >= 0 && at < page.indexOf("function renderSignIn"))
+        assertEquals(page.split("function escapeHtml", -1).length - 1, 1)
     }
 
     private def mine(routes: Routes, as: String) =

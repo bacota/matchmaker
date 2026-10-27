@@ -695,10 +695,6 @@
     return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.side);
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  }
-
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
   /* `pending` lets go once the state has moved past it, however the news arrived: the move's own

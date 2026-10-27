@@ -2,7 +2,7 @@ package com.vivi.boxing
 
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PageResource, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, jsObject, scriptSafe}
+import com.vivi.engine.HtmlText.{escape, escapeScript, jsObject, scriptSafe}
 import Protocol.given
 
 /** The play page.
@@ -140,6 +140,7 @@ ${Finale.css}
 </main>
 <script type="application/json" id="page-data">$pageData</script>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
@@ -373,6 +374,7 @@ ${SignIn.css}
 </main>
 <script type="application/json" id="page-data">$fightersData</script>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 

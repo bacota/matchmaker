@@ -3,7 +3,7 @@ package com.vivi.tictactoe
 import com.vivi.engine.HtmlText.jsString
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.HtmlText.{escape, escapeScript, scriptSafe}
 import Protocol.given
 
 /** The board page.
@@ -89,6 +89,7 @@ ${Finale.css}
   <div id="error" role="alert"></div>
 </main>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
@@ -196,10 +197,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   function ranOut() {
     if (!state || !state.clock) return [];
     return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.mark);
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   }
 
   function show(message) { document.getElementById("error").textContent = message || ""; }

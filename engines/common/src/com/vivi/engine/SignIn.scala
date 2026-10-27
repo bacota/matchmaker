@@ -12,7 +12,8 @@ import HtmlText.{escape, escapeJs, jsString}
   * the same account, and the `sub` the engine sees is the `cognitoId` matchmaker sent it.
   *
   * Each engine's play page lays itself out and inlines these where it wants them: [[authScript]] and [[signInScript]]
-  * in its script, [[SignIn.css]] in its styles, and a `#signin` element for the form to render into.
+  * in its script, after [[HtmlText.escapeScript]], [[SignIn.css]] in its styles, and a `#signin` element for the form
+  * to render into.
   *
   * @param storagePrefix
   *   what the tokens are kept under in the browser — the game's own name, as it always has been, so that a player
@@ -437,7 +438,7 @@ ${authScript(Some(login))}
      *
      * The page it renders into is `#signin`, which the board shows whenever there is a login to
      * offer and no seat to show for it. `signedIn()` is the board's own, called once tokens are
-     * in hand. */
+     * in hand, and `escapeHtml` is `HtmlText.escapeScript`, which the page inlines before this. */
     def signInScript: String =
         s"""  const codeResponseKeys = {
     // Only EMAIL_OTP can arrive with the pool as it is configured — no MFA and no phone number.
@@ -744,6 +745,15 @@ object HtmlText {
     def scriptSafe(json: String): String = json.replace("</", "<\\/")
 
     def escapeJs(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("</", "<\\/")
+
+    /** The page's `escapeHtml`, for text its script writes into `innerHTML`: the one copy every engine's pages inline,
+      * first in their script, so that it is there for the shared scripts after it — [[SignIn.signInScript]]'s form — as
+      * well as for the page's own. `RoutesContract` checks each page carries it.
+      */
+    val escapeScript: String =
+        """  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }"""
 
     /** `s` as a JavaScript string literal, quotes included, for a page's script to say. */
     def jsString(s: String): String = "\"" + escapeJs(s) + "\""

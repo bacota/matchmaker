@@ -105,10 +105,6 @@
   Object.values(inputs).forEach(i => i.addEventListener("input", left));
   nameInput.addEventListener("input", left);
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  }
-
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
   /* Said after something the player did, and focused if the focus was lost with the list it is

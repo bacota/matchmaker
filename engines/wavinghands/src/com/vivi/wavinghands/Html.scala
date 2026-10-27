@@ -3,7 +3,7 @@ package com.vivi.wavinghands
 import com.vivi.engine.HtmlText.jsString
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.HtmlText.{escape, escapeScript, scriptSafe}
 import Protocol.given
 
 /** The play page: a self-contained document, as every engine's is, rendered from [[Protocol.StateResponse]].
@@ -100,6 +100,7 @@ ${Finale.css}
   ${PlayLive.markup}
 </main>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
@@ -125,9 +126,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   const showClock = turnClock(refresh);
   const showFinale = finale();
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  }
   /* The viewer's participant id as a number, which is how every other id here is written. */
   function youId() { return state && state.you != null ? Number(state.you) : null; }
   function nameOf(id) { const w = state.wizards.find(x => x.participantId === id); return w ? w.name : "someone"; }
@@ -194,10 +192,10 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       else if (!state.isCompleted) tags.push(w.hasOrdered ? "orders given" : "thinking");
       w.effects.forEach(e => tags.push(e));
       const pct = Math.min(100, Math.round(w.damage * 100 / 15));
-      return '<div class="card"><h3>' + esc(w.name) + you + '</h3>' +
+      return '<div class="card"><h3>' + escapeHtml(w.name) + you + '</h3>' +
         '<div class="meta">damage ' + w.damage + ' of 15</div>' +
         '<div class="bar" role="img" aria-label="' + w.damage + ' of 15 damage"><span style="width:' + pct + '%"></span></div>' +
-        tags.map(t => '<span class="tag">' + esc(t) + '</span>').join("") + '</div>';
+        tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join("") + '</div>';
     }).join("");
   }
 
@@ -205,7 +203,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     const alive = state.monsters.filter(m => !m.isDead);
     document.getElementById("monsters-s").hidden = !alive.length;
     document.getElementById("monsters").innerHTML = alive.map(m =>
-      '<div class="card"><h3>' + esc(nameOf(m.controller)) + "'s " + esc(m.kind) + ' (#' + m.id + ')</h3>' +
+      '<div class="card"><h3>' + escapeHtml(nameOf(m.controller)) + "'s " + escapeHtml(m.kind) + ' (#' + m.id + ')</h3>' +
       '<div class="meta">hits for ' + m.strength + ' · damage ' + m.damage + ' of ' + m.strength + '</div></div>'
     ).join("");
   }
@@ -214,10 +212,10 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     const turns = Math.max(0, ...state.wizards.map(w => w.left.length));
     if (!turns) { document.getElementById("history").innerHTML = '<p class="note">No gestures yet.</p>'; return; }
     let html = '<table><caption class="note" style="text-align:left">Left and right hand, turn by turn</caption><thead><tr><th scope="col">Turn</th>' +
-      state.wizards.map(w => '<th scope="col" colspan="2">' + esc(w.name) + '</th>').join("") + '</tr></thead><tbody>';
+      state.wizards.map(w => '<th scope="col" colspan="2">' + escapeHtml(w.name) + '</th>').join("") + '</tr></thead><tbody>';
     for (let t = turns - 1; t >= 0; t--) {
       html += '<tr><th scope="row">' + (t + 1) + '</th>' + state.wizards.map(w =>
-        '<td class="g">' + esc(w.left[t] || "") + '</td><td class="g">' + esc(w.right[t] || "") + '</td>').join("") + '</tr>';
+        '<td class="g">' + escapeHtml(w.left[t] || "") + '</td><td class="g">' + escapeHtml(w.right[t] || "") + '</td>').join("") + '</tr>';
     }
     document.getElementById("history").innerHTML = html + '</tbody></table>';
   }
@@ -235,7 +233,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     const focusedTurn = focused ? focused.dataset.turn : null;
     keepFocusFrom(box);
     box.innerHTML = state.reports.map((r, i) => {
-      const list = '<ol class="events">' + (r.events.length ? r.events.map(e => '<li>' + esc(e) + '</li>').join("") : '<li>Nothing happened.</li>') + '</ol>';
+      const list = '<ol class="events">' + (r.events.length ? r.events.map(e => '<li>' + escapeHtml(e) + '</li>').join("") : '<li>Nothing happened.</li>') + '</ol>';
       return i === 0 ? '<h3 style="font-size:1rem;margin:.5rem 0 0">Turn ' + r.turn + '</h3>' + list
                      : '<details data-turn="' + r.turn + '"' + (open.has(String(r.turn)) ? " open" : "") + '><summary>Turn ' + r.turn + '</summary>' + list + '</details>';
     }).join("");
@@ -248,8 +246,8 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     if (el.dataset.done) return;
     el.dataset.done = "1";
     el.innerHTML = '<table><thead><tr><th scope="col">Spell</th><th scope="col">Gestures</th><th scope="col">Effect</th></tr></thead><tbody>' +
-      state.spells.map(s => '<tr><td>' + esc(s.name) + '</td><td class="g">' + s.series.map(esc).join(" or ") +
-        '</td><td style="white-space:normal">' + esc(s.about) + '</td></tr>').join("") +
+      state.spells.map(s => '<tr><td>' + escapeHtml(s.name) + '</td><td class="g">' + s.series.map(escapeHtml).join(" or ") +
+        '</td><td style="white-space:normal">' + escapeHtml(s.about) + '</td></tr>').join("") +
       '</tbody></table><p class="note">Upper case is one hand; "(w" is a wave with both hands; C is always both hands. ' +
       'Two palms at once surrenders.</p>';
   }
@@ -257,8 +255,8 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
   // ---- orders ------------------------------------------------------------------------
 
   function select(id, label, options, value) {
-    return '<label for="' + id + '">' + esc(label) + '</label><select id="' + id + '">' +
-      options.map(([v, text]) => '<option value="' + esc(v) + '"' + (v === value ? " selected" : "") + '>' + esc(text) + '</option>').join("") +
+    return '<label for="' + id + '">' + escapeHtml(label) + '</label><select id="' + id + '">' +
+      options.map(([v, text]) => '<option value="' + escapeHtml(v) + '"' + (v === value ? " selected" : "") + '>' + escapeHtml(text) + '</option>').join("") +
       '</select>';
   }
 
@@ -272,12 +270,12 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       formFor = null;
       keepFocusFrom(box);
       box.innerHTML = '<p>Your orders for turn ' + state.turn + ' are in. Waiting for ' +
-        esc(state.waitingFor.map(nameOf).join(", ") || "the turn to resolve") + '.</p>';
+        escapeHtml(state.waitingFor.map(nameOf).join(", ") || "the turn to resolve") + '.</p>';
       return;
     }
     if (formFor === state.turn) return;
     formFor = state.turn;
-    const notes = yt.notes.map(n => '<p class="note">' + esc(n) + '</p>').join("");
+    const notes = yt.notes.map(n => '<p class="note">' + escapeHtml(n) + '</p>').join("");
     box.innerHTML = '<form id="orders-form" novalidate>' + notes +
       '<fieldset><legend>Gestures</legend><div class="hands"><div>' +
       select("left", "Left hand", yt.left.map(g => [g, gestureNames[g] || g]), startingGesture(yt.left)) + '</div><div>' +
@@ -335,7 +333,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     let more = "";
     if (!casting || !casting.spells.length) more = '<p class="note">These gestures complete no spell.</p>';
     else casting.spells.forEach(s => {
-      more += '<fieldset><legend>' + esc(s.name) + ' — ' + esc(s.slot === "both" ? "both hands" : s.slot + " hand") + '</legend>' +
+      more += '<fieldset><legend>' + escapeHtml(s.name) + ' — ' + escapeHtml(s.slot === "both" ? "both hands" : s.slot + " hand") + '</legend>' +
         select("target-" + s.slot, "Cast at", targetOptions(false), s.defaultTarget);
       if (s.isParalysis) more += select("hand-" + s.slot, "Paralyse which hand", [["left", "left hand"], ["right", "right hand"]], "left");
       if (s.isSummons) more += select("summons-" + s.slot, "The new monster attacks", targetOptions(true), yt.defaultEnemy || "nobody");

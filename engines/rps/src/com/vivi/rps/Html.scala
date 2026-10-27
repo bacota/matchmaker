@@ -3,7 +3,7 @@ package com.vivi.rps
 import com.vivi.engine.HtmlText.jsString
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.HtmlText.{escape, escapeScript, scriptSafe}
 import Protocol.given
 
 /** The play page.
@@ -97,6 +97,7 @@ ${Finale.css}
   <div id="error" role="alert"></div>
 </main>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
@@ -217,10 +218,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     // Both sides are pending from the start, so "waiting" here names whoever is left — which is
     // the other player when this viewer has thrown, and both of them on the public board.
     return again + "waiting for " + state.waitingFor.join(" and ");
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   }
 
   function show(message) { document.getElementById("error").textContent = message || ""; }

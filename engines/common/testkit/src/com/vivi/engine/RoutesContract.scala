@@ -185,6 +185,25 @@ abstract class RoutesContract extends FunSuite with QuietTests {
         assert(page.body.contains("client-1"), "the page needs the app client to start a sign-in")
     }
 
+    /* The page's script and the shared ones inlined into it -- the sign-in form among them -- all
+     * write through `escapeHtml`, so a page without it throws on its first draw; a page with a
+     * second copy has one that can drift from the first. */
+    test("every page carries the one shared escapeHtml, ahead of the scripts that use it") {
+        val (routes, _) = fixture(isPublic = true, playAuth = PlayAuth.GatewayClaims(Some(login)))
+        val pages = Map(
+          "a player's play page" -> get(routes = routes, path = "/matches/m-9/play", query = as("sub-alice")),
+          "a stranger's play page" -> get(routes = routes, path = "/matches/m-9/play"),
+          "the public board" -> get(routes = routes, path = "/matches/m-9/board")
+        )
+        for ((name, page) <- pages) {
+            assertEquals(page.status, 200, name)
+            val at = page.body.indexOf(HtmlText.escapeScript)
+            assert(at >= 0, s"$name does not inline HtmlText.escapeScript")
+            assertEquals(page.body.split("function escapeHtml", -1).length - 1, 1, s"$name defines escapeHtml twice")
+            assert(at < page.body.indexOf("function renderSignIn"), s"$name inlines escapeHtml after the sign-in form")
+        }
+    }
+
     test("the state and move routes refuse a caller with no seat") {
         val (routes, _) = fixture()
         assertEquals(get(routes = routes, path = "/matches/m-9/state", query = as("sub-carol")).status, 403)

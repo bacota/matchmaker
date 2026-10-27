@@ -3,7 +3,7 @@ package com.vivi.hilo
 import com.vivi.engine.HtmlText.jsString
 import upickle.default.write
 import com.vivi.engine.{ButtonSpacing, Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
-import com.vivi.engine.HtmlText.{escape, scriptSafe}
+import com.vivi.engine.HtmlText.{escape, escapeScript, scriptSafe}
 import Protocol.given
 
 /** The play page: a button for each number, who has picked, and every round played.
@@ -92,6 +92,7 @@ ${Finale.css}
   <div id="error" role="alert"></div>
 </main>
 <script>
+$escapeScript
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
@@ -205,10 +206,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     if (state.you && state.yourPick == null) return again + "pick a number";
     const left = state.waitingFor.filter(id => !isMe(id)).map(nameOf);
     return again + (left.length ? "waiting for " + left.join(", ") : "waiting");
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   }
 
   function show(message) { document.getElementById("error").textContent = message || ""; }
