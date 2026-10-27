@@ -20,6 +20,14 @@ import com.vivi.matchmaker.auth.ApiKeys
   */
 trait Authenticator {
     def callerOf(request: Request): IO[Either[Response, String]]
+
+    /** The address the caller's identity has been shown to receive mail at, if this authenticator can vouch for one.
+      *
+      * The one source of `player.email`: the router writes nothing else to it, and never an address from a request
+      * body, which would let a caller send their notifications to a mailbox that is not theirs. `None` is the default,
+      * so an authenticator that says nothing about addresses — an engine's API key — vouches for none.
+      */
+    def verifiedEmailOf(request: Request): Option[String] = None
 }
 
 object Authenticator {
@@ -39,6 +47,13 @@ object Authenticator {
                   .filter(_.nonEmpty)
                   .toRight(Errors.unauthenticated)
             )
+
+        /** From the `X-Email` header, trusted as the identity header is: locally there is no Cognito identity behind
+          * the caller, so there is nothing to verify the address against either, and the header is how a curl call
+          * gives the local player one.
+          */
+        override def verifiedEmailOf(request: Request): Option[String] =
+            request.header(ApiGateway.EmailHeader).map(_.trim).filter(_.nonEmpty)
     }
 
     /** Takes the caller's identity from the `sub` claim of the token API Gateway already verified.
@@ -55,6 +70,18 @@ object Authenticator {
     object GatewayClaims extends Authenticator {
         def callerOf(request: Request): IO[Either[Response, String]] =
             IO.pure(request.claim("sub").filter(_.nonEmpty).toRight(Errors.unauthenticatedToken))
+
+        /** The token's `email` claim, when its `email_verified` claim says Cognito has confirmed it.
+          *
+          * The pool requires verification before an address change takes effect
+          * (`attributes_require_verification_before_update`), so an issued token's `email` is already one whose code
+          * was answered; `email_verified` is checked as well rather than relying on that setting staying put. The
+          * gateway passes every claim as a string, so the flag arrives as `"true"`.
+          */
+        override def verifiedEmailOf(request: Request): Option[String] =
+            if (request.claim("email_verified").contains("true"))
+                request.claim("email").map(_.trim).filter(_.nonEmpty)
+            else None
     }
 
     /** Takes the caller's identity from the API key the game engine presented.
@@ -97,6 +124,11 @@ object Authenticator {
             if (request.claims.nonEmpty) GatewayClaims.callerOf(request)
             else if (request.header(ApiKeys.Header).isDefined) apiKey.callerOf(request)
             else IO.pure(Left(Errors.unauthenticatedToken))
+
+        /* Only from claims, for the reason `callerOf` looks at them first: an engine's key vouches
+         * for no address. */
+        override def verifiedEmailOf(request: Request): Option[String] =
+            if (request.claims.nonEmpty) GatewayClaims.verifiedEmailOf(request) else None
     }
 
     /* One further implementation is expected, and is part of why this is an interface rather than a

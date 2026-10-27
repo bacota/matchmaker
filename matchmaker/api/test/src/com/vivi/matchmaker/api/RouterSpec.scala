@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.ErrorText
 import com.vivi.matchmaker.auth.ApiKeys
 
 import cats.effect.{IO, Resource}
@@ -242,7 +243,8 @@ class RouterSpec extends FunSuite {
       ("POST", "/register", """{"nickname":"tester"}"""),
       ("GET", "/me", "{}"),
       ("PUT", "/me", """{"nickname":"renamed"}"""),
-      ("PUT", "/me/email", """{"email":"player@example.com"}"""),
+      // No body: the address is the verified one the caller's token carries, not one they name.
+      ("PUT", "/me/email", "{}"),
       ("GET", "/me/notifications", "{}"),
       // No body: the address is the caller's own, and which suppression is theirs is not theirs to say.
       ("POST", "/me/notifications/retry", "{}"),
@@ -349,11 +351,17 @@ class RouterSpec extends FunSuite {
     test("every routed endpoint reaches a service rather than falling through to 404") {
         // A route that matched will hit the unusable pool and come back 500; one that did not match
         // comes back 404, and one whose body failed to parse comes back 400. So a 500 here is
-        // exactly the evidence that the route is wired up and its body was understood.
+        // exactly the evidence that the route is wired up and its body was understood. The address
+        // header is for `PUT /me/email`, which refuses with 400 a caller with no verified address.
         quietly {
             routed.foreach { case (method, path, body) =>
                 assertEquals(
-                  statusOf(method = method, path = path, headers = Map("x-external-id" -> "sub-1"), body = body),
+                  statusOf(
+                    method = method,
+                    path = path,
+                    headers = Map("x-external-id" -> "sub-1", "x-email" -> "player@example.com"),
+                    body = body
+                  ),
                   500,
                   s"$method $path"
                 )
@@ -513,6 +521,88 @@ class RouterSpec extends FunSuite {
             )
 
         assertEquals(Authenticator.GatewayClaims.callerOf(request).unsafeRunSync(), Right("sub-from-token"))
+    }
+
+    private def withClaims(claims: Map[String, String]): Request =
+        Request(
+          method = "PUT",
+          path = "/me/email",
+          headers = Map.empty,
+          query = Map.empty,
+          body = "{}",
+          claims = claims
+        )
+
+    test("the gateway authenticator vouches for the token's address only when the token says it is verified") {
+        val sub = "sub" -> "sub-from-token"
+        val email = "email" -> "player@example.com"
+
+        assertEquals(
+          Authenticator.GatewayClaims.verifiedEmailOf(withClaims(Map(sub, email, "email_verified" -> "true"))),
+          Some("player@example.com")
+        )
+        assertEquals(
+          Authenticator.GatewayClaims.verifiedEmailOf(withClaims(Map(sub, email, "email_verified" -> "false"))),
+          None
+        )
+        assertEquals(Authenticator.GatewayClaims.verifiedEmailOf(withClaims(Map(sub, email))), None)
+        assertEquals(
+          Authenticator.Gateway(keys).verifiedEmailOf(withClaims(Map(sub, email, "email_verified" -> "true"))),
+          Some("player@example.com")
+        )
+    }
+
+    test("an engine's API key vouches for no address") {
+        val request = ApiGateway.Request(
+          method = "PUT",
+          path = "/me/email",
+          headers = Map(ApiKeys.Header -> "s3cret", ApiGateway.EmailHeader.toLowerCase -> "someone@example.com"),
+          query = Map.empty,
+          body = "{}"
+        )
+
+        assertEquals(Authenticator.Gateway(keys).verifiedEmailOf(request), None)
+    }
+
+    test("the local authenticator takes the address from the email header") {
+        val request = Request(
+          method = "PUT",
+          path = "/me/email",
+          headers = Map("x-external-id" -> "sub-1", "x-email" -> " local@example.com "),
+          query = Map.empty,
+          body = "{}"
+        )
+
+        assertEquals(Authenticator.TrustedHeader.verifiedEmailOf(request), Some("local@example.com"))
+        assertEquals(
+          Authenticator.TrustedHeader.verifiedEmailOf(request.copy(headers = Map("x-external-id" -> "sub-1"))),
+          None
+        )
+    }
+
+    // The security fix this route was rewritten for: the address it records is never one the caller
+    // names. A body naming one, with no verified address behind the request, is refused before any
+    // service is reached -- the unusable pool would make it a 500 otherwise.
+    test("PUT /me/email refuses a request with no verified address, whatever its body names") {
+        val response =
+            dispatch(request(method = "PUT", path = "/me/email", body = """{"email":"victim@example.com"}"""))
+
+        assertEquals(response.statusCode, 400)
+        assert(response.body.contains(ErrorText.email.unverified), response.body)
+    }
+
+    test("PUT /me/email with a verified address reaches the service") {
+        val response = quietly(
+          dispatch(
+            request(
+              method = "PUT",
+              path = "/me/email",
+              headers = Map("x-external-id" -> "sub-1", "x-email" -> "player@example.com")
+            )
+          )
+        )
+
+        assertEquals(response.statusCode, 500)
     }
 
     test("the gateway authenticator ignores the identity header entirely") {

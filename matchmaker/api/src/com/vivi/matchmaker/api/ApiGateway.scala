@@ -42,6 +42,11 @@ object ApiGateway {
       */
     val ExternalIdHeader = "X-External-Id"
 
+    /** Header carrying the caller's address in the local development mode, beside `ExternalIdHeader`. Deployed, the
+      * address is the token's verified `email` claim instead — see `Authenticator.verifiedEmailOf`.
+      */
+    val EmailHeader = "X-Email"
+
     def decodeRequest(json: String): Request = {
         val event = ujson.read(json)
 

@@ -55,7 +55,7 @@ class PlayerRepo(session: Session[IO]) {
      * Every caller of `update` is changing something else -- a nickname, an admin flag -- and passes
      * a whole `Player` to do it. The address is the one field on that row whose authority lives
      * outside matchmaker: Cognito owns it, and matchmaker's copy is only ever written from a token's
-     * verified claim at sign-in. A general update that carried it would mean every such caller
+     * verified claim. A general update that carried it would mean every such caller
      * quietly restating the address from whatever `Player` it happened to be holding -- a value read
      * minutes earlier, or built by a caller that never had one -- and that is precisely how a
      * confirmed change gets overwritten by a rename.
@@ -202,10 +202,9 @@ class PlayerRepo(session: Session[IO]) {
 
     /** Records where a player can be reached, and nothing else about them.
       *
-      * The only writer of `player.email`. Its one caller is `PlayerService.updateEmail`, which is reached only from the
-      * sign-in path -- so the address stored here always came from the `email` claim of a token Cognito had just
-      * issued, which is the only statement about an address that is worth anything: Cognito owns the address, verified
-      * it, and signs the player in with it.
+      * The only writer of `player.email`. Its one caller is `PlayerService.updateEmail`, which is given only the
+      * verified `email` claim of the caller's token -- the only statement about an address that is worth anything:
+      * Cognito owns the address, verified it, and signs the player in with it.
       *
       * Takes a `PlayerId` rather than a `Player` on purpose. A whole `Player` would invite a caller to pass one it read
       * earlier and write four stale fields to correct one, which is the mistake splitting this out exists to prevent.

@@ -21,10 +21,10 @@ import com.vivi.matchmaker.model.{
   *   - the *nickname* is matchmaker's, the name other players see, and goes through the API;
   *   - the *email* and *password* belong to the Cognito identity, and are changed against Cognito directly from this
   *     page — the same reasoning as `SignIn`. Matchmaker keeps no copy of the password. It does keep one of the
-  *     address, because that is where it sends notifications from a lambda that has no token to read one out of — but
-  *     this form does not report the change to the API. It cannot usefully: the session's token still carries the old
-  *     address until Cognito issues a new one. The copy is reconciled at the next sign-in instead, from that token's
-  *     claim, which is the only account of the address either side can verify. See `Store.syncEmail`.
+  *     address, because that is where it sends notifications from a lambda that has no token to read one out of. The
+  *     API takes that copy from the verified claim of the token a request carries, so a confirmed change is recorded
+  *     only once a new token names it: `adoptNewEmail` redeems the refresh token for one, and the next sign-in is the
+  *     fallback. See `Store.syncEmail`.
   *
   * Each form reports next to itself rather than into `Store.error`. A failure here belongs to the field the user is
   * typing in, and the header banner is both far away and easy to lose behind the open menu.

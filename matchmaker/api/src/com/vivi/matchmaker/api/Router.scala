@@ -35,7 +35,14 @@ object Router {
                     // `route` is called inside the IO rather than before it: it forces the by-name
                     // `services`, and a pool that fails to open would otherwise throw while this IO is
                     // being built — outside the `handleError` below, and so unlogged.
-                    IO(route(services = services, request = request, caller = caller)).flatten
+                    IO(
+                      route(
+                        services = services,
+                        request = request,
+                        caller = caller,
+                        verifiedEmail = authenticator.verifiedEmailOf(request)
+                      )
+                    ).flatten
             }
             .handleError(Errors.toResponse(_, where))
     }
@@ -51,12 +58,21 @@ object Router {
      * To tell the two apart from outside: curl the path with no credentials. An enumerated route
      * answers 401, an unregistered one answers 404.
      */
-    private def route(services: Services[String], request: Request, caller: String): IO[Response] =
+    private def route(
+        services: Services[String],
+        request: Request,
+        caller: String,
+        verifiedEmail: Option[String]
+    ): IO[Response] =
         (request.method.toUpperCase, request.segments) match {
 
+            // The address is the one the authenticator vouches for, never one the body names: an address a
+            // caller could choose is one they could point somebody else's way.
             case ("POST", "register" :: Nil) =>
                 body[Json.RegisterRequest](request).flatMap(r =>
-                    created(services.registration.register(nickname = r.nickname, externalId = caller, email = r.email))
+                    created(
+                      services.registration.register(nickname = r.nickname, externalId = caller, email = verifiedEmail)
+                    )
                 )
 
             case ("GET", "me" :: Nil) =>
@@ -70,13 +86,17 @@ object Router {
                 )
 
             // So does the email address — but unlike the password, matchmaker keeps a copy of it to send
-            // notifications to, and this is how the browser reports what Cognito already holds: at
-            // sign-in, when the `email` claim of the token just issued disagrees with the stored copy.
-            // Not when the player changes their address, because at that moment no token agrees with the
-            // new one yet. Separate from `PUT /me` because it is a different event: one is the player
-            // renaming themselves here, the other is this API being told what happened elsewhere.
+            // notifications to, and this is how the browser asks for that copy to be brought up to date: at
+            // sign-in, and once a change is confirmed and the token reissued. There is no body. The address
+            // is the verified `email` claim of the token the request carries, so a caller can record only an
+            // address Cognito has confirmed is theirs. Separate from `PUT /me` because it is a different
+            // event: one is the player renaming themselves here, the other is this API catching up with
+            // what happened elsewhere.
             case ("PUT", "me" :: "email" :: Nil) =>
-                body[Json.EmailRequest](request).flatMap(r => ok(services.players.updateEmail(caller, r.email)))
+                verifiedEmail match {
+                    case Some(address) => ok(services.players.updateEmail(caller, address))
+                    case None          => IO.raiseError(ValidationError(ErrorText.email.unverified))
+                }
 
             // What the caller wants to be told about, and the two levels of it that are theirs alone:
             // everywhere, and in one game. The per-match level is on the match's own route below,

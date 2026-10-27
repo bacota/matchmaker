@@ -335,7 +335,7 @@ object Views {
             input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))
           ),
           busyButton(label = Buttons.register.create, disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
-              Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
+              Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
                   if (Store.isStillSignedInAs(signIn)) {
                       Store.player.set(Store.PlayerState.Registered(player))
                       Store.refreshMatches()

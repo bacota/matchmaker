@@ -32,15 +32,11 @@ object ApiClient {
 
     def me(): Future[Player] = get[Player]("/me")
 
-    /** Creates the caller's player. The address is sent along with it from the ID token's `email` claim, so a new
-      * player can be written to from the moment they exist rather than only after they have changed their address once.
+    /** Creates the caller's player. Their address is not sent: the server takes it from the verified claim of the ID
+      * token this request carries, so a new player can be written to from the moment they exist.
       */
-    def register(nickname: String, email: Option[String]): Future[Player] =
-        send[Player](
-          method = HttpMethod.POST,
-          path = "/register",
-          body = Some(write(Json.RegisterRequest(nickname, email)))
-        )
+    def register(nickname: String): Future[Player] =
+        send[Player](method = HttpMethod.POST, path = "/register", body = Some(write(Json.RegisterRequest(nickname))))
 
     /** Renames the caller. The server takes the player from the token, so there is no id to send and no way to rename
       * anyone else.
@@ -48,15 +44,15 @@ object ApiClient {
     def updateNickname(nickname: String): Future[Player] =
         send[Player](method = HttpMethod.PUT, path = "/me", body = Some(write(Json.NicknameRequest(nickname))))
 
-    /** Records the address the token says the player signs in with, so that matchmaker's copy — what it sends
+    /** Asks matchmaker to record the address the token says the player signs in with, so that its copy — what it sends
       * notifications to — matches Cognito's.
       *
-      * One caller, `Store.syncEmail`, and only at sign-in. The API cannot verify an address, so the only thing worth
-      * sending it is the `email` claim of a token Cognito has just issued; an address the player typed, or the claim of
-      * an hour-old token, are both things no one can check.
+      * Nothing is sent but the token: the server reads the address from the token's verified `email` claim, so the
+      * request has to carry a token issued after any change, which is why its callers send it at sign-in and after a
+      * reissue. See `Store.syncEmail`.
       */
-    def updateEmail(email: String): Future[Player] =
-        send[Player](method = HttpMethod.PUT, path = "/me/email", body = Some(write(Json.EmailRequest(email))))
+    def updateEmail(): Future[Player] =
+        send[Player](method = HttpMethod.PUT, path = "/me/email", body = None)
 
     def dueMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/due")
 
