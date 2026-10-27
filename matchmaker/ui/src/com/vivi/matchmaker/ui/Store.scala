@@ -336,6 +336,13 @@ object Store {
       */
     val unlistedGames: Var[Map[GameId, Game]] = Var(Map.empty)
 
+    /** Whether a game's engine is trusted with the player's refresh token. A game not held here — not loaded yet, or
+      * deactivated and not looked for — is not trusted: its engine is handed the ID token alone, which costs the player
+      * a sign-in there at worst, where guessing wrong the other way would hand a token to an engine nobody vouched for.
+      */
+    def isTrusted(gameId: GameId): Boolean =
+        games.now().find(_.gameId == gameId).orElse(unlistedGames.now().get(gameId)).exists(_.isTrusted)
+
     /** Which games are being looked for right now.
       *
       * Its own state rather than a `Fetch`: a `Fetch` says a list has been answered once this session, and this is

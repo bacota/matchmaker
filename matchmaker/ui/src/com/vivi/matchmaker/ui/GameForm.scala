@@ -343,6 +343,8 @@ object GameForm {
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.isActive))
+        // Untrusted by default: handing an engine players' refresh tokens is the box an admin ticks.
+        val trusted = Var(existing.exists(_.isTrusted))
         // Played without roles, by any number of players in a range: a tournament says how many each match seats.
         // The range as typed.
         val roleless = Var(existing.exists(_.isRoleless))
@@ -479,7 +481,23 @@ object GameForm {
                   TimeoutAction.values.toSeq.map(action => option(value := action.code, action.label))
                 )
               )
-          else emptyNode,
+          else emptyNode, {
+              val tipId = s"$formKey-trusted-tip"
+              withTip(
+                id = tipId,
+                subject = Labels.game.trusted,
+                text = Tips.game.trusted
+              )(
+                label(
+                  s"${Labels.game.trusted} ",
+                  input(
+                    tpe := "checkbox",
+                    aria.describedBy := tipId,
+                    controlled(checked <-- trusted.signal, onClick.mapToChecked --> trusted)
+                  )
+                )
+              )
+          },
           // Only an existing game can be disabled: a new one is created active, since a game created
           // hidden would look as though the button had done nothing.
           // In the warning colour: of everything on this form it is the one box that makes a game vanish.
@@ -646,6 +664,7 @@ object GameForm {
                         maxPlayers = range.flatMap(_._2),
                         moveType = if (range.isDefined) MoveType.Simultaneous else moveType.now(),
                         maxTurns = turns,
+                        isTrusted = trusted.now(),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -667,6 +686,7 @@ object GameForm {
                               url.set("")
                               engineIdentity.set("")
                               characterUrl.set("")
+                              trusted.set(false)
                               roleless.set(false)
                               minPlayers.set("2")
                               maxPlayers.set("")

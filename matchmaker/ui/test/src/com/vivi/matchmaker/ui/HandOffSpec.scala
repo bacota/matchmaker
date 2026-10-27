@@ -27,7 +27,13 @@ class HandOffSpec extends FunSuite {
     }
 
     test("a good ID token is handed over with the refresh token, and needs no wait") {
-        val result = Auth.handOff(url = url, current = Some("id-1"), refresh = () => Some("r-1"), fresh = noRefresh)
+        val result = Auth.handOff(
+          url = url,
+          isTrusted = true,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh
+        )
         // Completed already, which is what lets the caller open the window inside the click.
         result.value match {
             case Some(Success(handedUrl)) =>
@@ -48,7 +54,13 @@ class HandOffSpec extends FunSuite {
     test("tokens are encoded so the engine reads back exactly what was held") {
         val id = "eyJ+a/b=.c_d-e"
         val refresh = "x&y=z+w/v==%20 q"
-        val result = Auth.handOff(url = url, current = Some(id), refresh = () => Some(refresh), fresh = noRefresh)
+        val result = Auth.handOff(
+          url = url,
+          isTrusted = true,
+          current = Some(id),
+          refresh = () => Some(refresh),
+          fresh = noRefresh
+        )
         result.map { handedUrl =>
             val params = handed(handedUrl)
             assertEquals(params.get(Auth.HandedIdToken), id)
@@ -59,45 +71,82 @@ class HandOffSpec extends FunSuite {
 
     test("a url with a query keeps it, and the session goes after it") {
         val withQuery = url + "?as=alice"
-        Auth.handOff(url = withQuery, current = Some("id-1"), refresh = () => None, fresh = noRefresh).map {
-            handedUrl =>
+        Auth.handOff(url = withQuery, isTrusted = true, current = Some("id-1"), refresh = () => None, fresh = noRefresh)
+            .map { handedUrl =>
                 assert(handedUrl.startsWith(withQuery + "#"), handedUrl)
-        }
+            }
     }
 
     test("a url that already has a fragment is left alone, and nothing is refreshed for it") {
         val own = url + "#section"
-        Auth.handOff(url = own, current = Some("id-1"), refresh = () => Some("r-1"), fresh = noRefresh)
-            .map(assertEquals(_, own))
+        Auth.handOff(
+          url = own,
+          isTrusted = true,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh
+        ).map(assertEquals(_, own))
     }
 
     // Also what a refresh Cognito refused ends with: `freshIdToken` has cleared the session by then.
     test("with no session at all, the url is opened as it is") {
-        Auth.handOff(url = url, current = None, refresh = () => None, fresh = () => Future.successful(None))
-            .map(assertEquals(_, url))
+        Auth.handOff(
+          url = url,
+          isTrusted = true,
+          current = None,
+          refresh = () => None,
+          fresh = () => Future.successful(None)
+        ).map(assertEquals(_, url))
     }
 
     test("an expired ID token is refreshed first, and the new one handed over") {
         var stored: Option[String] = Some("r-old")
         val refreshing = () => { stored = Some("r-new"); Future.successful(Some("id-new")) }
-        Auth.handOff(url = url, current = None, refresh = () => stored, fresh = refreshing).map { handedUrl =>
-            val params = handed(handedUrl)
-            assertEquals(params.get(Auth.HandedIdToken), "id-new")
-            // Read after the refresh, so a token it stored is the one handed over.
-            assertEquals(params.get(Auth.HandedRefreshToken), "r-new")
+        Auth.handOff(url = url, isTrusted = true, current = None, refresh = () => stored, fresh = refreshing).map {
+            handedUrl =>
+                val params = handed(handedUrl)
+                assertEquals(params.get(Auth.HandedIdToken), "id-new")
+                // Read after the refresh, so a token it stored is the one handed over.
+                assertEquals(params.get(Auth.HandedRefreshToken), "r-new")
         }
     }
 
     test("a refresh that fails opens the url without a session rather than not at all") {
         val failing = () => Future.failed[Option[String]](new RuntimeException("Cognito unreachable"))
-        Auth.handOff(url = url, current = None, refresh = () => Some("r-1"), fresh = failing).map(assertEquals(_, url))
+        Auth.handOff(url = url, isTrusted = true, current = None, refresh = () => Some("r-1"), fresh = failing)
+            .map(assertEquals(_, url))
     }
 
-    test("with no refresh token, only the ID token is handed over") {
-        Auth.handOff(url = url, current = Some("id-1"), refresh = () => None, fresh = noRefresh).map { handedUrl =>
+    test("an untrusted game's engine is handed the ID token alone") {
+        Auth.handOff(
+          url = url,
+          isTrusted = false,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh
+        ).map { handedUrl =>
             val params = handed(handedUrl)
             assertEquals(params.get(Auth.HandedIdToken), "id-1")
             assertEquals(params.get(Auth.HandedRefreshToken), null)
+        }
+    }
+
+    test("an untrusted game's engine is handed only the new ID token after a refresh") {
+        val refreshing = () => Future.successful(Some("id-new"))
+        Auth.handOff(url = url, isTrusted = false, current = None, refresh = () => Some("r-1"), fresh = refreshing)
+            .map { handedUrl =>
+                val params = handed(handedUrl)
+                assertEquals(params.get(Auth.HandedIdToken), "id-new")
+                assertEquals(params.get(Auth.HandedRefreshToken), null)
+            }
+    }
+
+    test("with no refresh token, only the ID token is handed over") {
+        Auth.handOff(url = url, isTrusted = true, current = Some("id-1"), refresh = () => None, fresh = noRefresh).map {
+            handedUrl =>
+                val params = handed(handedUrl)
+                assertEquals(params.get(Auth.HandedIdToken), "id-1")
+                assertEquals(params.get(Auth.HandedRefreshToken), null)
         }
     }
 }

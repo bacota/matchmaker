@@ -59,6 +59,7 @@ object Generators {
             active <- Gen.oneOf(true, false)
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
+            trusted <- Gen.oneOf(true, false)
             // Two required roles, always, so that every seat names one. Two rather than one because two
             // players in one match may not share a role.
         } yield Game(
@@ -87,7 +88,8 @@ object Generators {
           ),
           parameters = Seq.empty,
           externalId = externalId,
-          characterUrl = characterUrl
+          characterUrl = characterUrl,
+          isTrusted = trusted
         )
 
     /** A plain game without roles, of `least` to `most` players a match: played with everyone moving at once, as such a

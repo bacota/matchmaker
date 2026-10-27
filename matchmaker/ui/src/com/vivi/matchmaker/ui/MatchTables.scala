@@ -40,7 +40,7 @@ object MatchTables {
                 // Signed in: an answer after a sign-out would hand the next session's token to this match's url.
                 Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
-                        case Some(url) => openSignedIn(url)
+                        case Some(url) => openSignedIn(url = url, isTrusted = Store.isTrusted(summary.gameId))
                         // Found expired by this very request: the list was read before it was.
                         case None if m.isArchiveExpired =>
                             Store.reportProblem(ErrorText.matchView.archiveExpired)
@@ -59,7 +59,12 @@ object MatchTables {
         else
             summary.publicUrl
                 .map(url =>
-                    button(tpe := "button", cls := "link", Buttons.matches.watch, onClick --> (_ => openSignedIn(url)))
+                    button(
+                      tpe := "button",
+                      cls := "link",
+                      Buttons.matches.watch,
+                      onClick --> (_ => openSignedIn(url = url, isTrusted = Store.isTrusted(summary.gameId)))
+                    )
                 )
                 .getOrElse(span())
 
@@ -363,7 +368,7 @@ object MatchTables {
               // Signed in, as "Review game" is.
               Store.runSignedIn(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                   m.playUrl match {
-                      case Some(url) => openSignedIn(url)
+                      case Some(url) => openSignedIn(url = url, isTrusted = Store.isTrusted(summary.gameId))
                       case None      => Store.reportProblem(ErrorText.matchView.noPlayUrl)
                   }
               }

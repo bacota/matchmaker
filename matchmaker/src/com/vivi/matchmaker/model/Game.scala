@@ -147,7 +147,11 @@ case class Game(
     moveType: MoveType = MoveType.Sequential,
     /* How many turns a simultaneous game lasts, for a tournament to divide a round's time among.
      * `None` where the game does not say, in which case a tournament must. */
-    maxTurns: Option[Int] = None
+    maxTurns: Option[Int] = None,
+    /* Whether the game's engine is trusted with a player's refresh token, which matchmaker's UI hands
+     * to the engine's pages beside the ID token only when this is set. Not set for a new game until an
+     * admin says so: an engine that is not trusted gets only the short-lived ID token. */
+    isTrusted: Boolean = false
 ) {
 
     /** Whether the game is played without roles, by any number of players in its range: a tournament then says how many

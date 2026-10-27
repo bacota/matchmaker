@@ -491,14 +491,15 @@ object Views {
         )
 
     /** Opens a game engine's page — a board, a spectator's view, a character page — in a new tab, signed in as the
-      * player signed in here. See `Auth.handOff`.
+      * player signed in here. See `Auth.handOff`. Only a trusted game's engine is handed the refresh token; any other
+      * is given the ID token alone, and asks the player to sign in again once that expires.
       *
       * Opened at once when the hand-off is ready at once, which keeps it inside the click a browser requires a popup to
       * come from; only a session that has to be refreshed first waits for that.
       */
-    private[ui] def openSignedIn(url: String): Unit = {
+    private[ui] def openSignedIn(url: String, isTrusted: Boolean): Unit = {
         def open(target: String): Unit = { dom.window.open(target, "_blank", "noopener,noreferrer"); () }
-        val handed = Auth.handOff(url)
+        val handed = Auth.handOff(url = url, isTrusted = isTrusted)
         handed.value match {
             case Some(scala.util.Success(target)) => open(target)
             case _                                => handed.foreach(open)

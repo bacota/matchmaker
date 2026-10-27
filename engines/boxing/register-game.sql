@@ -32,7 +32,7 @@ SELECT :'HOST' LIKE '/%' OR :'HOST' IN ('localhost', '127.0.0.1', '::1') AS is_l
 BEGIN;
 
 INSERT INTO game (game_type, name, display_name, description, url, character_url, is_active, external_id,
-                  move_type)
+                  move_type, is_trusted)
 VALUES (
   -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its
   -- characteristics are the character's state. A fighter is built on the engine's own page, which
@@ -50,7 +50,9 @@ VALUES (
   true,
   :'external_id',
   -- Both corners plan each round at once.
-  'sim'
+  'sim',
+  -- Our own engine: its pages are handed the player's refresh token.
+  true
 )
 RETURNING game_id \gset
 

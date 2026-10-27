@@ -213,33 +213,46 @@ object Auth {
       * handed over is a credential for this whole account, so it goes only to the urls matchmaker's own API gave for a
       * match — which the engine already earns no less of by serving its own sign-in form on the same pool.
       *
+      * The refresh token goes only to a game marked trusted (`Game.isTrusted`). It lasts as long as the session does,
+      * where the ID token runs out within the hour, so an engine nobody has vouched for is handed the ID token alone,
+      * and asks the player to sign in again once it expires.
+      *
       * A url that already carries a fragment is the engine's own business and is left alone, as is everything when
       * there is no session or it could not be refreshed: the engine's page then asks the player to sign in, as before.
       *
       * Already completed when the ID token in hand is still good, which is nearly always, so that a caller opening a
       * window can do it within the click that asked for it — a browser blocks a popup opened later than that.
       */
-    def handOff(url: String): Future[String] =
-        handOff(url = url, current = idToken, refresh = () => refreshToken, fresh = () => freshIdToken())
+    def handOff(url: String, isTrusted: Boolean): Future[String] =
+        handOff(
+          url = url,
+          isTrusted = isTrusted,
+          current = idToken,
+          refresh = () => refreshToken,
+          fresh = () => freshIdToken()
+        )
 
     /** [[handOff]] with the session it reads passed in rather than read from `sessionStorage`, which is what lets it be
       * tested where there is none. `refresh` is read after `fresh` has run, since a refresh may have stored a new one.
       */
     private[ui] def handOff(
         url: String,
+        isTrusted: Boolean,
         current: Option[String],
         refresh: () => Option[String],
         fresh: () => Future[Option[String]]
-    ): Future[String] =
+    ): Future[String] = {
+        def handedRefresh = if (isTrusted) refresh() else None
         if (url.contains("#")) Future.successful(url)
         else
             current match {
-                case Some(id) => Future.successful(withSession(url = url, id = id, refresh = refresh()))
+                case Some(id) => Future.successful(withSession(url = url, id = id, refresh = handedRefresh))
                 case None =>
                     fresh()
-                        .map(_.fold(url)(withSession(url, _, refresh())))
+                        .map(_.fold(url)(withSession(url, _, handedRefresh)))
                         .recover { case _ => url }
             }
+    }
 
     /** The names the engines' `SignIn` reads the hand-off by. */
     private[ui] val HandedIdToken = "idToken"
