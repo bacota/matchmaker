@@ -137,10 +137,15 @@ resource "aws_lambda_function" "ending" {
 
       ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
       FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket
+
+      # This function queues work of its own: a round it begins queues its matches, and a match it
+      # settles that completes a round queues the next. Without the queue, MatchEndings runs that
+      # work on a background fiber, which Lambda freezes as soon as the handler returns -- the round
+      # is begun and its matches are left due, never created. Sent as the API function sends, under
+      # the shared role's sqs:SendMessage.
+      MATCH_ENDED_QUEUE_URL = aws_sqs_queue.match_ended.url
     }
   }
-
-  # No MATCH_ENDED_QUEUE_URL: nothing here ends a match, so nothing here says one ended.
 
   depends_on = [
     aws_iam_role_policy_attachment.basic_execution,
