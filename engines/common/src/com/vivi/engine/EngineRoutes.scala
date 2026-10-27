@@ -105,10 +105,11 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         case _ => error(410, e.getMessage)
                     }
                 case NonFatal(e) =>
-                    // A bug or a failure of something behind the engine. The caller gets the shape of it;
-                    // the trace has to be on stderr or the 500 is not diagnosable.
+                    // A bug or a failure of something behind the engine. The trace goes to stderr, where
+                    // the 500 can be diagnosed; the caller is told only that it failed, since an
+                    // exception's class and message can describe the engine's internals.
                     Log.failure(e, s"${request.method} ${request.path}")
-                    error(500, s"${e.getClass.getSimpleName}: ${e.getMessage}")
+                    error(500, ErrorText.request.failed)
             }
         pushIfChanged(request, response)
         response

@@ -17,7 +17,7 @@ import Protocol.given
   * with an identity — find the seat, refuse if there is none — is the same whichever mode established it, and the modes
   * themselves are `PlayAuthSpec`'s.
   */
-abstract class RoutesContract extends FunSuite {
+abstract class RoutesContract extends FunSuite with QuietTests {
 
     /** This game's routes, over a fresh in-memory store, at `http://engine.test`, offering Play Live through `live`,
       * calling `matchmaker` back and telling the time by `now`.
@@ -113,6 +113,28 @@ abstract class RoutesContract extends FunSuite {
             routes(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = """{"nonsense":true}"""))
         assertEquals(answer.status, 400)
         assert(ujson.read(answer.body).obj.contains("error"))
+    }
+
+    test("a request that fails inside the engine is a 500 that says nothing of the failure".tag(Quiet)) {
+        val failing = routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = None,
+          live = None,
+          matchmaker = RecordingMatchmaker(),
+          now = () => throw IllegalStateException("the clock at db-internal.example is down")
+        )
+        val answer = failing(
+          EngineRequest(
+            method = "POST",
+            path = "/games",
+            query = Map.empty,
+            body = write(createRequest(matchId = "m-9", isPublic = true))
+          )
+        )
+        assertEquals(answer.status, 500)
+        assertEquals(ujson.read(answer.body)("error").str, ErrorText.request.failed)
+        assert(!answer.body.contains("IllegalStateException"), answer.body)
+        assert(!answer.body.contains("db-internal"), answer.body)
     }
 
     test("GET /matches/:id/status passes `since` through, and refuses one it cannot read") {
