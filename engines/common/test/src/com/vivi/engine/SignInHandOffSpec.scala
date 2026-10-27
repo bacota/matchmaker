@@ -10,8 +10,9 @@ import munit.FunSuite
   * The script is the page's own JavaScript, so it is run as it is, in Node, with the address bar, its history and
   * `sessionStorage` stood in for. What is checked is what a mistake here would quietly do: leave the credential in the
   * address bar, store something other than the token handed over, keep a session that the link said to replace, or
-  * touch a fragment that was never a hand-off. Matchmaker's half — what it puts there — is `HandOffSpec` in the UI's
-  * tests, which writes the same two names, `idToken` and `refreshToken`.
+  * touch a fragment that was never a hand-off. Then the line that says whose account the tab is signed in to, which is
+  * what lets a player notice a hand-off made with someone else's tokens. Matchmaker's half — what it puts there — is
+  * `HandOffSpec` in the UI's tests, which writes the same two names, `idToken` and `refreshToken`.
   *
   * Node is what the UI's own tests already run in. A machine without it fails here rather than skipping, since a
   * skipped check of a credential's handling is one nobody notices is missing.
@@ -22,13 +23,33 @@ class SignInHandOffSpec extends FunSuite {
     private val path = "/matches/m-1/play"
     private val search = "?as=alice"
 
-    /** What the page left behind: `sessionStorage`, and every `history.replaceState` it made. */
-    private case class After(storage: Map[String, String], replaced: Seq[(ujson.Value, String)])
+    private val login = LoginConfig(
+      hostedLoginUrl = "https://auth.example.com",
+      clientId = "client",
+      redirectUri = "https://engine.example.com/auth/callback",
+      region = "us-west-2"
+    )
+
+    /** What the page left behind: `sessionStorage`, every `history.replaceState` it made, the signed-in line — `None`
+      * while hidden — and whether it reloaded.
+      */
+    private case class After(
+        storage: Map[String, String],
+        replaced: Seq[(ujson.Value, String)],
+        signedInAs: Option[String],
+        isReloaded: Boolean
+    )
 
     /** Loads the page's sign-in script with `hash` — a JavaScript expression — as `location.hash`, and with `stored`
-      * already in `sessionStorage`.
+      * already in `sessionStorage`. The page has the `#signed-in-as` line; `isSignOutPressed` presses its button once
+      * the script has run.
       */
-    private def load(hash: String, stored: Map[String, String] = Map.empty): After = {
+    private def load(
+        hash: String,
+        stored: Map[String, String] = Map.empty,
+        login: Option[LoginConfig] = None,
+        isSignOutPressed: Boolean = false
+    ): After = {
         val program =
             s"""const store = new Map(Object.entries(${ujson.write(
                   ujson.Obj.from(stored.view.mapValues(ujson.Str(_)))
@@ -39,10 +60,20 @@ globalThis.sessionStorage = {
   removeItem: k => store.delete(k)
 };
 const replaced = [];
-globalThis.location = { hash: $hash, pathname: "$path", search: "$search" };
+let reloaded = false;
+globalThis.location = { hash: $hash, pathname: "$path", search: "$search", reload: () => { reloaded = true; } };
 globalThis.history = { state: { kept: true }, replaceState: (state, title, url) => replaced.push([state, url]) };
-${signIn.authScript(None)}
-console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced }));
+const listeners = {};
+const elements = {
+  "signed-in-as": { hidden: true },
+  "signed-in-who": { textContent: "" },
+  "sign-out": { addEventListener: (type, f) => { listeners[type] = f; } }
+};
+globalThis.document = { getElementById: id => elements[id] || null };
+${signIn.authScript(login)}
+if ($isSignOutPressed) listeners.click();
+const line = elements["signed-in-as"].hidden ? null : elements["signed-in-who"].textContent;
+console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line, reloaded }));
 """
         val file = Files.createTempFile("signin-handoff", ".js")
         try {
@@ -57,8 +88,10 @@ console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced }));
             assertEquals(process.waitFor(), 0, output)
             val json = ujson.read(output)
             After(
-              json("storage").obj.view.mapValues(_.str).toMap,
-              json("replaced").arr.toSeq.map(r => (r(0), r(1).str))
+              storage = json("storage").obj.view.mapValues(_.str).toMap,
+              replaced = json("replaced").arr.toSeq.map(r => (r(0), r(1).str)),
+              signedInAs = json("line").strOpt,
+              isReloaded = json("reloaded").bool
             )
         } finally Files.deleteIfExists(file)
     }
@@ -115,5 +148,60 @@ console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced }));
         val after = load("\"\"", held)
         assertEquals(after.storage, held)
         assertEquals(after.replaced, Seq.empty)
+    }
+
+    /** An ID token whose claims are `claims`, unsigned: the page reads it and never checks the signature. */
+    private def idToken(claims: (String, ujson.Value)*): String = {
+        def part(json: ujson.Value) =
+            java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(ujson.write(json).getBytes(UTF_8))
+        part(ujson.Obj("alg" -> "none")) + "." + part(ujson.Obj.from(claims)) + ".sig"
+    }
+
+    private val inAnHour = ujson.Num((System.currentTimeMillis() / 1000 + 3600).toDouble)
+
+    test("a handed-over session says whose account it is") {
+        val id = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
+        val after = load(handedHash("idToken" -> id, "refreshToken" -> "r-1"), login = Some(login))
+        assertEquals(after.signedInAs, Some("Signed in as mallory@example.com — not you?"))
+    }
+
+    // An address beyond ASCII is read as UTF-8, not as the bytes `atob` gives.
+    test("the address is read as UTF-8") {
+        val id = idToken("email" -> "zoë@example.com", "exp" -> inAnHour)
+        val after = load("\"\"", Map("stratego.idToken" -> id), login = Some(login))
+        assertEquals(after.signedInAs, Some("Signed in as zoë@example.com — not you?"))
+    }
+
+    // The address does not change with a refresh, so an expired ID token beside a refresh token still names it.
+    test("an expired ID token still names the account while a refresh token holds the session") {
+        val id = idToken("email" -> "alice@example.com", "exp" -> 1)
+        val after = load("\"\"", Map("stratego.idToken" -> id, "stratego.refreshToken" -> "r-1"), login = Some(login))
+        assertEquals(after.signedInAs, Some("Signed in as alice@example.com — not you?"))
+    }
+
+    test("a session whose token names no address is still shown as signed in") {
+        val after = load(handedHash("refreshToken" -> "r-1"), login = Some(login))
+        assertEquals(after.signedInAs, Some("Signed in."))
+    }
+
+    test("the line is hidden with no session") {
+        assertEquals(load("\"\"", login = Some(login)).signedInAs, None)
+    }
+
+    // A page with no login is one where `?as=` says who the player is, and there is no session to name.
+    test("the line is hidden on a page with no login") {
+        assertEquals(load(handedHash("refreshToken" -> "r-1")).signedInAs, None)
+    }
+
+    test("signing out drops the session and reloads the page") {
+        val id = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
+        val after = load(
+          handedHash("idToken" -> id, "refreshToken" -> "r-1"),
+          login = Some(login),
+          isSignOutPressed = true
+        )
+        assertEquals(after.storage, Map.empty[String, String])
+        assertEquals(after.signedInAs, None)
+        assert(after.isReloaded)
     }
 }

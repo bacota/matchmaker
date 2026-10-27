@@ -85,6 +85,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>waving hands</h1>
+  ${SignIn.markup}
   <p id="status" role="status" aria-live="polite">${escape(heading(state))}</p>
   ${TurnTimer.markup}
   ${Finale.markup}

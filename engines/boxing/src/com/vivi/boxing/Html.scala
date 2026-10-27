@@ -111,6 +111,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>boxing</h1>
+  ${SignIn.markup}
   ${rulesDialog}
   <!-- A round resolves while the page is idle rather than in answer to anything this player just
        did, so what happened is announced rather than left to be found. -->
@@ -333,6 +334,7 @@ ${SignIn.css}
 <body>
 <main>
   <h1>boxing</h1>
+  ${SignIn.markup}
   ${rulesDialog}
 
   <!-- What the last change or build did. Focus is moved here when it is said, since the list it is

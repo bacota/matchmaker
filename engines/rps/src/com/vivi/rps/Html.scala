@@ -82,6 +82,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>rock · paper · scissors</h1>
+  ${SignIn.markup}
   <!-- The result arrives while the page is idle rather than in answer to anything the player
        just did, so it is announced: a screen-reader user must not have to go looking for it. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>

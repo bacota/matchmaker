@@ -103,6 +103,7 @@ ${Finale.css}
 $icons
 <main>
   <h1>capture the flag</h1>
+  ${SignIn.markup}
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}

@@ -75,6 +75,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>tic-tac-toe</h1>
+  ${SignIn.markup}
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}

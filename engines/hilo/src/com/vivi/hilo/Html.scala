@@ -75,6 +75,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>hilo</h1>
+  ${SignIn.markup}
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   <p id="rule"></p>
   ${TurnTimer.markup}

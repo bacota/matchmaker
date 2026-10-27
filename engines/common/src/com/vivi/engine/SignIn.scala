@@ -167,10 +167,17 @@ ${authScript(Some(login))}
    * engine is what decides whether a token is good, and this only decides whether to bother
    * asking. */
   function unexpired(token) {
+    const claims = claimsOf(token);
+    return !!claims && claims.exp - 30 > Date.now() / 1000;
+  }
+
+  /* The token's claims, or null when it is not a JWT. Decoded as UTF-8, since `atob` alone gives
+   * bytes and an address may hold more than ASCII. */
+  function claimsOf(token) {
     try {
-      const claims = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-      return claims.exp - 30 > Date.now() / 1000;
-    } catch (e) { return false; }
+      const binary = atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"));
+      return JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0))));
+    } catch (e) { return null; }
   }
 
   function idToken() {
@@ -230,11 +237,41 @@ ${authScript(Some(login))}
     sessionStorage.setItem(TokenKey, tokens.idToken);
     if (tokens.accessToken) sessionStorage.setItem(AccessKey, tokens.accessToken);
     if (tokens.refreshToken) sessionStorage.setItem(RefreshKey, tokens.refreshToken);
+    renderSignedInAs();
   }
 
   function clearSession() {
     [TokenKey, AccessKey, RefreshKey, VerifierKey, StateKey].forEach(key => sessionStorage.removeItem(key));
+    renderSignedInAs();
   }
+
+  /* Who the tab is signed in as, in a page's `#signed-in-as` (`SignIn.markup`), with a way to sign
+   * out. A hand-off link can come from anyone, and one carrying someone else's tokens signs the
+   * tab in as them (see `takeHandOff`); this line is how a player notices that the account is not
+   * theirs. Kept current by `storeTokens` and `clearSession`, so the pages need not call it.
+   *
+   * The address is read from the stored ID token whether or not it has expired: a refresh does not
+   * change it, and a tab holding only a refresh token is still signed in. The text is set only when
+   * it changes, so the hourly refresh is not announced. */
+  function renderSignedInAs() {
+    const line = typeof document === "undefined" ? null : document.getElementById("signed-in-as");
+    if (!line) return;
+    const isShown = !!login && isSignedIn();
+    line.hidden = !isShown;
+    const token = sessionStorage.getItem(TokenKey);
+    const claims = token && claimsOf(token);
+    const email = claims && typeof claims.email === "string" ? claims.email : null;
+    const text = !isShown ? "" : email ? "Signed in as " + email + " — not you?" : "Signed in.";
+    const who = document.getElementById("signed-in-who");
+    if (who.textContent !== text) who.textContent = text;
+  }
+
+  /* Signing out drops the session and loads the page again, which then offers the sign-in form as
+   * it does to anyone arriving signed out. */
+  (function bindSignOut() {
+    const button = typeof document === "undefined" ? null : document.getElementById("sign-out");
+    if (button) button.addEventListener("click", () => { clearSession(); location.reload(); });
+  })();
 
   /* A session handed over by matchmaker's UI, which opens this page with its own tokens in the
    * fragment — `#idToken=…&refreshToken=…`, see `Auth.handOff` there — so that a player signed in
@@ -243,9 +280,14 @@ ${authScript(Some(login))}
    *
    * In the fragment because a fragment is never sent to a server and so never lands in a log, and
    * taken out of the address bar at once, before anything else on the page runs, so that it is not
-   * bookmarked, shared or left in history. It replaces whatever session the tab held: following
-   * the link is the player saying who they are. Nothing here vouches for the tokens — the engine
-   * verifies the ID token on every request, and Cognito the refresh token on every redemption. */
+   * bookmarked, shared or left in history. It replaces whatever session the tab held.
+   *
+   * Nothing here vouches for the tokens — the engine verifies the ID token on every request, and
+   * Cognito the refresh token on every redemption — and nothing here can tell whether matchmaker
+   * made the link. Anyone can write one with their own tokens in it, and a player who follows it
+   * is signed in as them: whatever they then do on the page is done as that account. The tokens
+   * travel only into the tab, never out of it, so the player's own session is not exposed; what
+   * guards against the rest is `renderSignedInAs`, which says whose account this is. */
   (function takeHandOff() {
     if (!location.hash) return;
     const handed = new URLSearchParams(location.hash.substring(1));
@@ -256,6 +298,7 @@ ${authScript(Some(login))}
     if (id) sessionStorage.setItem(TokenKey, id);
     if (refresh) sessionStorage.setItem(RefreshKey, refresh);
   })();
+  renderSignedInAs();
 
   /* One call to the Cognito user pools API. Not an SDK and not SigV4 signed: `InitiateAuth` and
    * `RespondToAuthChallenge` are how a caller with no credentials obtains some, and the app client
@@ -653,6 +696,14 @@ ${authScript(Some(login))}
 
 object SignIn {
 
+    /** Who the tab is signed in as, and the button that signs out, for a page to put near its heading. Hidden until the
+      * script finds a session; see `renderSignedInAs`. Polite, so a sign-in on the page is announced.
+      */
+    val markup: String =
+        s"""<p id="signed-in-as" hidden><span id="signed-in-who" aria-live="polite"></span> <button type="button" id="sign-out">${escape(
+              Buttons.signIn.signOut
+            )}</button></p>"""
+
     /** The styles of the `#signin` form, for a page to put among its own. */
     val css: String =
         """  #signin { margin: 1.25rem auto 0; text-align: left; max-width: 20rem; }
@@ -671,7 +722,15 @@ object SignIn {
   #signin .alternatives button { font: inherit; min-height: 44px; padding: 0; border: 0; background: none;
                   color: inherit; text-decoration: underline; cursor: pointer; }
   #signin button:disabled, #signin button[aria-disabled="true"] { opacity: .45; cursor: default; }
-  #signin .problem { color: var(--error); font-size: .875rem; margin-bottom: .5rem; }"""
+  #signin .problem { color: var(--error); font-size: .875rem; margin-bottom: .5rem; }
+  /* An address can be long and has no spaces to break at, so it may break anywhere rather than
+     push the page sideways on a phone. */
+  #signed-in-as { font-size: .875rem; margin: 0 0 .75rem; overflow-wrap: anywhere; }
+  #signed-in-as[hidden] { display: none; }
+  #sign-out { font: inherit; padding: 0; border: 0; background: none; color: inherit; text-decoration: underline;
+              cursor: pointer; }
+  #sign-out:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
+  @media (pointer: coarse) { #sign-out { min-height: 44px; } }"""
 }
 
 /** Text made safe for the places a page puts it. */
