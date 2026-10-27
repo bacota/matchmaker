@@ -458,13 +458,24 @@ object GameForm {
                 case None                         => Tips.game.apiKeyNew
             }
           )(
-            // A password field, so it is not shown while it is typed, and new-password so that no browser
-            // offers to fill it with something saved for this site.
-            input(
-              tpe := "password",
-              autoComplete := "new-password",
-              spellCheck := false,
-              controlled(value <-- apiKey.signal, onInput.mapToValue --> apiKey)
+            // A stored key shows as a key's worth of stars over the empty box -- the length terraform gives the
+            // deployed engines' keys. Not the value, so that it is never sent back as the key, and not a placeholder,
+            // which a screen reader reads out star by star; the tip already says a key is set.
+            span(
+              cls := "stored-key",
+              // A password field, so it is not shown while it is typed, and new-password so that no browser
+              // offers to fill it with something saved for this site. Described by the tip itself, since
+              // `tipField` points the span wrapped round it there rather than the box.
+              input(
+                tpe := "password",
+                autoComplete := "new-password",
+                spellCheck := false,
+                aria.describedBy := s"$formKey-api-key-tip",
+                controlled(value <-- apiKey.signal, onInput.mapToValue --> apiKey)
+              ),
+              Option.when(existing.exists(_.hasApiKey))(
+                span(cls := "stars", aria.hidden := true, hidden <-- apiKey.signal.map(_.nonEmpty), "*" * 48)
+              )
             )
           ),
           // Not asked while there is nothing to choose: Forfeit is the only action so far, and a dropdown of one

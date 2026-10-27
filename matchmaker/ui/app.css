@@ -707,6 +707,40 @@ label.field > select {
   color: #1a1a1a;
 }
 
+/* A game's API key box, with a row of stars over it while it is empty and a key is stored. The
+   stars are a span rather than a placeholder so that a screen reader can be told to skip them; they
+   let clicks through to the box and are hidden once anything is typed. The margins move from the
+   box to the wrapper so that the stars centre on the box alone. */
+label.field > .stored-key {
+  display: block;
+  position: relative;
+  margin-top: 0.2rem;
+  margin-bottom: 0.5rem;
+}
+
+label.field > .stored-key > input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: #1a1a1a;
+}
+
+.stored-key > .stars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 calc(0.4rem + 1px);
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--muted);
+}
+
+.stored-key > .stars[hidden] {
+  display: none;
+}
+
 /* The line under a field's caption that says what the question means.
    Inside the label, so it is read out with the control rather than left beside it, which is why it
    is a span and needs telling to be a line of its own. */
@@ -1381,7 +1415,8 @@ h3[tabindex="-1"]:focus-visible {
 
   label.field > input,
   label.field > select,
-  label.field > .time-limit {
+  label.field > .time-limit,
+  label.field > .stored-key {
     margin-top: 0;
   }
 
