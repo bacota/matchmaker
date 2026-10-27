@@ -70,6 +70,7 @@ object Games {
                         MatchSections.dueSection(Some(game)),
                         MatchSections.myMatchesSection(Some(game)),
                         Characters.gameSection(game),
+                        Tournaments.runningSection(Some(game)),
                         Tournaments.gameSection(game),
                         Ratings.ratingsSection(game),
                         gameHistory(game)

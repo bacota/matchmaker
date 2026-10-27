@@ -955,8 +955,9 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         val challenges = Set(entered, invited, owned)
         assertEquals(open.mine, challenges + tournament)
         assertEquals(open.standings, Set(entered, owned))
-        // Not the challenge it entered, which takes one entry from each player.
-        assertEquals(open.game, Set(invited, owned, tournament))
+        // Only those it could still enter: not the challenge it entered, nor its own, which it entered as it made it --
+        // each takes one entry from each player.
+        assertEquals(open.game, Set(invited, tournament))
         assertEquals(open.ended, Set.empty[TournamentId])
         // Over, finished or cancelled: gone from every list but the owner's ended one, which holds only their own.
         assertEquals(
@@ -1018,6 +1019,102 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(!entrant, "listed to a player with no entry left in it")
         assert(other, "not listed to a player who could still enter")
         assert(comeBack, "not listed again once the entry was withdrawn")
+    }
+
+    test("a game lists to a player only the competitions they could enter: none full, none outside their rating") {
+        val (listed, ids) = run(for {
+            f <- fixture(2)
+            p = f.players.head
+            made = (settings: TournamentSettings) =>
+                tournaments.create(
+                  gameId = f.game.gameId,
+                  request = request(f = f, settings = settings),
+                  callerExternalId = f.owner.externalId
+                )
+            full <- made(
+              TournamentSettings(
+                isInvitational = false,
+                roundDuration = Some(Duration.ofDays(2)),
+                maxEntrants = Some(1)
+              )
+            )
+            _ <- tournaments.enter(
+              gameId = f.game.gameId,
+              tournamentId = full.tournamentId,
+              characterId = None,
+              callerExternalId = f.players(1).externalId
+            )
+            outOfRange <- made(
+              TournamentSettings(
+                isInvitational = false,
+                roundDuration = Some(Duration.ofDays(2)),
+                minRating = Some(EloRating.initial + 100)
+              )
+            )
+            inRange <- made(
+              TournamentSettings(
+                isInvitational = false,
+                roundDuration = Some(Duration.ofDays(2)),
+                maxEntrants = Some(2),
+                minRating = Some(EloRating.initial - 100)
+              )
+            )
+            listed <- tournaments.listForGame(f.game.gameId, p.externalId)
+        } yield (listed.map(_.tournament.tournamentId), (full, outOfRange, inRange)))
+        val (full, outOfRange, inRange) = ids
+        assert(!listed.contains(full.tournamentId), "listed while full")
+        assert(!listed.contains(outOfRange.tournamentId), "listed to a player rated below its least")
+        assert(listed.contains(inRange.tournamentId), "not listed to a player who could enter it")
+    }
+
+    test("in a character game a competition is listed to a player only while a character of theirs could enter it") {
+        case class Listed(open: Boolean, invitational: Boolean)
+        val (without, free, allIn, invited) = run(for {
+            f <- fixture(2, GameType.Character)
+            p = f.players.head
+            open <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(
+                f = f,
+                settings = TournamentSettings(
+                  isInvitational = false,
+                  roundDuration = Some(Duration.ofDays(2)),
+                  entriesPerPlayer = 2
+                )
+              ),
+              callerExternalId = f.owner.externalId
+            )
+            closed <- invitational(f)
+            listedTo = () =>
+                tournaments
+                    .listForGame(f.game.gameId, p.externalId)
+                    .map(_.map(_.tournament.tournamentId))
+                    .map(ids =>
+                        Listed(open = ids.contains(open.tournamentId), invitational = ids.contains(closed.tournamentId))
+                    )
+            without <- listedTo()
+            character <- characterOf(f, p)
+            free <- listedTo()
+            _ <- tournaments.enter(
+              gameId = f.game.gameId,
+              tournamentId = open.tournamentId,
+              characterId = Some(character.characterId),
+              callerExternalId = p.externalId
+            )
+            // An entry left to the player, but no character left to make it with.
+            allIn <- listedTo()
+            _ <- tournaments.inviteCharacter(
+              gameId = f.game.gameId,
+              tournamentId = closed.tournamentId,
+              characterId = character.characterId,
+              callerExternalId = f.owner.externalId
+            )
+            invited <- listedTo()
+        } yield (without, free, allIn, invited))
+        assertEquals(without, Listed(open = false, invitational = false))
+        assertEquals(free, Listed(open = true, invitational = false))
+        assertEquals(allIn, Listed(open = false, invitational = false))
+        assertEquals(invited, Listed(open = false, invitational = true))
     }
 
     /* The round a tournament that starts itself has begun, waited for: the ending queue begins it on a fiber of its

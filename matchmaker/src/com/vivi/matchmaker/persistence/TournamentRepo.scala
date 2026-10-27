@@ -380,28 +380,56 @@ class TournamentRepo(session: Session[IO]) {
           WHERE t.game_id = $gameId AND $isNotStarted AND $where
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
-    // The viewer's own, taking entries.
-    private val selectOwnNotStartedForGame = selectForGame(sql"t.owner = $playerId")
+    // Whether the viewer could enter one taking entries now, as `TournamentService.enterIn` decides it: not full, with an
+    // entry left to them, their rating in its range, and -- by invitation, unless it is theirs -- invited. In a
+    // character game it is a character of theirs that enters, so one must be free to: not in already, and invited if
+    // invitations decide. The viewer is bound once, as `v.id`, and their rating once, as `r.rating`.
+    private val canEnter: Fragment[PlayerId] =
+        sql"""EXISTS (
+              SELECT 1 FROM (SELECT $playerId AS id) v
+              CROSS JOIN LATERAL (
+                  SELECT coalesce((SELECT er.rating FROM elo_rating er
+                                    WHERE er.game_id = t.game_id AND er.player_id = v.id), #${EloRating.initial.toString})
+                      AS rating
+              ) r
+              WHERE (SELECT count(*) FROM entrant_player e
+                      JOIN entrant n
+                        ON n.game_id = e.game_id AND n.tournament_id = e.tournament_id AND n.entrant_id = e.entrant_id
+                      WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = v.id
+                        AND n.withdrawn_at IS NULL) < t.entries_per_player
+                AND (t.max_entrants IS NULL
+                  OR (SELECT count(*) FROM entrant n
+                       WHERE n.game_id = t.game_id AND n.tournament_id = t.tournament_id AND n.withdrawn_at IS NULL)
+                     < t.max_entrants)
+                AND (t.min_rating IS NULL OR r.rating >= t.min_rating)
+                AND (t.max_rating IS NULL OR r.rating <= t.max_rating)
+                AND (g.game_type = 'P'
+                      AND (NOT t.is_invitational OR t.owner = v.id
+                        OR EXISTS (SELECT 1 FROM player_invitation i
+                                    WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id
+                                      AND i.player_id = v.id))
+                  OR g.game_type = 'C'
+                      AND EXISTS (SELECT 1 FROM "character" c
+                                   WHERE c.game_id = t.game_id AND c.player_id = v.id
+                                     AND NOT EXISTS (SELECT 1 FROM character_entrant ce
+                                                      JOIN entrant n
+                                                        ON n.game_id = ce.game_id AND n.tournament_id = ce.tournament_id
+                                                       AND n.entrant_id = ce.entrant_id
+                                                      WHERE ce.game_id = t.game_id AND ce.tournament_id = t.tournament_id
+                                                        AND ce.character_id = c.character_id
+                                                        AND n.withdrawn_at IS NULL)
+                                     AND (NOT t.is_invitational OR t.owner = v.id
+                                       OR EXISTS (SELECT 1 FROM character_invitation ci
+                                                   WHERE ci.game_id = t.game_id
+                                                     AND ci.tournament_id = t.tournament_id
+                                                     AND ci.character_id = c.character_id))))
+          )"""
 
-    // Somebody else's, taking entries, that the viewer could enter: open to anybody, or invitational and the viewer
-    // entered or invited -- themselves, or a character of theirs -- and with an entry left to them, none withdrawn.
-    private val selectEnterableForGame = selectForGame(
-      sql"""t.status = 'open' AND t.owner <> $playerId
-            AND (SELECT count(*) FROM entrant_player e
-                  JOIN entrant n
-                    ON n.game_id = e.game_id AND n.tournament_id = e.tournament_id AND n.entrant_id = e.entrant_id
-                  WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId
-                    AND n.withdrawn_at IS NULL) < t.entries_per_player
-            AND (NOT t.is_invitational
-              OR EXISTS (SELECT 1 FROM entrant_player e
-                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-              OR EXISTS (SELECT 1 FROM player_invitation i
-                          WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
-              OR EXISTS (SELECT 1 FROM character_invitation ci
-                          JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
-                          WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
-                            AND c.player_id = $playerId))"""
-    )
+    // The viewer's own that they could enter.
+    private val selectOwnEnterableForGame = selectForGame(sql"t.owner = $playerId AND $canEnter")
+
+    // Somebody else's that the viewer could enter.
+    private val selectOthersEnterableForGame = selectForGame(sql"t.owner <> $playerId AND $canEnter")
 
     private val selectNotOverForPlayer
         : Query[((PlayerId, PlayerId), (PlayerId, PlayerId, PlayerId, PlayerId)), SummaryRow] =
@@ -425,8 +453,8 @@ class TournamentRepo(session: Session[IO]) {
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId""".query(summaryCodec)
 
-    /** A game's open competitions as `viewer` may see them: their own not yet started, then those taking entries that
-      * they could enter, with an entry left to them. Newest first within each.
+    /** A game's open competitions that `viewer` could enter now: their own, then everybody else's. Newest first within
+      * each.
       */
     def openForGame(game: GameId, viewer: PlayerId): IO[List[TournamentSummary]] =
         // One snapshot for both halves: they are told apart by the owner, which can change between two statements,
@@ -435,9 +463,9 @@ class TournamentRepo(session: Session[IO]) {
             .transaction(TransactionIsolationLevel.RepeatableRead, TransactionAccessMode.ReadOnly)
             .use(_ =>
                 for {
-                    own <- session.execute(selectOwnNotStartedForGame)(((viewer, viewer), game, viewer))
-                    enterable <- session.execute(selectEnterableForGame)(
-                      ((viewer, viewer), game, (viewer, viewer, viewer, viewer, viewer))
+                    own <- session.execute(selectOwnEnterableForGame)(((viewer, viewer), game, (viewer, viewer)))
+                    enterable <- session.execute(selectOthersEnterableForGame)(
+                      ((viewer, viewer), game, (viewer, viewer))
                     )
                 } yield (own ++ enterable).map(summaryOf(viewer))
             )

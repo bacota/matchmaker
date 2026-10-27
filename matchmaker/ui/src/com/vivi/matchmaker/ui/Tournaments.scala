@@ -33,8 +33,8 @@ object Tournaments {
 
     // ---- lists -------------------------------------------------------------------------------
 
-    /** A game's open competitions, on its screen -- the caller's own not yet started, then those they could enter --
-      * with the button that opens the New Competition dialog.
+    /** A game's open competitions that the caller could enter, each with its Join button -- their own, then everybody
+      * else's -- with the button that opens the New Competition dialog.
       */
     def gameSection(game: Game): HtmlElement =
         div(
@@ -73,7 +73,9 @@ object Tournaments {
             listing(
               Store.tournamentsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
               Store.loading(Store.Fetch.Tournaments(game.gameId))
-            )(p(cls := "empty", "No open competitions in this game."))(rows => summaryList(rows, showGame = false))
+            )(p(cls := "empty", "No open competitions in this game."))(rows =>
+                summaryList(rows, showGame = false, joinIn = Some(game))
+            )
           ),
           // The formats the game offers, for whoever administers it: nothing at all for anybody else.
           child <-- Store.currentPlayer.flatMapSwitch {
@@ -99,6 +101,23 @@ object Tournaments {
     /* The form's save, busy for as long as it is out, whatever is drawn again or closed meanwhile. */
     private def savingBusy(gameId: GameId, existing: Option[Tournament]): Var[Boolean] =
         heldBusy(existing.fold(s"new competition in ${gameId.value}")(t => s"save tournament ${t.tournamentId.value}"))
+
+    /** The competitions the caller runs, those of one game on that game's screen, every game's on the main page. */
+    def runningSection(game: Option[Game]): HtmlElement =
+        div(
+          child <-- Store.myTournaments.signal
+              .map(_.filter(s => s.isOwner && game.forall(_.gameId == s.tournament.gameId)))
+              .distinct
+              .map { running =>
+                  if (running.isEmpty) emptyNode
+                  else
+                      Views.refreshableSection(
+                        heading = Headings.tournaments.running,
+                        reload = () => Store.reloadMyTournaments(),
+                        subsection = false
+                      )(ul(running.map(runningRow(_, showGame = game.isEmpty))))
+              }
+        )
 
     /** The main page's tournament sections: seats waiting on the caller to choose a role, and their tournaments. */
     def mainSections: HtmlElement =
@@ -139,16 +158,7 @@ object Tournaments {
                 .distinct
                 .map(names => if (names.isEmpty) "" else names.mkString("A round is ready to start in ", ", ", "."))
           ),
-          child <-- Store.myTournaments.signal.map { mine =>
-              val running = mine.filter(_.isOwner)
-              if (running.isEmpty) emptyNode
-              else
-                  Views.refreshableSection(
-                    heading = Headings.tournaments.running,
-                    reload = () => Store.reloadMyTournaments(),
-                    subsection = false
-                  )(ul(running.map(runningRow)))
-          },
+          runningSection(None),
           // Those the caller runs are listed above, under their own heading.
           child <-- Store.myTournaments.signal.map(_.filterNot(_.isOwner)).map { mine =>
               if (mine.isEmpty) emptyNode
@@ -274,15 +284,16 @@ object Tournaments {
     private def isWaitingOnMe(s: TournamentSummary): Boolean =
         s.isOwner && s.isRoundOver && !s.tournament.settings.isAutoStarted
 
-    /** One of the caller's own tournaments, for the main page: what it is and how it was set up, the Manage button, and
-      * the step it waits on them for -- starting it, or starting its next round -- when it waits on one.
+    /** One of the caller's own tournaments: what it is and how it was set up, the Manage button, and the step it waits
+      * on them for -- starting it, or starting its next round -- when it waits on one.
       */
-    private def runningRow(s: TournamentSummary): HtmlElement = {
+    private def runningRow(s: TournamentSummary, showGame: Boolean): HtmlElement = {
         val t = s.tournament
         val isStopped = t.isStopped && t.status == TournamentStatus.Running
-        val progress = List(s.gameName, t.status.label) ++ s.round.map(r => s"round $r") ++
-            Option.when(s.isRoundOver)("round over") ++ Option.when(isStopped)("stopped") ++
-            Option.when(s.formatName.nonEmpty)(s.formatName) ++ List(s"${s.entrants} entered")
+        val progress =
+            Option.when(showGame)(s.gameName).toList ++ List(t.status.label) ++ s.round.map(r => s"round $r") ++
+                Option.when(s.isRoundOver)("round over") ++ Option.when(isStopped)("stopped") ++
+                Option.when(s.formatName.nonEmpty)(s.formatName) ++ List(s"${s.entrants} entered")
         // Each game parameter by the name its game shows it under, which is known only once the games have come.
         def parameters(game: Option[Game]) = GameSettingsFields
             .storedChoices(t.settings.gameSettings)
@@ -322,7 +333,7 @@ object Tournaments {
         )
     }
 
-    /* The Manage button of one of the caller's own tournaments on the main page, and the step it waits on them for. */
+    /* The Manage button of one of the caller's own tournaments, and the step it waits on them for. */
     private def actions(s: TournamentSummary): Seq[Modifier[HtmlElement]] = {
         val t = s.tournament
         Seq(
@@ -370,7 +381,12 @@ object Tournaments {
      * page as it is drawn. */
     private var editOnArrival: Option[TournamentId] = None
 
-    private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
+    /* With `joinIn`, a game's list of competitions the caller could enter, each row with its Join button. */
+    private def summaryList(
+        rows: Seq[TournamentSummary],
+        showGame: Boolean,
+        joinIn: Option[Game] = None
+    ): HtmlElement =
         ul(
           rows.map { s =>
               val t = s.tournament
@@ -388,10 +404,32 @@ object Tournaments {
                       Option.when(isWaitingOnMe(s))("round over") ++
                       Option.when(s.isOwner)("yours") ++ Option.when(s.isEntered)("entered") ++
                       Option.when(s.isInvited && !s.isEntered)("invited")).mkString(" · ", " · ", "")
-                )
+                ),
+                joinIn.fold(emptyNode)(joinButton(_, t))
               )
           }
         )
+
+    /* Joining from a game's list. A plain game's entry is made here, and the competition's page then shown, which moves
+     * focus off a row the entry may take out of the list; a character game's is made on that page, which asks which
+     * character enters. Refused, the list is read again: what it offered had stopped being true. */
+    private def joinButton(game: Game, t: Tournament): HtmlElement = {
+        val shown = () => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
+        busyButton(label = Buttons.tournaments.join, busy = answerBusy(t))(busy =>
+            if (game.gameType == GameType.Character) shown()
+            else
+                Store.runSignedIn(
+                  ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = None),
+                  busy,
+                  onFailure = _ => Store.reloadTournaments(t.gameId)
+                ) { _ =>
+                    Views.announce(s"Joined ${t.name}.")
+                    Store.reloadTournaments(t.gameId)
+                    Store.reloadMyTournaments()
+                    shown()
+                }
+        ).amend(aria.label := Buttons.tournaments.joinNamed(competition = t.name))
+    }
 
     // ---- a tournament's page ----------------------------------------------------------------
 
