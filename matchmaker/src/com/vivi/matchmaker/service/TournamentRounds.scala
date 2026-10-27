@@ -55,6 +55,11 @@ class TournamentRounds[T](
     /** How long after one Check round another is refused, so that a burst of presses is one check. */
     val checkInterval: Duration = Duration.ofMinutes(1)
 
+    /** How long a begun match may go without its engine's game before Check round creates it again: longer than the
+      * ending function may run (`ending_timeout_s`, 15 minutes), so that a creation still under way is never overtaken.
+      */
+    val relaunchAfter: Duration = Duration.ofMinutes(20)
+
     // ---- beginning a round -----------------------------------------------------------------
 
     /** The owner beginning the next round, for `duration` if they give one and the tournament's round duration if not.
@@ -487,13 +492,17 @@ class TournamentRounds[T](
             .use { _ =>
                 new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
                     case Some(m) if m.status == MatchStatus.InProgress =>
-                        new TurnRepo(session).deleteForMatch(gameId, matchId) *>
-                            new ResultRepo(session).deleteManualForMatch(gameId, matchId) *>
-                            new TournamentMatchRepo(session).backToDue(gameId, matchId)
+                        backToDue(session = session, gameId = gameId, matchId = matchId)
                     case _ => IO.unit
                 }
             }
             .handleError(_ => ())
+
+    /* A begun match due again, its turns and its forfeited seats' last places gone, under the lock its caller holds. */
+    private def backToDue(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
+        new TurnRepo(session).deleteForMatch(gameId, matchId) *>
+            new ResultRepo(session).deleteManualForMatch(gameId, matchId) *>
+            new TournamentMatchRepo(session).backToDue(gameId, matchId)
 
     // ---- a match's end ---------------------------------------------------------------------
 
@@ -634,7 +643,8 @@ class TournamentRounds[T](
             .flatMap(at => endings.tournamentRoundCheck(gameId = gameId, tournamentId = tournamentId, checkedAt = at))
 
     /** A queued Check round: enforces the clocks of the round's matches being played, forfeits any seat whose time to
-      * choose a role has run out, and queues again any match left due. Nothing, for a tournament no longer under way.
+      * choose a role has run out, queues again any match left due, and creates again any begun match whose engine game
+      * was never made ([[relaunchStranded]]). Nothing, for a tournament no longer under way.
       *
       * Each match is its own transaction, under the locks every change takes, and re-decides there what it acts on: the
       * list read here is only where to look, and a message the queue delivers twice must not forfeit twice.
@@ -654,7 +664,10 @@ class TournamentRounds[T](
                   tm.status match {
                       case TournamentMatchStatus.Started =>
                           // One match whose engine cannot be reached does not stop the rest being looked at.
-                          engine.enforceNow(gameId, tm.matchId).attempt.void
+                          relaunchStranded(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
+                              .flatMap(isRelaunched => IO.unlessA(isRelaunched)(engine.enforceNow(gameId, tm.matchId)))
+                              .attempt
+                              .void
                       case TournamentMatchStatus.Due =>
                           endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
                       case TournamentMatchStatus.Choosing =>
@@ -664,6 +677,33 @@ class TournamentRounds[T](
               }
             )
             .as(Settlement.Settled)
+
+    /** A match begun at least [[relaunchAfter]] ago that has no engine game -- the function creating it stopped, or
+      * lost its database connection, before it could record the game or put the match back -- made due again and
+      * queued to be created: the engine answers a create it has already made with that game, so nothing is played
+      * twice. Decided under the tournament's lock and the match's. Whether it was relaunched.
+      */
+    private def relaunchStranded(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Boolean] =
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    for {
+                        _ <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        m <- new MatchRepo(session).readForUpdate(gameId, matchId)
+                        at = now()
+                        isStranded = m.exists(m =>
+                            m.status == MatchStatus.InProgress && m.statusUrl.isEmpty &&
+                                m.start.exists(s => !at.isBefore(s.plus(relaunchAfter)))
+                        )
+                        _ <- IO.whenA(isStranded)(backToDue(session = session, gameId = gameId, matchId = matchId))
+                    } yield isStranded
+                }
+            }
+            .flatTap(isRelaunched =>
+                IO.whenA(isRelaunched)(
+                  endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = matchId)
+                )
+            )
 
     /** The seat whose time to choose has run out forfeits, and the choosing moves on without it. Whether its time has
       * run out is decided here, under the match's lock: a seat that has chosen meanwhile, or whose turn has only just

@@ -784,6 +784,47 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(owed, 1)
     }
 
+    /** A round of two begun and its match created, then stranded as a creation that died between its claim and the
+      * engine's answer leaves it: begun `startedAgo`, with no urls. What the engine created, the match's status and
+      * whether it has a status url, after a Check round.
+      */
+    private def strandedThenChecked(startedAgo: String): (Int, TournamentMatchStatus, Boolean) =
+        run(for {
+            f <- started(n = 2, roles = false)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            _ <- TestSession.resource.use(
+              _.execute(
+                sql"""UPDATE match SET status_url = NULL, play_url = NULL, start = now() - $text::interval
+                      WHERE tournament_id = ${skunk.codec.all.int8}""".command
+              )((startedAgo, f.t.tournamentId.value))
+            )
+            _ <- f.w.services.rounds.checkRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.head)
+            saved <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, m.matchId))
+        } yield (f.w.engine.created.get, m.status, saved.exists(_.statusUrl.isDefined)))
+
+    test("a begun match whose engine game was never recorded is created again at Check round") {
+        val (created, status, hasStatusUrl) = strandedThenChecked(startedAgo = "1 hour")
+        assertEquals(created, 2)
+        assertEquals(status, TournamentMatchStatus.Started)
+        assert(hasStatusUrl)
+    }
+
+    test("a match whose creation may still be under way is left alone at Check round") {
+        val (created, status, hasStatusUrl) = strandedThenChecked(startedAgo = "1 minute")
+        assertEquals(created, 1)
+        assertEquals(status, TournamentMatchStatus.Started)
+        assert(!hasStatusUrl)
+    }
+
     // A launch records each forfeited seat's last place before it asks the engine; one the engine refuses must take
     // those back with it, or the next attempt finds them already there.
     test("a match with a forfeited seat that the engine could not create is created when asked again") {
