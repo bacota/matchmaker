@@ -5,8 +5,7 @@ Conventions that are not visible from the code alone.
 ## Build and test
 
 Run tests with `./test.sh`: `./test.sh matchmaker.test engines.boxing.test`, or
-`./test.sh matchmaker.test.testOnly com.vivi.matchmaker.service.TournamentServiceSpec`. It points `FLYWAY_URL` at
-local Postgres, runs without the daemon, joins the targets with `+`, and prints a count per module, each failure, any
+`./test.sh matchmaker.test.testOnly com.vivi.matchmaker.service.TournamentServiceSpec`. It runs without the daemon, joins the targets with `+`, and prints a count per module, each failure, any
 stray trace, and compile errors. It fails a run that ran no tests or left a stray trace. The full log is in
 `out/test-logs/`, its path printed last; read it only when the summary is not enough.
 
@@ -17,15 +16,12 @@ Several targets are joined with `+`: `mill -j 4 --ticker false matchmaker.test +
 Without it mill passes the later targets as arguments to the first, which for a test task filters the
 run down to nothing and still exits 0.
 
-Test suites talk to a real local Postgres — user, database and password all `matchmaker` — and
-migrate it on first use via `TestMigration.ensure()`. There is no in-memory substitute; a failure
-to connect means the local server is not up, not that the code is wrong.
-
-`flyway-dev.sh` runs mill with `FLYWAY_URL` pointing at the deployed RDS database, and a mill daemon keeps that
-environment. `matchmaker.test`'s `migrated` task runs `Migrate` with the daemon's environment, so a plain test run
-afterwards can try to migrate RDS instead of local Postgres. `./test.sh` avoids this; a plain mill run of the DB
-tests is written `FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker mill --no-daemon -j 4 --ticker false …`, and
-if in doubt check the log for `rds.amazonaws`.
+Test suites talk to a real local Postgres database, `matchmaker_test`, with user and password both `matchmaker`.
+`matchmaker.test`'s `migrated` task drops it, creates it empty and migrates it before every run, `matchmaker.flyway.test`
+included, so a run starts with no rows from earlier ones; it is given the local url itself, so a daemon started by
+`flyway-dev.sh` with the RDS one cannot redirect it. A spec run from an IDE creates and migrates it if missing, through
+`TestMigration.ensure()`, but does not empty it. The local stack runs on `matchmaker`, which the tests never touch.
+There is no in-memory substitute; a failure to connect means the local server is not up, not that the code is wrong.
 
 A test that fails something on purpose mixes in `QuietTests` and is written `test("...".tag(Quiet))`. There are two
 copies of the trait: `com.vivi.engine.QuietTests` in `engines/common/testkit`, and `com.vivi.matchmaker.QuietTests`

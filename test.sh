@@ -6,8 +6,8 @@
 #   ./test.sh matchmaker.test.testOnly com.vivi.matchmaker.service.TournamentServiceSpec
 #
 # Each argument whose first word's dotted parts all start with a lower-case letter is a target, with any words after
-# it; anything else (a class name, a selector, a flag) belongs to the target before it. The targets are joined with "+", and FLYWAY_URL points at the
-# local database, so neither trap in CLAUDE.md's "Build and test" can catch a run. Exits with mill's status, or 1 if
+# it; anything else (a class name, a selector, a flag) belongs to the target before it. The targets are joined with "+", so the trap in CLAUDE.md's
+# "Build and test" that runs no tests cannot catch a run. Exits with mill's status, or 1 if
 # mill passed but a target ran no tests or the log holds a stray trace.
 cd "$(dirname "$0")" || exit 1
 
@@ -42,8 +42,7 @@ log="out/test-logs/$(date +%Y%m%d-%H%M%S).log"
 stamp="$(mktemp)"
 trap 'rm -f "$stamp"' EXIT
 
-FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker \
-    mill --no-daemon -j 4 --ticker false "${mill_args[@]}" >"$log" 2>&1
+mill --no-daemon -j 4 --ticker false "${mill_args[@]}" >"$log" 2>&1
 status=$?
 
 python3 -I - "$log" "$stamp" "$status" "${targets[@]}" <<'EOF'

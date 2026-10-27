@@ -4,17 +4,21 @@ import java.sql.{Connection, DriverManager}
 import java.util.UUID
 import munit.FunSuite
 
-/** Against the same local Postgres the repository specs use: user, database and password all "matchmaker". Migrations
-  * are assumed to have run — `mill matchmaker.test` does that, and this module has no cats-effect runtime to reach
-  * TestMigration through.
+/** Against the same local test database the repository specs use, `matchmaker_test`, with user and password both
+  * "matchmaker". This module's `forkEnv` creates and migrates it first, through `matchmaker.test.migrated`; this module
+  * has no cats-effect runtime to reach TestMigration through.
   *
-  * Every case uses a fresh random external id, so runs do not interfere with each other or with whatever else is in the
-  * table.
+  * Every case uses a fresh random external id, so cases do not interfere with each other or with whatever else is in
+  * the table.
   */
 class SeedAdminSpec extends FunSuite {
 
     private val connection: Connection =
-        DriverManager.getConnection("jdbc:postgresql://localhost:5432/matchmaker", "matchmaker", "matchmaker")
+        DriverManager.getConnection(
+          s"jdbc:postgresql://localhost:5432/${RecreateTestDatabase.database}",
+          "matchmaker",
+          "matchmaker"
+        )
 
     override def afterAll(): Unit = connection.close()
 

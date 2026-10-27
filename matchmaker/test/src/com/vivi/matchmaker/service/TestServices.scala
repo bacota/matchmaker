@@ -17,7 +17,12 @@ import com.vivi.matchmaker.persistence.TextCodec.given
   */
 object TestServices {
     private val config =
-        DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
+        DbConfig(
+          host = "localhost",
+          database = TestMigration.database,
+          user = "matchmaker",
+          password = Some("matchmaker")
+        )
 
     /** How many connections the tests share.
       *

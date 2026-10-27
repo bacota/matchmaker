@@ -216,7 +216,7 @@ object matchmaker extends ScalaModule {
       mvn"org.postgresql:postgresql:42.7.13"
     )
 
-    /** Brings the local test database up to date, once, before any test JVM starts.
+    /** Creates the local test database afresh and migrates it, once, before any test JVM starts.
       *
       * The specs used to do this themselves, and mill forks several JVMs per run, so Flyway ran
       * once in each of them — every one validating the same nine migrations, and all of them
@@ -224,18 +224,31 @@ object matchmaker extends ScalaModule {
       * work at the point where every suite is already contending for connections, and it buried
       * the test output in migration banners.
       *
+      * Empty every run, because the specs leave every row they make behind, and a database kept
+      * between runs grew until reading a table was what the tests spent their time on —
+      * `RecreateTestDatabase` says more. It is `matchmaker_test`, not the local stack's
+      * `matchmaker`.
+      *
       * Re-run on every invocation, via the always-changing input below: the database is not one
-      * of mill's inputs, so a plain cached task would be skipped on the run after someone
-      * dropped the schema by hand — which is exactly the run that needs it. The module reused
-      * here is the same `Migrate` that `flyway-dev.sh` runs, so the tests and the deployment
-      * apply migrations one way.
+      * of mill's inputs, so a plain cached task would be skipped. The module reused here is the
+      * same `Migrate` that `flyway-dev.sh` runs, so the tests and the deployment apply
+      * migrations one way. `FLYWAY_URL` is given here rather than inherited, so a mill daemon
+      * started by `flyway-dev.sh` with the RDS url cannot point the tests' migration at RDS.
       */
     def migrated = Task {
       everyInvocation()
       mill.util.Jvm.callProcess(
+        mainClass = "com.vivi.matchmaker.flyway.RecreateTestDatabase",
+        classPath = matchmaker.flyway.test.runClasspath().map(_.path),
+        cwd = Task.dest,
+        stdout = os.Inherit
+      )
+      mill.util.Jvm.callProcess(
         mainClass = "com.vivi.matchmaker.flyway.Migrate",
         classPath = matchmaker.flyway.runClasspath().map(_.path),
         env = Map(
+          "FLYWAY_URL" -> "jdbc:postgresql://localhost:5432/matchmaker_test",
+          "FLYWAY_USER" -> "matchmaker",
           "FLYWAY_PASSWORD" -> "matchmaker",
           // Absolute, because this runs in the task's own directory: a `Task` may only write
           // inside `Task.dest`, so it cannot be given the workspace as its working directory
@@ -424,6 +437,14 @@ object matchmaker extends ScalaModule {
       */
     object test extends ScalaTests with TestModule.Munit {
       def mvnDeps = Seq(mvn"org.scalameta::munit::1.0.4")
+
+      /* `SeedAdminSpec` writes to the test database, which `matchmaker.test` drops and
+       * creates again: running after that, rather than beside it, is what keeps a run of both
+       * from dropping it under this one. Mill runs the migration once for both. */
+      def forkEnv = Task {
+        matchmaker.test.migrated()
+        super.forkEnv()
+      }
     }
   }
 }

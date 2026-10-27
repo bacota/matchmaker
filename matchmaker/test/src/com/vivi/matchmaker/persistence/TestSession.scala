@@ -4,8 +4,8 @@ import cats.effect.{IO, Resource}
 import skunk._
 import com.vivi.matchmaker.TestMigration
 
-/** A session on the local Postgres instance with user/database/password all "matchmaker", per the assumed local dev
-  * setup for these property tests.
+/** A session on the local test database, `matchmaker_test`, with user and password both "matchmaker", per the assumed
+  * local dev setup for these property tests.
   *
   * Borrowed from the pool the services already run on rather than opened per use. A fixture takes one of these several
   * times over — make a game, make a character, read back what a service wrote — and `Session.single` paid a TCP connect
