@@ -205,23 +205,15 @@ object Json {
     case class GameApiKeyField(apiKey: Option[String] = None)
     given ReadWriter[GameApiKeyField] = macroRW
 
-    /** @param email
-      *   the address the new player signs in with, as the client read it out of its own token. Optional: a client with
-      *   no Cognito identity behind it has none to send, and one that omits it registers a player matchmaker cannot
-      *   mail until the account form records one.
+    /** A new player's nickname. Their address is not part of it: the server takes that from the caller's verified token
+      * — see `Authenticator.verifiedEmailOf` — so a body cannot name one.
       */
-    case class RegisterRequest(nickname: String, email: Option[String] = None)
+    case class RegisterRequest(nickname: String)
 
     /** A change of nickname, from the account menu. Separate from `RegisterRequest` despite the identical shape: they
       * are two different requests, and one growing a field is not a reason for the other to gain it.
       */
     case class NicknameRequest(nickname: String)
-
-    /** An address change that Cognito has already accepted, reported by the browser that watched it happen. Not a
-      * request to change anything at Cognito — by the time this is sent, the change is done and the code has been
-      * answered — only to record it. See `PlayerService.updateEmail`.
-      */
-    case class EmailRequest(email: String)
 
     /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
       * value rather than a toggle, so that sending it twice means the same as sending it once.
@@ -413,7 +405,6 @@ object Json {
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[RatingRequest] = macroRW
-    given ReadWriter[EmailRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW
     given ReadWriter[EditCharacterRequest] = macroRW

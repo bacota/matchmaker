@@ -12,10 +12,10 @@ import com.vivi.matchmaker.persistence.PlayerRepo
 class RegistrationService(sessionPool: SessionPool) {
 
     /** @param email
-      *   the address the identity signs in with, as the browser read it out of the ID token. Optional because the
-      *   caller need not have a Cognito identity at all — locally the caller is a header — and because a client that
-      *   does not send it should still be able to register; the account form records it later either way. See
-      *   `PlayerService.updateEmail` for how far it is trusted.
+      *   the address the identity signs in with, as the authenticator vouches for it — the verified `email` claim of
+      *   the caller's token, never anything the request body says. Optional because the caller need not have a Cognito
+      *   identity at all — locally the caller is a header — and a player registered without one is recorded at the next
+      *   sign-in. See `PlayerService.updateEmail`.
       */
     def register(nickname: String, externalId: String, email: Option[String] = None): IO[Player] =
         for {

@@ -999,7 +999,7 @@ object Store {
 
         if (claimed.isEmpty || stored.email.exists(_.equalsIgnoreCase(claimed))) Future.unit
         else
-            ApiClient.updateEmail(claimed).transform {
+            ApiClient.updateEmail().transform {
                 case Success(updated) =>
                     // Only if this is still the session that asked. A sign-out while the call was in
                     // flight has already put something else on screen, and the answer to a request
