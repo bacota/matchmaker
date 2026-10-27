@@ -90,8 +90,8 @@ object Games {
         )
     }
 
-    /** The link to the admin's edit form for a game, which opens as a dialog, as the challenge form does. Nothing for
-      * anyone else: the server answers a non-admin with a 403, so the link is not there to press.
+    /** The button to the admin's edit form for a game, which opens as a dialog, as the challenge form does. Nothing for
+      * anyone else: the server answers a non-admin with a 403, so the button is not there to press.
       */
     private def editGamePanel(game: Game): HtmlElement =
         div(
@@ -99,7 +99,6 @@ object Games {
               case (Some(player), editing) if player.isAdmin =>
                   div(
                     button(
-                      cls := "link",
                       htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
                       aria.expanded := editing.contains(game.gameId),
                       Buttons.game.edit,
@@ -113,7 +112,7 @@ object Games {
           }
         )
 
-    /* The link the edit dialog is opened from, so closing it can put focus back -- `challengeTrigger`'s
+    /* The button the edit dialog is opened from, so closing it can put focus back -- `challengeTrigger`'s
      * counterpart. */
     private var editGameTrigger: Option[dom.html.Element] = None
 
