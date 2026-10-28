@@ -20,6 +20,7 @@ import com.vivi.matchmaker.persistence.{
     ParticipantRepo,
     PlayerRepo,
     ResultRepo,
+    SkunkIdCodecs,
     TestMatches,
     TestSession,
     TurnRepo
@@ -1501,6 +1502,131 @@ class GameEngineServiceSpec extends PropertySuite {
                       (mine.participantId, 1, true),
                       (theirs.participantId, 2, false)
                     )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The completed list's own repair: a match in the window it shows with no results is asked about,
+     * and one whose engine has answered is not asked again for an hour. */
+    private def finishedWithoutResults(mine: Participant, theirs: Participant): GameStatusResponse =
+        GameStatusResponse(
+          isCompleted = true,
+          participants = List(mine, theirs).map(p =>
+              EngineParticipantStatus(
+                participantId = p.participantId.value,
+                isPending = false,
+                isCompleted = true,
+                prevMoveAt = None
+              )
+          )
+        )
+
+    property("the completed list asks the engine for a finished match's missing results, and shows them") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = finishedWithoutResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    listed <- services.matches.completed(externalId).map(_.matches.toList)
+                    recovered <- resultsOf(started)
+                } yield recovered.map(r => (r.participantId, r.rank, r.isWinner)).toSet == Set(
+                  (mine.participantId, 1, true),
+                  (theirs.participantId, 2, false)
+                ) && listed.filter(_.matchId == started.matchId).map(m => (m.outcome, m.resultSummary)) ==
+                    List((Some(MatchOutcome.Won), Some("<strong>me</strong> won")))
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a finished match whose engine answered with no results is not asked about again for an hour") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = finishedWithoutResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    // Answered, with nothing: recorded as asked.
+                    _ <- services.matches.completed(externalId)
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.matches.completed(externalId)
+                    within <- resultsOf(started)
+                    // An hour on, it is asked again, and this time the engine has them.
+                    _ <- TestSession.resource.use(
+                      _.execute(
+                        sql"""UPDATE match SET results_asked_at = results_asked_at - interval '61 minutes'
+                              WHERE match_id = ${SkunkIdCodecs.matchId}""".command
+                      )(started.matchId)
+                    )
+                    _ <- services.matches.completed(externalId)
+                    later <- resultsOf(started)
+                } yield within.isEmpty && later.map(_.participantId).toSet == Set(
+                  mine.participantId,
+                  theirs.participantId
+                )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    // The stamp goes down before the engine is asked, so that an engine that is down holds up one load
+    // of the list an hour rather than every one.
+    property("a finished match whose engine could not be reached is not asked about again for an hour".tag(Quiet)) {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                @volatile var isDown = false
+                val engine = StubEngine(beforeStatus =
+                    IO.defer(if (isDown) IO.raiseError(GameEngineError("engine is down")) else IO.unit)
+                )
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = finishedWithoutResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    _ <- IO { isDown = true }
+                    _ <- services.matches.completed(externalId)
+                    // Back, with the results; but the match was asked about within the hour.
+                    _ <- IO { isDown = false; engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.matches.completed(externalId)
+                    after <- resultsOf(started)
+                } yield after.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }

@@ -108,7 +108,8 @@ object Services {
           sessionPool = pool,
           notifications = notifications,
           archives = Some(archives),
-          endings = endings
+          endings = endings,
+          recoverResults = engine.recoverResults
         )
 
         lazy val engine: GameEngineService[T] =

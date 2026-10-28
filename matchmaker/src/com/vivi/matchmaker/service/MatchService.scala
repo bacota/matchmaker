@@ -49,7 +49,10 @@ class MatchService(
     /* For the finished lists: whether a friendly match's archive is still there to be watched. */
     archives: Option[ArchiveService] = None,
     /* For a cancel: saying the match has ended, so that its engine is told and can drop it. */
-    endings: MatchEndings = MatchEndings.disabled
+    endings: MatchEndings = MatchEndings.disabled,
+    /* For the caller's completed list: asking the engines for the results its matches are missing, and whether any
+     * arrived. See `GameEngineService.recoverResults`. */
+    recoverResults: List[(GameId, MatchId, String)] => IO[Boolean] = _ => IO.pure(false)
 ) {
 
     /** Matches in which it is the caller's turn. */
@@ -76,13 +79,44 @@ class MatchService(
       * No clocks: a finished match's budgets are not something anybody can spend, and what each player *did* spend is
       * on the result rows instead.
       */
-    def completed(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[CompletedPage] =
-        forCaller(callerExternalId) { (repo, playerId) =>
-            completedPage(repo, query)(
-              span => repo.listCompletedForPlayer(playerId, span),
-              from => repo.hasCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
-            )
-        }.flatMap(viewedPage)
+    def completed(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[CompletedPage] = {
+        // The rows as well as the page, for the matches in it that are missing their results.
+        def read(query: CompletedQuery): IO[(CompletedPage, List[MatchRepo.MatchSeatRow])] =
+            forCaller(callerExternalId) { (repo, playerId) =>
+                completedPage(repo, query)(
+                  span => repo.listCompletedForPlayer(playerId, span),
+                  from => repo.hasCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
+                )
+            }
+        for {
+            first <- read(query)
+            (page, rows) = first
+            // Asked with the session given back, since an engine may be slow; and read again, from the same
+            // `asOf`, only when results arrived.
+            isRecovered <- owedResults(rows).fold(IO.pure(false))(recoverResults)
+            shown <- if (isRecovered) read(query.copy(asOf = Some(page.asOf))).map(_._1) else IO.pure(page)
+            viewed <- viewedPage(shown)
+        } yield viewed
+    }
+
+    /* The matches of a completed window that have no results and whose engine may be asked for them -- their
+     * results callback was lost -- most recently finished first and a few at most, so that a window full of them
+     * does not wait on them all at once; or `None` when there are none. A match with a result on any seat has its
+     * results, and a match called off is not on the list. */
+    private def owedResults(rows: List[MatchRepo.MatchSeatRow]): Option[List[(GameId, MatchId, String)]] = {
+        val owed = rows
+            .groupBy(r => (r.gameId, r.matchId))
+            .values
+            .filter(seats => seats.forall(_.seatRank.isEmpty) && seats.head.isResultsAskable)
+            .map(_.head)
+            .toList
+            .sortBy(_.completedAt)(Ordering[Option[java.time.Instant]].reverse)
+            .take(OwedResultsLimit)
+            .flatMap(r => r.statusUrl.map(url => (r.gameId, r.matchId, url)))
+        Option.when(owed.nonEmpty)(owed)
+    }
+
+    private val OwedResultsLimit = 4
 
     /** The matches another player has marked public that are still running.
       *
@@ -109,7 +143,7 @@ class MatchService(
               span => repo.listPublicCompletedForPlayer(playerId, span),
               from => repo.hasPublicCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
             )
-        }.flatMap(viewedPage)
+        }.map(_._1).flatMap(viewedPage)
 
     /** The public matches a character is in that are still running, whoever owned it for each: a character's page, as
       * [[publicActive]] is a player's, and under the same rule -- only matches marked public.
@@ -131,7 +165,7 @@ class MatchService(
               span => repo.listPublicCompletedForCharacter(game = gameId, character = characterId, span = span),
               from => repo.hasPublicCompletedBeforeForCharacter(game = gameId, character = characterId, before = from)
             )
-        }.flatMap(viewedPage)
+        }.map(_._1).flatMap(viewedPage)
 
     /* One window of a completed list, whoever's it is: the window the query names, the matches in
      * it, and whether the list holds anything older -- which is what says the oldest match the list
@@ -145,7 +179,7 @@ class MatchService(
     private def completedPage(repo: MatchRepo, query: CompletedQuery)(
         rows: MatchRepo.CompletedSpan => IO[List[MatchRepo.MatchSeatRow]],
         olderThan: Instant => IO[Boolean]
-    ): IO[CompletedPage] =
+    ): IO[(CompletedPage, List[MatchRepo.MatchSeatRow])] =
         for {
             asOf <- query.asOf.fold(repo.now)(IO.pure)
             until = query.until(asOf)
@@ -153,14 +187,17 @@ class MatchService(
             found <- rows(MatchRepo.CompletedSpan(from = from, until = until, gameId = query.gameId))
             summaries <- summarised(repo, found)
             older <- olderThan(from)
-        } yield CompletedPage(
-          matches = summaries,
-          frame = query.frame,
-          page = query.page,
-          asOf = asOf,
-          from = from,
-          until = until,
-          hasOlder = older
+        } yield (
+          CompletedPage(
+            matches = summaries,
+            frame = query.frame,
+            page = query.page,
+            asOf = asOf,
+            from = from,
+            until = until,
+            hasOlder = older
+          ),
+          found
         )
 
     private def viewedPage(page: CompletedPage): IO[CompletedPage] =

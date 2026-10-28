@@ -255,6 +255,16 @@ class MatchRepo(session: Session[IO]) {
     def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
         session.unique(completeMatch)((gameId, matchId))
 
+    private val updateResultsAsked: Command[(GameId, MatchId)] =
+        sql"""UPDATE match SET results_asked_at = now()
+          WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Records that the match's engine is being asked for its results, so that the completed list does not ask again
+      * for an hour.
+      */
+    def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.execute(updateResultsAsked)((gameId, matchId)).void
+
     private val playerId = SkunkIdCodecs.playerId
 
     // participant_id and character_id are decoded as raw int8 and wrapped below, because a
@@ -451,7 +461,10 @@ class MatchRepo(session: Session[IO]) {
                  -- which list the match is being read for.
                  m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
-                 seat_cp.character_id, seat_char.name
+                 seat_cp.character_id, seat_char.name,
+                 -- Whether its engine may be asked for results it has none of: see `MatchSeatRow`.
+                 m.status_url,
+                 m.status_url IS NOT NULL AND (m.results_asked_at IS NULL OR m.results_asked_at < now() - interval '1 hour')
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
@@ -469,7 +482,10 @@ class MatchRepo(session: Session[IO]) {
             AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
-            .query(seatRow)
+            .query(seatRow *: (text.opt *: bool))
+            .map((row, statusUrl, isResultsAskable) =>
+                toSeatRow(row).copy(statusUrl = statusUrl, isResultsAskable = isResultsAskable)
+            )
 
     /* The same two lists, for a player who is not the caller: only the matches marked public.
      *
@@ -605,7 +621,6 @@ class MatchRepo(session: Session[IO]) {
     def listCompletedForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[MatchSeatRow]] =
         session
             .execute(selectOverForPlayer)((playerId, span.gameId, span.from, span.until))
-            .map(_.map(toSeatRow))
 
     /** The public matches one player is in that are still running, one row per seat.
       *
@@ -971,7 +986,11 @@ object MatchRepo {
         // Whose seat it is, so a list can link to the player: `None` for a seat whose character had no owner.
         seatPlayerId: Option[PlayerId] = None,
         // The character in that seat, in a character game.
-        seatCharacter: Option[CharacterName] = None
+        seatCharacter: Option[CharacterName] = None,
+        // On the caller's own completed list only: where its engine is asked about the match, and whether it may be
+        // asked for results the match has none of -- it was created there, and has not been asked in the last hour.
+        statusUrl: Option[String] = None,
+        isResultsAskable: Boolean = false
     )
 
     /** One of a game's parameters, with every value it may take: what a match's settings are resolved against. */

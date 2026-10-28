@@ -822,6 +822,41 @@ class GameEngineService[T](
             } yield result
         }
 
+    /** Asks the engines for the results of finished matches that have none: the ones the caller's completed list found
+      * in the window it is showing. Answers whether any of them has results now, and so whether the list is worth
+      * reading again.
+      *
+      * Those are matches whose results callback was lost: the match was completed by a status answer that carried no
+      * results, from an engine that predates them, or by a forfeit. The time is recorded before the engine is asked,
+      * and the list does not ask about the match again for an hour, however the engine answers or fails to: an engine
+      * with nothing to say for it may be one not yet deployed with results to send, and one that is down or hung would
+      * otherwise hold up every load of the list until it came back. The list is shown either way.
+      *
+      * `owed` is each match's game, id and status url. The list passes a few at most.
+      */
+    def recoverResults(owed: List[(GameId, MatchId, String)]): IO[Boolean] =
+        IO.parTraverseN(math.max(owed.size, 1))(owed) { (gameId, matchId, statusUrl) =>
+            sessionPool
+                .use { session =>
+                    // Committed on its own, so that it stands when the call below fails or is cut off.
+                    new MatchRepo(session).markResultsAsked(gameId, matchId) *>
+                        applyEngineStatus(
+                          session = session,
+                          gameId = gameId,
+                          matchId = matchId,
+                          statusUrl = statusUrl
+                        ) *>
+                        new ResultRepo(session).existsForMatch(gameId, matchId)
+                }
+                .timeout(ResultsRecoveryTimeout)
+                .handleErrorWith(error =>
+                    IO(System.err.println(s"could not recover the results of match ${matchId.value}: $error")).as(false)
+                )
+        }.map(_.exists(identity))
+
+    // A ceiling for an engine that has hung, not a budget: the list waits on it. An engine on a cold start is slow.
+    private val ResultsRecoveryTimeout = 10.seconds
+
     /** The match itself, for a player in it — which is how the UI gets the `playUrl` to send them to the game.
       */
     def read(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
