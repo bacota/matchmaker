@@ -354,7 +354,7 @@ object Tournaments {
                   else
                       busyButton(label = Buttons.tournaments.start, busy = stepBusy(t, "start"))(busy =>
                           Store.runSignedIn(
-                            thenListed(
+                            thenListed(t.gameId)(
                               ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
                             ),
                             busy
@@ -364,7 +364,7 @@ object Tournaments {
           else if (isWaitingOnMe(s))
               busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
                   Store.runSignedIn(
-                    thenListed(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
+                    thenListed(t.gameId)(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
                     busy
                   )(_ => ())
               ).amend(aria.label := Buttons.tournaments.startRoundNamed(competition = t.name))
@@ -824,9 +824,16 @@ object Tournaments {
 
     /* `action`, settled only once the caller's lists have been read again after it: the start buttons in their rows,
      * which the answer takes away, stay busy until the rows are drawn again, rather than offering a second press that
-     * is refused because the first one worked. `thenShown` is the same for the tournament's own page. */
-    private def thenListed[A](action: Future[A]): Future[A] =
-        action.flatMap(answer => Store.reloadMyTournaments().zip(Store.reloadTournamentChoices()).map(_ => answer))
+     * is refused because the first one worked. `thenShown` is the same for the tournament's own page. The game's own
+     * list of competitions is among them: a competition started is no longer one to join there. */
+    private def thenListed[A](gameId: GameId)(action: Future[A]): Future[A] =
+        action.flatMap(answer =>
+            Store
+                .reloadMyTournaments()
+                .zip(Store.reloadTournamentChoices())
+                .zip(Store.reloadTournaments(gameId))
+                .map(_ => answer)
+        )
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
