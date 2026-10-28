@@ -11,7 +11,7 @@ import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
-import com.vivi.matchmaker.util.ChallengeSettings
+import com.vivi.matchmaker.util.{ChallengeSettings, JsonValues}
 
 /** A seat that is to move, and when its clock started. */
 case class SeatClock(participantId: ParticipantId, since: Instant)
@@ -193,100 +193,137 @@ class GameEngineService[T](
         (turnRepo.latestTakenAt(gameId, matchId), new GameApiKeyRepo(session).forGame(gameId)).tupled
             .flatMap { (_, apiKey) =>
                 engine.status(statusUrl = statusUrl, apiKey = apiKey, since = None).flatMap { status =>
-                    session.transaction.use { _ =>
-                        for {
-                            current <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
-                            // Re-read under the lock, and checked here rather than only by the callers:
-                            // their check was made before the status call, and a cancel committing while
-                            // the engine was answering must not be undone by the answer. Writing what the
-                            // engine said would restamp the seats this match's cancel had finished and
-                            // could complete a match its tournament's owner had called off.
-                            outcome <-
-                                if (current.isCancelled) IO.pure((current, false))
-                                else
-                                    for {
-                                        participants <- participantRepo.listForMatch(gameId, matchId)
-                                        byId = participants.map((p, _, _) => p.participantId -> p).toMap
-                                        // Before the deadlines below, which for a total limit are computed from what each seat
-                                        // has spent — and what they have spent is these rows.
-                                        _ <- recordTurns(
-                                          session = session,
-                                          m = current,
-                                          turns =
-                                              status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
-                                          since = None
-                                        )
-                                        used <- timeUsedIn(session, current)
-                                        /* Whether the answer still describes this match, now that it is locked.
-                                         *
-                                         * Every caller asks only about a match it found not yet completed, so one
-                                         * that is completed here was completed while the engine was answering --
-                                         * by the results callback, or by a forfeit the engine knows nothing about.
-                                         * An answer from before that may still say the match is running, and it
-                                         * must not undo the ending. Likewise a numbered answer older than a move
-                                         * already applied describes seats that move has since changed.
-                                         *
-                                         * Either way the answer's turns are recorded above, since they were really
-                                         * taken, and nothing else of it is written. */
-                                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                                        // And a live match's turns are never written at all: they are the
-                                        // engine's to run, nothing tells matchmaker when they change, and a
-                                        // seat marked pending here would stay pending -- and due -- long after
-                                        // the engine had moved on. Only its ending is news; see `liveEnded`.
-                                        seatsCurrent = !current.isCompleted && !current.isLive &&
-                                            status.sequence.forall(seq => applied.forall(_ <= seq))
-                                        // A live match the engine says is over, and matchmaker had not heard
-                                        // was: its results callback went astray. Every seat is retired here,
-                                        // as `recordResults` would have retired them, or the finished match
-                                        // stays in everybody's active lists -- and no later refresh asks
-                                        // again, since the match itself is now complete.
-                                        liveEnded = current.isLive && status.isCompleted && current.completedAt.isEmpty
-                                        _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
-                                            participantRepo
-                                                .update(withTurn(p = p, pending = false, due = None, completed = true))
-                                        }
-                                        _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
-                                            matchRepo
-                                                .advanceMoveSequence(gameId = gameId, matchId = matchId, sequence = seq)
-                                        }
-                                        _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
-                                            byId.get(ParticipantId(reported.participantId)) match {
-                                                case Some(p) =>
-                                                    participantRepo.update(
-                                                      withTurn(
-                                                        p = p,
-                                                        pending = reported.isPending,
-                                                        due =
-                                                            dueFor(current, used)(p.participantId, reported.prevMoveAt),
-                                                        completed = reported.isCompleted
-                                                      )
+                    // The results first, where the engine sent them: a match whose results callback was lost is
+                    // then completed, rated and told of with its results, just as the callback would have done
+                    // it, and what follows finds it completed. Recorded once, as the callback's are: a match that
+                    // has them already is left alone.
+                    status.results
+                        .filter(_ => status.isCompleted)
+                        .traverse_ { reported =>
+                            writeResults(
+                              session = session,
+                              gameId = gameId,
+                              matchId = matchId,
+                              results = reported.results.map(r =>
+                                  ReportedResult(
+                                    participantId = ParticipantId(r.participantId),
+                                    rank = r.rank,
+                                    scores = r.scores.view.mapValues(JsonValues.toScala).toMap,
+                                    isWinner = r.isWinner,
+                                    isForfeit = r.isForfeit
+                                  )
+                              ),
+                              turns = Some(status.turns),
+                              summary = reported.summary,
+                              // The engine answering matchmaker's own call, with the game's key: nothing to check.
+                              authorize = IO.unit,
+                              // Left as it stands, as the rest of this answer is.
+                              onCancelled = IO.unit
+                            )
+                        } *>
+                        session.transaction.use { _ =>
+                            for {
+                                current <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
+                                // Re-read under the lock, and checked here rather than only by the callers:
+                                // their check was made before the status call, and a cancel committing while
+                                // the engine was answering must not be undone by the answer. Writing what the
+                                // engine said would restamp the seats this match's cancel had finished and
+                                // could complete a match its tournament's owner had called off.
+                                outcome <-
+                                    if (current.isCancelled) IO.pure((current, false))
+                                    else
+                                        for {
+                                            participants <- participantRepo.listForMatch(gameId, matchId)
+                                            byId = participants.map((p, _, _) => p.participantId -> p).toMap
+                                            // Before the deadlines below, which for a total limit are computed from what each seat
+                                            // has spent — and what they have spent is these rows.
+                                            _ <- recordTurns(
+                                              session = session,
+                                              m = current,
+                                              turns = status.turns
+                                                  .filter(t => byId.contains(ParticipantId(t.participantId))),
+                                              since = None
+                                            )
+                                            used <- timeUsedIn(session, current)
+                                            /* Whether the answer still describes this match, now that it is locked.
+                                             *
+                                             * Every caller asks only about a match it found not yet completed, so one
+                                             * that is completed here was completed while the engine was answering --
+                                             * by the results callback, or by a forfeit the engine knows nothing about.
+                                             * An answer from before that may still say the match is running, and it
+                                             * must not undo the ending. Likewise a numbered answer older than a move
+                                             * already applied describes seats that move has since changed.
+                                             *
+                                             * Either way the answer's turns are recorded above, since they were really
+                                             * taken, and nothing else of it is written. */
+                                            applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                                            // And a live match's turns are never written at all: they are the
+                                            // engine's to run, nothing tells matchmaker when they change, and a
+                                            // seat marked pending here would stay pending -- and due -- long after
+                                            // the engine had moved on. Only its ending is news; see `liveEnded`.
+                                            seatsCurrent = !current.isCompleted && !current.isLive &&
+                                                status.sequence.forall(seq => applied.forall(_ <= seq))
+                                            // A live match the engine says is over, and matchmaker had not heard
+                                            // was: its results callback went astray. Every seat is retired here,
+                                            // as `recordResults` would have retired them, or the finished match
+                                            // stays in everybody's active lists -- and no later refresh asks
+                                            // again, since the match itself is now complete.
+                                            liveEnded =
+                                                current.isLive && status.isCompleted && current.completedAt.isEmpty
+                                            _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
+                                                participantRepo
+                                                    .update(
+                                                      withTurn(p = p, pending = false, due = None, completed = true)
                                                     )
-                                                // The engine reporting a seat matchmaker does not have is the engine's
-                                                // problem to explain, not a reason to abandon the seats it does have.
-                                                case None => IO.unit
                                             }
-                                        }
-                                        // Set once by the database's clock and kept: a match that is already finished keeps
-                                        // the time it finished, rather than being restamped by every later status the engine
-                                        // answers with. Nothing else about the match changes here, so completion is the only
-                                        // reason to write at all.
-                                        //
-                                        // Only ever towards completed. An answer saying a completed match is still running
-                                        // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
-                                        // result or a forfeit that has already been recorded and mailed.
-                                        completedAt <-
-                                            if (status.isCompleted && current.completedAt.isEmpty)
-                                                matchRepo.complete(gameId, matchId).map(Some(_))
-                                            else IO.pure(current.completedAt)
-                                        updated = current.copy(completedAt = completedAt)
-                                        // The first of those four cases, which is the one where this call is what ended
-                                        // the match: the engine says it is over and matchmaker had not heard. It happens
-                                        // when the results callback went astray and somebody pressed Refresh, and it is
-                                        // the only way a player would ever learn their match had finished.
-                                        endedHere = status.isCompleted && current.completedAt.isEmpty
-                                    } yield (updated, endedHere)
-                        } yield outcome
-                    }
+                                            _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
+                                                matchRepo
+                                                    .advanceMoveSequence(
+                                                      gameId = gameId,
+                                                      matchId = matchId,
+                                                      sequence = seq
+                                                    )
+                                            }
+                                            _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
+                                                byId.get(ParticipantId(reported.participantId)) match {
+                                                    case Some(p) =>
+                                                        participantRepo.update(
+                                                          withTurn(
+                                                            p = p,
+                                                            pending = reported.isPending,
+                                                            due = dueFor(current, used)(
+                                                              p.participantId,
+                                                              reported.prevMoveAt
+                                                            ),
+                                                            completed = reported.isCompleted
+                                                          )
+                                                        )
+                                                    // The engine reporting a seat matchmaker does not have is the engine's
+                                                    // problem to explain, not a reason to abandon the seats it does have.
+                                                    case None => IO.unit
+                                                }
+                                            }
+                                            // Set once by the database's clock and kept: a match that is already finished keeps
+                                            // the time it finished, rather than being restamped by every later status the engine
+                                            // answers with. Nothing else about the match changes here, so completion is the only
+                                            // reason to write at all.
+                                            //
+                                            // Only ever towards completed. An answer saying a completed match is still running
+                                            // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
+                                            // result or a forfeit that has already been recorded and mailed.
+                                            completedAt <-
+                                                if (status.isCompleted && current.completedAt.isEmpty)
+                                                    matchRepo.complete(gameId, matchId).map(Some(_))
+                                                else IO.pure(current.completedAt)
+                                            updated = current.copy(completedAt = completedAt)
+                                            // The first of those four cases, which is the one where this call is what ended
+                                            // the match: the engine says it is over and matchmaker had not heard. It happens
+                                            // when the results callback went astray and somebody pressed Refresh, and it is
+                                            // the only way a player would ever learn their match had finished.
+                                            endedHere = status.isCompleted && current.completedAt.isEmpty
+                                        } yield (updated, endedHere)
+                            } yield outcome
+                        }
                 }
             }
             .flatMap { (updated, endedHere) =>
@@ -545,117 +582,144 @@ class GameEngineService[T](
         summary: Option[String] = None
     ): IO[Unit] =
         sessionPool.use { session =>
-            val gameRepo = new GameRepo[T](session)
-            val matchRepo = new MatchRepo(session)
-            val participantRepo = new ParticipantRepo(session)
-            val resultRepo = new ResultRepo(session)
-            session.transaction
-                .use { _ =>
-                    for {
-                        // Reads the game unlocked; see `requireGame` for why a catalogue row is
-                        // not locked on the way to writing `match` and `participant`.
-                        _ <- authorizeGame(gameRepo = gameRepo, gameId = gameId, callerExternalId = callerExternalId)
-                        existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
-                        _ <- IO.raiseWhen(existing.isCancelled)(
-                          ConflictError(ErrorText.matches.cancelledNoResult)
-                        )
-                        _ <- turns.traverse_ { reported =>
+            writeResults(
+              session = session,
+              gameId = gameId,
+              matchId = matchId,
+              results = results,
+              turns = turns,
+              summary = summary,
+              // Reads the game unlocked; see `requireGame` for why a catalogue row is not locked on the way to
+              // writing `match` and `participant`.
+              authorize = authorizeGame(
+                gameRepo = new GameRepo[T](session),
+                gameId = gameId,
+                callerExternalId = callerExternalId
+              ).void,
+              onCancelled = IO.raiseError(ConflictError(ErrorText.matches.cancelledNoResult))
+            )
+        }
+
+    /* What `recordResults` does once the caller is known to be the engine, and what a status answer carrying the
+     * results does when their callback was lost: see `applyEngineStatus`. `authorize` runs first, in the transaction;
+     * `onCancelled` is what a match called off answers instead, under its lock. */
+    private def writeResults(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        results: List[ReportedResult],
+        turns: Option[List[EngineTurn]],
+        summary: Option[String],
+        authorize: IO[Unit],
+        onCancelled: IO[Unit]
+    ): IO[Unit] = {
+        val matchRepo = new MatchRepo(session)
+        val participantRepo = new ParticipantRepo(session)
+        val resultRepo = new ResultRepo(session)
+        session.transaction
+            .use { _ =>
+                for {
+                    _ <- authorize
+                    existing <- requireMatchForUpdate(repo = matchRepo, gameId = gameId, matchId = matchId)
+                    // Nothing of a match called off is written, where `onCancelled` lets it through.
+                    _ <- IO.whenA(existing.isCancelled)(onCancelled)
+                    _ <- turns.filterNot(_ => existing.isCancelled).traverse_ { reported =>
+                        for {
+                            seats <- participantRepo.listForMatch(gameId, matchId)
+                            known = seats.map(_._1.participantId.value).toSet
+                            strangers = reported.map(_.participantId).filterNot(known).distinct
+                            _ <- IO.raiseUnless(strangers.isEmpty)(
+                              ValidationError(ErrorText.matches.turnsByStrangers)
+                            )
+                            _ <- recordTurns(session = session, m = existing, turns = reported, since = None)
+                        } yield ()
+                    }
+                    /* Whether the results are already recorded, which is what makes a repeated
+                     * callback a no-op. Not the same question as whether the match is completed: a
+                     * match whose results callback went astray is completed by `applyEngineStatus`
+                     * when somebody refreshes it, from a status that carries no ranks -- and the
+                     * callback arriving after that is the first word on how it came out. It is
+                     * recorded, and the match rated, as if it had arrived first; only the completion
+                     * itself, and the news of it, are already done. Under the match's lock, so two
+                     * deliveries of it cannot both find nothing recorded. */
+                    recorded <-
+                        if (existing.isCompleted) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
+                    // Whether this call is what ended the match, rather than a late or repeated
+                    // callback: only the first ending is news.
+                    ended <-
+                        if (recorded || existing.isCancelled) IO.pure(false)
+                        else
                             for {
-                                seats <- participantRepo.listForMatch(gameId, matchId)
-                                known = seats.map(_._1.participantId.value).toSet
-                                strangers = reported.map(_.participantId).filterNot(known).distinct
-                                _ <- IO.raiseUnless(strangers.isEmpty)(
-                                  ValidationError(ErrorText.matches.turnsByStrangers)
+                                participants <- participantRepo.listForMatch(gameId, matchId)
+                                known = participants.map(_._1.participantId).toSet
+                                unknown = results.map(_.participantId).filterNot(known)
+                                _ <- IO.raiseUnless(unknown.isEmpty)(
+                                  ValidationError(ErrorText.matches.unknownSeats)
                                 )
-                                _ <- recordTurns(session = session, m = existing, turns = reported, since = None)
-                            } yield ()
-                        }
-                        /* Whether the results are already recorded, which is what makes a repeated
-                         * callback a no-op. Not the same question as whether the match is completed: a
-                         * match whose results callback went astray is completed by `applyEngineStatus`
-                         * when somebody refreshes it, from a status that carries no ranks -- and the
-                         * callback arriving after that is the first word on how it came out. It is
-                         * recorded, and the match rated, as if it had arrived first; only the completion
-                         * itself, and the news of it, are already done. Under the match's lock, so two
-                         * deliveries of it cannot both find nothing recorded. */
-                        recorded <-
-                            if (existing.isCompleted) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
-                        // Whether this call is what ended the match, rather than a late or repeated
-                        // callback: only the first ending is news.
-                        ended <-
-                            if (recorded) IO.pure(false)
-                            else
-                                for {
-                                    participants <- participantRepo.listForMatch(gameId, matchId)
-                                    known = participants.map(_._1.participantId).toSet
-                                    unknown = results.map(_.participantId).filterNot(known)
-                                    _ <- IO.raiseUnless(unknown.isEmpty)(
-                                      ValidationError(ErrorText.matches.unknownSeats)
-                                    )
-                                    _ <- IO.unlessA(existing.isCompleted)(
-                                      participants.traverse_((participant, _, _) =>
-                                          participantRepo.update(
-                                            withTurn(p = participant, pending = false, due = None, completed = true)
-                                          )
+                                _ <- IO.unlessA(existing.isCompleted)(
+                                  participants.traverse_((participant, _, _) =>
+                                      participantRepo.update(
+                                        withTurn(p = participant, pending = false, due = None, completed = true)
+                                      )
+                                  )
+                                )
+                                // In this transaction, under the match's lock: the ratings move exactly
+                                // when the results are recorded, and a repeated callback, finding them
+                                // recorded, does not move them again. A friendly match does not move them.
+                                // Before the results, which carry what the match did to each rating.
+                                deltas <-
+                                    if (existing.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
+                                    else
+                                        EloRatingService.rate(
+                                          session = session,
+                                          gameId = gameId,
+                                          matchId = matchId,
+                                          ranks = results.map(r => r.participantId -> r.rank).toMap,
+                                          // An engine's own forfeit: a live match it ended on a clock.
+                                          forfeit = results.exists(_.isForfeit)
+                                        )
+                                _ <- results.traverse(r =>
+                                    resultRepo.create(
+                                      Result(
+                                        gameId = gameId,
+                                        participantId = r.participantId,
+                                        rank = r.rank,
+                                        scores = r.scores,
+                                        isWinner = r.isWinner,
+                                        isForfeit = r.isForfeit,
+                                        eloDelta = deltas.overall.get(r.participantId),
+                                        eloRoleDelta = deltas.inRole.get(r.participantId)
                                       )
                                     )
-                                    // In this transaction, under the match's lock: the ratings move exactly
-                                    // when the results are recorded, and a repeated callback, finding them
-                                    // recorded, does not move them again. A friendly match does not move them.
-                                    // Before the results, which carry what the match did to each rating.
-                                    deltas <-
-                                        if (existing.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
-                                        else
-                                            EloRatingService.rate(
-                                              session = session,
-                                              gameId = gameId,
-                                              matchId = matchId,
-                                              ranks = results.map(r => r.participantId -> r.rank).toMap,
-                                              // An engine's own forfeit: a live match it ended on a clock.
-                                              forfeit = results.exists(_.isForfeit)
-                                            )
-                                    _ <- results.traverse(r =>
-                                        resultRepo.create(
-                                          Result(
-                                            gameId = gameId,
-                                            participantId = r.participantId,
-                                            rank = r.rank,
-                                            scores = r.scores,
-                                            isWinner = r.isWinner,
-                                            isForfeit = r.isForfeit,
-                                            eloDelta = deltas.overall.get(r.participantId),
-                                            eloRoleDelta = deltas.inRole.get(r.participantId)
-                                          )
-                                        )
-                                    )
-                                    // Once, under the lock — with the database's clock, not the lambda's. A
-                                    // match `applyEngineStatus` completed keeps the time it did so.
-                                    _ <- IO.unlessA(existing.isCompleted)(matchRepo.complete(gameId, matchId).void)
-                                    // Cleaned rather than refused: a summary that is unsafe or too long is the
-                                    // engine's mistake, and the results it came with are still the results. What
-                                    // is left of it is stored; nothing at all, and the table is shown instead.
-                                    _ <- SummaryHtml
-                                        .accept(summary)
-                                        .traverse_(matchRepo.setResultSummary(gameId, matchId, _))
-                                } yield !existing.isCompleted
-                    } yield (existing, ended)
-                }
-                .flatMap { (played, ended) =>
-                    // Before the mail, so that anything it says about the match is said of every turn.
-                    // Only for an engine that did not send its turns: one that did had them recorded above.
-                    val reconciled = if (ended && turns.isEmpty) recoverTurns(session, played) else IO.unit
-                    // Everyone in it, because nobody in it did this: the engine finished the game -- or,
-                    // in a live match, ended it on a clock, which is told as a forfeit is.
-                    val ending = if (results.exists(_.isForfeit)) MatchEnding.Forfeited else MatchEnding.Finished
-                    reconciled *> (if (ended)
-                                       notifications.matchEnded(session = session, played = played, ending = ending)
-                                   else IO.unit) *>
-                        /* Every time, and not only when this call ended the match: settling is idempotent, so
-                         * a repeated callback saying it again costs nothing, and is the one way a match whose
-                         * ending failed to be queued gets another chance at its archive. */
-                        endings.ended(gameId, matchId)
-                }
-        }
+                                )
+                                // Once, under the lock — with the database's clock, not the lambda's. A
+                                // match `applyEngineStatus` completed keeps the time it did so.
+                                _ <- IO.unlessA(existing.isCompleted)(matchRepo.complete(gameId, matchId).void)
+                                // Cleaned rather than refused: a summary that is unsafe or too long is the
+                                // engine's mistake, and the results it came with are still the results. What
+                                // is left of it is stored; nothing at all, and the table is shown instead.
+                                _ <- SummaryHtml
+                                    .accept(summary)
+                                    .traverse_(matchRepo.setResultSummary(gameId, matchId, _))
+                            } yield !existing.isCompleted
+                } yield (existing, ended)
+            }
+            .flatMap { (played, ended) =>
+                // Before the mail, so that anything it says about the match is said of every turn.
+                // Only for an engine that did not send its turns: one that did had them recorded above.
+                val reconciled = if (ended && turns.isEmpty) recoverTurns(session, played) else IO.unit
+                // Everyone in it, because nobody in it did this: the engine finished the game -- or,
+                // in a live match, ended it on a clock, which is told as a forfeit is.
+                val ending = if (results.exists(_.isForfeit)) MatchEnding.Forfeited else MatchEnding.Finished
+                reconciled *> (if (ended)
+                                   notifications.matchEnded(session = session, played = played, ending = ending)
+                               else IO.unit) *>
+                    /* Every time, and not only when this call ended the match: settling is idempotent, so
+                     * a repeated callback saying it again costs nothing, and is the one way a match whose
+                     * ending failed to be queued gets another chance at its archive. */
+                    IO.unlessA(played.isCancelled)(endings.ended(gameId, matchId))
+            }
+    }
 
     /* The last chance to record turns whose move callbacks never arrived, for an engine whose results
      * do not carry its turns. One that sends them has them recorded with the results, atomically, and
@@ -740,9 +804,16 @@ class GameEngineService[T](
                 (existing, statusUrl) = prepared
 
                 // Already over: the engine has nothing left to tell us that matchmaker would act on, and
-                // asking would be a network call per page view.
+                // asking would be a network call per page view -- unless the match was completed without its
+                // results, its callback lost, when the engine's answer is where they are recovered from.
+                isResultless <-
+                    if (existing.isCompleted && !existing.isCancelled)
+                        new ResultRepo(session).existsForMatch(gameId, matchId).map(!_)
+                    else IO.pure(false)
                 result <-
-                    if (existing.isCompleted || existing.isCancelled) IO.pure(existing)
+                    if (isResultless)
+                        applyEngineStatus(session = session, gameId = gameId, matchId = matchId, statusUrl = statusUrl)
+                    else if (existing.isCompleted || existing.isCancelled) IO.pure(existing)
                     else
                         // The engine's answer first, then the clock: a turn that looks overdue in
                         // matchmaker's copy may have been taken since, and the status call is what says so.

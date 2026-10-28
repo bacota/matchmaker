@@ -195,6 +195,29 @@ class ProtocolSpec extends FunSuite {
         assertEquals(read[MmGameStatusResponse](write(status)).sequence, Some(4L))
     }
 
+    test("a status answer's results read as matchmaker's") {
+        val status = Protocol.GameStatusResponse(
+          isCompleted = true,
+          participants = Nil,
+          results = Some(
+            Protocol.MatchResults(
+              results = List(
+                Protocol.ResultEntry(
+                  participantId = 7L,
+                  rank = 1,
+                  scores = Map("outcome" -> ujson.Str("win")),
+                  isWinner = true
+                )
+              ),
+              summary = Some("<strong>a</strong> won")
+            )
+          )
+        )
+        val answered = read[MmGameStatusResponse](write(status)).results
+        assertEquals(answered.map(_.results.map(r => (r.participantId, r.rank, r.isWinner))), Some(List((7L, 1, true))))
+        assertEquals(answered.flatMap(_.summary), Some("<strong>a</strong> won"))
+    }
+
     test("results carrying the match's turns read as matchmaker's MatchResults, turns and all") {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
         val results = Protocol.MatchResults(

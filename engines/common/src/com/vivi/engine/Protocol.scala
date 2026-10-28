@@ -108,7 +108,12 @@ object Protocol {
         /** The number of moves this answer reflects: the same numbering as a move callback's `state.sequence`, so that
           * matchmaker can tell an answer a callback has since overtaken.
           */
-        sequence: Option[Long] = None
+        sequence: Option[Long] = None,
+        /** Once the match is over, how it came out — what the results callback sent, less its turns, which are in
+          * `turns` here. The callback is sent once, so this is how matchmaker recovers a result whose callback was
+          * lost.
+          */
+        results: Option[MatchResults] = None
     )
 
     // ---- what the engine calls back with --------------------------------------------------

@@ -273,7 +273,8 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
           // No `since` means the whole game, which is what a matchmaker with nothing recorded for
           // this match is asking for.
           turns = engineTurns(game.turns(m).filter(t => since.forall(at => t.takenAt.isAfter(at)))),
-          sequence = Some(game.sequence(m))
+          sequence = Some(game.sequence(m)),
+          results = Option.when(over)(resultsOf(m).copy(turns = None))
         )
     }
 

@@ -115,8 +115,24 @@ case class GameStatusResponse(
       * the engine is asked outside any transaction, and a move committed while it was answering must not be undone by
       * the answer.
       */
-    sequence: Option[Long] = None
+    sequence: Option[Long] = None,
+    /** How the match came out, from an engine that says so once it is over: what its results callback sent. The
+      * callback is sent once, so this is how a result whose callback was lost is recorded after all.
+      */
+    results: Option[EngineResults] = None
 )
+
+/** One seat's result in a status answer, as the results callback gives it. */
+case class EngineResult(
+    participantId: Long,
+    rank: Int,
+    scores: Map[String, ujson.Value] = Map.empty,
+    isWinner: Boolean,
+    isForfeit: Boolean = false
+)
+
+/** A finished match's results in a status answer, and the engine's line of HTML saying how it came out. */
+case class EngineResults(results: List[EngineResult], summary: Option[String] = None)
 
 object EngineJson {
     given ReadWriter[Instant] = upickle.default.readwriter[String].bimap(_.toString, Instant.parse)
@@ -126,6 +142,8 @@ object EngineJson {
     given ReadWriter[CreateGameResponse] = macroRW
     given ReadWriter[EngineParticipantStatus] = macroRW
     given ReadWriter[EngineTurn] = macroRW
+    given ReadWriter[EngineResult] = macroRW
+    given ReadWriter[EngineResults] = macroRW
     given ReadWriter[GameStatusResponse] = macroRW
 }
 
