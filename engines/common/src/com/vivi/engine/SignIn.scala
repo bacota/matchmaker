@@ -196,6 +196,11 @@ ${authScript(Some(login))}
    * at once and must share one redemption rather than race to spend the token each. */
   let refreshing = null;
 
+  /* Which session the tab holds, moved on by `clearSession`: a refresh begun in one session stores
+   * nothing once the tab has left it, or Cognito answering after Sign out, or after a hand-off,
+   * would put the old session back. */
+  let generation = 0;
+
   async function freshIdToken() {
     const token = idToken();
     if (token) return token;
@@ -218,17 +223,19 @@ ${authScript(Some(login))}
    * connection would sign a player out mid-game over something that would have worked a second
    * later. */
   async function redeem(token) {
+    const begun = generation;
     try {
       const outcome = outcomeOf(await idp("InitiateAuth", {
         AuthFlow: "REFRESH_TOKEN_AUTH",
         ClientId: login.clientId,
         AuthParameters: { REFRESH_TOKEN: token }
       }));
+      if (generation !== begun) return;
       if (outcome.tokens) storeTokens(outcome.tokens);
       // A 200 with no tokens in it. Retrying would loop, so this ends the session too.
       else clearSession();
     } catch (error) {
-      if (error && error.idp) clearSession();
+      if (error && error.idp && generation === begun) clearSession();
     }
   }
 
@@ -242,6 +249,7 @@ ${authScript(Some(login))}
   }
 
   function clearSession() {
+    generation++;
     [TokenKey, AccessKey, RefreshKey, VerifierKey, StateKey].forEach(key => sessionStorage.removeItem(key));
     renderSignedInAs();
   }
