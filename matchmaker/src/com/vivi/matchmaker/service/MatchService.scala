@@ -103,7 +103,7 @@ class MatchService(
             .filter(seats => seats.exists(_.seatRank.isEmpty) && seats.head.isResultsAskable)
             .map(_.head)
             .toList
-            .sortBy(_.completedAt)(Ordering[Option[java.time.Instant]].reverse)
+            .sortBy(_.completedAt)(using Ordering[Option[java.time.Instant]].reverse)
             .take(OwedResultsLimit)
             .flatMap(r => r.statusUrl.map(url => (r.gameId, r.matchId, url)))
         Option.when(owed.nonEmpty)(owed)

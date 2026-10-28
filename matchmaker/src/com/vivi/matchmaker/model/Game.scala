@@ -118,7 +118,7 @@ case class Game(
     url: String,
     isActive: Boolean,
     roles: Seq[GameRole],
-    parameters: Seq[GameParameter[_]],
+    parameters: Seq[GameParameter[?]],
     // The engine's identity. A request made on the game's behalf (a move, a result, a character
     // it made) is authorized by the API key it carries being one stored with a game of this
     // identity.

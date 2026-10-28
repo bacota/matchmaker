@@ -180,7 +180,7 @@ object Ranking {
                 here
                     .groupBy(e => key(run, e) ++ tieBreakers.flatMap(key(_, e)))
                     .toList
-                    .sortBy(_._1)(byKey)
+                    .sortBy(_._1)(using byKey)
                     .map(_._2.sorted)
             }
         competition(groups)

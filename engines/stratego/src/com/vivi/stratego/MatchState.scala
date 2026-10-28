@@ -336,7 +336,6 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
                         s"${m.capturePoints(w)}–${m.capturePoints(w.other)}."
                 case (Ending.NoMoves, None) => "Neither side could move. A draw."
                 case (Ending.MoveCap, _)    => s"A draw: the limit of ${moves(m.maxMoves)} was reached."
-                case (_, Some(w))           => s"${who(w)} wins."
                 case (_, None)              => "A draw."
             }
         }

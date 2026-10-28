@@ -538,7 +538,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       * outside `game_parameter_value` points at a parameter, so a parameter that is gone is simply gone, and an admin
       * removing one is a thing they are allowed to do.
       */
-    private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[_]]): IO[Unit] =
+    private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[?]]): IO[Unit] =
         for {
             _ <- session.execute(clearDefaultValues)(gameId)
             _ <- session.execute(deleteParameterValues)(gameId)

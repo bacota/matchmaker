@@ -5,7 +5,6 @@ import cats.syntax.all._
 import skunk.{Query, SSL, Session, Void}
 import skunk.codec.all.bool
 import skunk.implicits._
-import natchez.Trace.Implicits.noop
 import org.typelevel.otel4s.trace.Tracer.Implicits.noop as noopTracer
 import org.typelevel.otel4s.metrics.Meter.Implicits.noop as noopMeter
 
@@ -27,16 +26,8 @@ private[service] object DbSession {
       * borrowed ([[checked]]).
       */
     def pooled(config: DbConfig, max: Int): Resource[IO, SessionPool] =
-        Session
-            .pooled[IO](
-              host = config.host,
-              port = config.port,
-              user = config.user,
-              database = config.database,
-              password = config.password,
-              ssl = SSL.Trusted,
-              max = max
-            )
+        builder(config)
+            .pooled(max)
             .map(pool => checked(pool = pool, attempts = max + 1))
 
     private val alive: Query[Void, Boolean] = sql"VALUES (true)".query(bool)
@@ -57,12 +48,15 @@ private[service] object DbSession {
 
     /** A single, unpooled session. Retained for callers that want one connection and no pool. */
     def resource(config: DbConfig): SessionPool =
-        Session.single[IO](
-          host = config.host,
-          port = config.port,
-          user = config.user,
-          database = config.database,
-          password = config.password,
-          ssl = SSL.Trusted
-        )
+        builder(config).single
+
+    /* The connection `config` describes, over SSL that trusts the server's certificate. */
+    private def builder(config: DbConfig): Session.Builder[IO] =
+        Session
+            .Builder[IO]
+            .withHost(config.host)
+            .withPort(config.port)
+            .withCredentials(Session.Credentials(user = config.user, password = config.password))
+            .withDatabase(config.database)
+            .withSSL(SSL.Trusted)
 }

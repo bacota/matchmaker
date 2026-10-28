@@ -215,7 +215,7 @@ object Notifications {
                         case scala.util.Failure(error) =>
                             Outcome(true, Option(error.getMessage).getOrElse(error.toString))
                     }))
-                }(scala.concurrent.ExecutionContext.Implicits.global)
+                }(using scala.concurrent.ExecutionContext.Implicits.global)
             }
 
         def dismiss(): Unit = {
