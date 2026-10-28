@@ -258,7 +258,7 @@ class MatchRepo(session: Session[IO]) {
     private val selectResultlessForPlayer: Query[(PlayerId, Int), (GameId, MatchId, String)] =
         sql"""SELECT m.game_id, m.match_id, m.status_url FROM match m
           WHERE m.completed_at IS NOT NULL AND NOT m.is_cancelled AND m.status_url IS NOT NULL
-            AND m.results_asked_at IS NULL
+            AND (m.results_asked_at IS NULL OR m.results_asked_at < now() - interval '1 hour')
             AND EXISTS (SELECT 1 FROM participant p
                          WHERE p.game_id = m.game_id AND p.match_id = m.match_id AND p.player_id = $playerIdOf)
             AND NOT EXISTS (SELECT 1 FROM participant p JOIN result r
@@ -267,9 +267,9 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY m.completed_at DESC
           LIMIT $int4""".query(gameId *: matchId *: text)
 
-    /** The player's finished matches that have no results and whose engine has not yet been asked for them, most
-      * recently finished first: those whose results callback was lost. Not one called off, which has no result to
-      * recover, nor one never created in its engine.
+    /** The player's finished matches that have no results and whose engine has not been asked for them in the last
+      * hour, most recently finished first: those whose results callback was lost. Not one called off, which has no
+      * result to recover, nor one never created in its engine.
       */
     def listResultlessForPlayer(playerId: PlayerId, limit: Int): IO[List[(GameId, MatchId, String)]] =
         session.execute(selectResultlessForPlayer)((playerId, limit))
@@ -278,7 +278,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""UPDATE match SET results_asked_at = now()
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Records that the match's engine has answered about its results, so that it is not asked again. */
+    /** Records that the match's engine has answered about its results, so that it is not asked again for an hour. */
     def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
         session.execute(updateResultsAsked)((gameId, matchId)).void
 

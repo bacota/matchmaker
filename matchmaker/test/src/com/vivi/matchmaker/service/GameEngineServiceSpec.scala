@@ -20,6 +20,7 @@ import com.vivi.matchmaker.persistence.{
     ParticipantRepo,
     PlayerRepo,
     ResultRepo,
+    SkunkIdCodecs,
     TestMatches,
     TestSession,
     TurnRepo
@@ -1538,7 +1539,7 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
-    property("a finished match whose engine answered with no results is not asked about again") {
+    property("a finished match whose engine answered with no results is not asked about again for an hour") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
@@ -1562,8 +1563,20 @@ class GameEngineServiceSpec extends PropertySuite {
                     _ <- services.engine.recoverResults(externalId)
                     _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
                     _ <- services.engine.recoverResults(externalId)
-                    after <- resultsOf(started)
-                } yield after.isEmpty
+                    within <- resultsOf(started)
+                    // An hour on, it is asked again, and this time the engine has them.
+                    _ <- TestSession.resource.use(
+                      _.execute(
+                        sql"""UPDATE match SET results_asked_at = results_asked_at - interval '61 minutes'
+                              WHERE match_id = ${SkunkIdCodecs.matchId}""".command
+                      )(started.matchId)
+                    )
+                    _ <- services.engine.recoverResults(externalId)
+                    later <- resultsOf(started)
+                } yield within.isEmpty && later.map(_.participantId).toSet == Set(
+                  mine.participantId,
+                  theirs.participantId
+                )
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }

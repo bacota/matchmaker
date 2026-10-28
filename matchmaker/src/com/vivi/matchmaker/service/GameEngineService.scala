@@ -827,8 +827,9 @@ class GameEngineService[T](
       *
       * Those are matches whose results callback was lost: the match was completed by a status answer that carried no
       * results, from an engine that predates them, or by a forfeit. Each is asked about until its engine answers, and
-      * then never again — an engine with nothing to say for it will not have more next time. An engine that cannot be
-      * reached, or is slow to answer, is asked again on the next load; the list is read either way, as it stands.
+      * then not for another hour: an engine with nothing to say for it may be one not yet deployed with results to
+      * send, and an hour later it may have them. An engine that cannot be reached, or is slow to answer, is asked again
+      * on the next load; the list is read either way, as it stands.
       *
       * A few a load, most recently finished first, so that a player with a long history of them does not wait on them
       * all at once.
