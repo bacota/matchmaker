@@ -163,10 +163,7 @@ object Router {
             /* Completed lists are a window of time at a time -- `CompletedQuery`, read from
              * `?frame=day|week|month|year&page=<n>&asOf=<instant>&gameId=<id>`, every one optional. */
             case ("GET", "me" :: "matches" :: "completed" :: Nil) =>
-                withCompletedQuery(request)(query =>
-                    // Their missing results first, so that the list, and the results read after it, have them.
-                    ok(services.engine.recoverResults(caller) *> services.matches.completed(caller, query))
-                )
+                withCompletedQuery(request)(query => ok(services.matches.completed(caller, query)))
 
             /* Finding somebody, and then looking at them. Three routes and no body between them:
              * the prefix is a query parameter because this is a GET that reads, and the player's
