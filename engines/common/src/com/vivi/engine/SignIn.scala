@@ -196,6 +196,11 @@ ${authScript(Some(login))}
    * at once and must share one redemption rather than race to spend the token each. */
   let refreshing = null;
 
+  /* Which session the tab holds, moved on by `clearSession`: a refresh begun in one session stores
+   * nothing once the tab has left it, or Cognito answering after Sign out, or after a hand-off,
+   * would put the old session back. */
+  let generation = 0;
+
   async function freshIdToken() {
     const token = idToken();
     if (token) return token;
@@ -218,17 +223,19 @@ ${authScript(Some(login))}
    * connection would sign a player out mid-game over something that would have worked a second
    * later. */
   async function redeem(token) {
+    const begun = generation;
     try {
       const outcome = outcomeOf(await idp("InitiateAuth", {
         AuthFlow: "REFRESH_TOKEN_AUTH",
         ClientId: login.clientId,
         AuthParameters: { REFRESH_TOKEN: token }
       }));
+      if (generation !== begun) return;
       if (outcome.tokens) storeTokens(outcome.tokens);
       // A 200 with no tokens in it. Retrying would loop, so this ends the session too.
       else clearSession();
     } catch (error) {
-      if (error && error.idp) clearSession();
+      if (error && error.idp && generation === begun) clearSession();
     }
   }
 
@@ -242,6 +249,7 @@ ${authScript(Some(login))}
   }
 
   function clearSession() {
+    generation++;
     [TokenKey, AccessKey, RefreshKey, VerifierKey, StateKey].forEach(key => sessionStorage.removeItem(key));
     renderSignedInAs();
   }
@@ -253,12 +261,25 @@ ${authScript(Some(login))}
    *
    * The address is read from the stored ID token whether or not it has expired: a refresh does not
    * change it, and a tab holding only a refresh token is still signed in. The text is set only when
-   * it changes, so the hourly refresh is not announced. */
+   * it changes, so the hourly refresh is not announced.
+   *
+   * A line shown after the page has loaded -- a sign-in on the page -- gets its text a moment after
+   * it is unhidden: a live region is heard only once it is there before its text. One shown as the
+   * page loads gets it at once, since there is nothing to announce and an empty line would flash. */
   function renderSignedInAs() {
     const line = typeof document === "undefined" ? null : document.getElementById("signed-in-as");
     if (!line) return;
     const isShown = !!login && isSignedIn();
+    const isAppearing = isShown && line.hidden && document.readyState === "complete";
     line.hidden = !isShown;
+    if (isAppearing) setTimeout(writeSignedInAs, 100);
+    else writeSignedInAs();
+  }
+
+  /* The line's words for the session as it is when this runs, which for a delayed write may have
+   * moved on since it was asked for. */
+  function writeSignedInAs() {
+    const isShown = !!login && isSignedIn();
     const token = sessionStorage.getItem(TokenKey);
     const claims = token && claimsOf(token);
     const email = claims && typeof claims.email === "string" ? claims.email : null;

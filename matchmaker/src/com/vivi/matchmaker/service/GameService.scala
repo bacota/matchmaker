@@ -121,8 +121,8 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * A game whose roles are all optional may do without them -- with a range of players, or with neither, when it
       * seats two or more a match: no match needs any of them, so none is lost. Its roles are retired rather than
       * deleted (`GameRepo.update`). Not while a competition of it is open or under way, though, since that was made
-      * for, and may be seating, the roles. Its tournaments are read unlocked, as a tournament's creation reads the
-      * game: see the reference-table exception in `.claude/rules/backend.md`.
+      * for, and may be seating, the roles. The game is held FOR UPDATE by then, and a tournament's creation holds it
+      * FOR SHARE, so one being made meanwhile is committed, and counted, before its tournaments are read.
       */
     private def checkRoles(existing: Game, incoming: Game, tournaments: TournamentRepo): IO[Unit] =
         if (incoming.roles.isEmpty && existing.roles.nonEmpty) {

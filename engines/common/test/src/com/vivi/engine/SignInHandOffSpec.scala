@@ -42,13 +42,14 @@ class SignInHandOffSpec extends FunSuite {
 
     /** Loads the page's sign-in script with `hash` — a JavaScript expression — as `location.hash`, and with `stored`
       * already in `sessionStorage`. The page has the `#signed-in-as` line; `isSignOutPressed` presses its button once
-      * the script has run.
+      * the script has run. `then` is JavaScript run after that, and awaited, before what is left is read.
       */
     private def load(
         hash: String,
         stored: Map[String, String] = Map.empty,
         login: Option[LoginConfig] = None,
-        isSignOutPressed: Boolean = false
+        isSignOutPressed: Boolean = false,
+        `then`: String = ""
     ): After = {
         val program =
             s"""const store = new Map(Object.entries(${ujson.write(
@@ -72,8 +73,11 @@ const elements = {
 globalThis.document = { getElementById: id => elements[id] || null };
 ${signIn.authScript(login)}
 if ($isSignOutPressed) listeners.click();
-const line = elements["signed-in-as"].hidden ? null : elements["signed-in-who"].textContent;
-console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line, reloaded }));
+(async () => {
+  ${`then`}
+  const line = elements["signed-in-as"].hidden ? null : elements["signed-in-who"].textContent;
+  console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line, reloaded }));
+})();
 """
         val file = Files.createTempFile("signin-handoff", ".js")
         try {
@@ -199,6 +203,45 @@ console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line,
           handedHash("idToken" -> id, "refreshToken" -> "r-1"),
           login = Some(login),
           isSignOutPressed = true
+        )
+        assertEquals(after.storage, Map.empty[String, String])
+        assertEquals(after.signedInAs, None)
+        assert(after.isReloaded)
+    }
+
+    // A live region is heard only if it is there before its text, so a line that appears after the page has loaded
+    // is unhidden first and written a moment later.
+    test("a sign-in after the page has loaded shows the line before saying whose account it is") {
+        val id = idToken("email" -> "alice@example.com", "exp" -> inAnHour)
+        val after = load(
+          "\"\"",
+          login = Some(login),
+          `then` = s"""
+            document.readyState = "complete";
+            storeTokens({ idToken: "$id" });
+            if (elements["signed-in-as"].hidden) throw new Error("the line is still hidden");
+            if (elements["signed-in-who"].textContent !== "") throw new Error("written as it was unhidden");
+            await new Promise(resolve => setTimeout(resolve, 200));
+          """
+        )
+        assertEquals(after.signedInAs, Some("Signed in as alice@example.com — not you?"))
+    }
+
+    // The reload is not instant, and Cognito may answer a refresh begun before Sign out was pressed in the meantime.
+    test("a refresh that Cognito answers after signing out does not sign the tab back in") {
+        val fresh = idToken("email" -> "alice@example.com", "exp" -> inAnHour)
+        val after = load(
+          "\"\"",
+          stored = Map("stratego.refreshToken" -> "r-1"),
+          login = Some(login),
+          `then` = s"""
+            let answer;
+            globalThis.fetch = () => new Promise(resolve => { answer = resolve; });
+            const refreshing = freshIdToken();
+            listeners.click();
+            answer({ ok: true, text: async () => JSON.stringify({ AuthenticationResult: { IdToken: "$fresh" } }) });
+            await refreshing;
+          """
         )
         assertEquals(after.storage, Map.empty[String, String])
         assertEquals(after.signedInAs, None)

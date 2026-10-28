@@ -354,7 +354,7 @@ object Tournaments {
                   else
                       busyButton(label = Buttons.tournaments.start, busy = stepBusy(t, "start"))(busy =>
                           Store.runSignedIn(
-                            thenListed(
+                            thenListed(t.gameId)(
                               ApiClient.tournamentStep(gameId = t.gameId, tournamentId = t.tournamentId, step = "start")
                             ),
                             busy
@@ -364,7 +364,7 @@ object Tournaments {
           else if (isWaitingOnMe(s))
               busyButton(label = Buttons.tournaments.startRound, busy = startRoundBusy(t))(busy =>
                   Store.runSignedIn(
-                    thenListed(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
+                    thenListed(t.gameId)(ApiClient.startRound(gameId = t.gameId, tournamentId = t.tournamentId)),
                     busy
                   )(_ => ())
               ).amend(aria.label := Buttons.tournaments.startRoundNamed(competition = t.name))
@@ -412,22 +412,27 @@ object Tournaments {
 
     /* Joining from a game's list. A plain game's entry is made here, and the competition's page then shown, which moves
      * focus off a row the entry may take out of the list; a character game's is made on that page, which asks which
-     * character enters. Refused, the list is read again: what it offered had stopped being true. */
+     * character enters. Refused, the list is read again: what it offered had stopped being true. The answer takes the
+     * player to the competition only if they are still where they pressed Join, as a save does. */
     private def joinButton(game: Game, t: Tournament): HtmlElement = {
         val shown = () => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
         busyButton(label = Buttons.tournaments.join, busy = answerBusy(t))(busy =>
             if (game.gameType == GameType.Character) shown()
-            else
+            else {
+                val from = Store.page.now()
                 Store.runSignedIn(
                   ApiClient.enterTournament(gameId = t.gameId, tournamentId = t.tournamentId, characterId = None),
                   busy,
                   onFailure = _ => Store.reloadTournaments(t.gameId)
                 ) { _ =>
-                    Views.announce(s"Joined ${t.name}.")
                     Store.reloadTournaments(t.gameId)
                     Store.reloadMyTournaments()
-                    shown()
+                    if (Store.page.now() == from) {
+                        Views.announce(s"Joined ${t.name}.")
+                        shown()
+                    }
                 }
+            }
         ).amend(aria.label := Buttons.tournaments.joinNamed(competition = t.name))
     }
 
@@ -819,9 +824,16 @@ object Tournaments {
 
     /* `action`, settled only once the caller's lists have been read again after it: the start buttons in their rows,
      * which the answer takes away, stay busy until the rows are drawn again, rather than offering a second press that
-     * is refused because the first one worked. `thenShown` is the same for the tournament's own page. */
-    private def thenListed[A](action: Future[A]): Future[A] =
-        action.flatMap(answer => Store.reloadMyTournaments().zip(Store.reloadTournamentChoices()).map(_ => answer))
+     * is refused because the first one worked. `thenShown` is the same for the tournament's own page. The game's own
+     * list of competitions is among them: a competition started is no longer one to join there. */
+    private def thenListed[A](gameId: GameId)(action: Future[A]): Future[A] =
+        action.flatMap(answer =>
+            Store
+                .reloadMyTournaments()
+                .zip(Store.reloadTournamentChoices())
+                .zip(Store.reloadTournaments(gameId))
+                .map(_ => answer)
+        )
 
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.

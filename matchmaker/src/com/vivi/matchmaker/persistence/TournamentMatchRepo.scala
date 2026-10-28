@@ -218,14 +218,15 @@ class TournamentMatchRepo(session: Session[IO]) {
 
     private val createFailedCommand: Query[(Instant, String, GameId, MatchId), Int] =
         sql"""UPDATE match SET create_failures = create_failures + 1, create_failed_at = $instant, create_error = $text
-          WHERE game_id = $gameId AND match_id = $matchId
+          WHERE game_id = $gameId AND match_id = $matchId AND status = 'D'
           RETURNING create_failures""".query(int4)
 
     /** Another try at creating the match's engine game failed, at `at`, the engine saying `error`. How many tries in a
-      * row have now failed.
+      * row have now failed -- or none, and nothing written, if the match is no longer due: the failed try put it back,
+      * and another has claimed or created it since, whose own outcome is the one to record.
       */
-    def createFailed(game: GameId, id: MatchId, at: Instant, error: String): IO[Int] =
-        session.unique(createFailedCommand)((at, error, game, id))
+    def createFailed(game: GameId, id: MatchId, at: Instant, error: String): IO[Option[Int]] =
+        session.option(createFailedCommand)((at, error, game, id))
 
     private val createdCommand: Command[(GameId, MatchId)] =
         sql"""UPDATE match SET create_failures = 0, create_failed_at = NULL, create_error = NULL

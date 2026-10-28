@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
 import skunk.Session
+import com.vivi.matchmaker.engine.GameEngineError
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.notify.Notifications
@@ -62,8 +63,9 @@ class TournamentRounds[T](
 
     // ---- beginning a round -----------------------------------------------------------------
 
-    /** The owner beginning the next round, for the tournament's round duration. Its matches whose roles are settled are queued to be created at once; the rest wait on their seats' choices. The
-      * number of the round begun, or none if that finished the tournament.
+    /** The owner beginning the next round, for the tournament's round duration. Its matches whose roles are settled are
+      * queued to be created at once; the rest wait on their seats' choices. The number of the round begun, or none if
+      * that finished the tournament.
       */
     def startRound(
         gameId: GameId,
@@ -98,8 +100,7 @@ class TournamentRounds[T](
             for {
                 due <- session.transaction.use { _ =>
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
-                        case Some(t)
-                            if t.status == TournamentStatus.Running && t.settings.isAutoStarted && !t.isStopped =>
+                        case Some(t) if isAutoStartable(t) =>
                             stateRepo(session).isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
                                 if (isComplete) begin(session, t).map(_._2)
                                 else IO.pure(Nil)
@@ -110,6 +111,10 @@ class TournamentRounds[T](
                 _ <- due.traverse_(endings.tournamentMatchDue(gameId, tournamentId, _))
             } yield Settlement.Settled
         }
+
+    /** Whether a tournament is running with automatic rounds on and has not been stopped. */
+    private def isAutoStartable(t: Tournament): Boolean =
+        t.status == TournamentStatus.Running && t.settings.isAutoStarted && !t.isStopped
 
     /** Begins the next round, under the tournament's lock, which the caller holds: advances the state past the last and
       * gives the next slot of every pool's schedule the new round, then seats each of its matches. The round's number
@@ -336,23 +341,37 @@ class TournamentRounds[T](
 
     /* A failed try at creating a match, recorded where its owner and admins will see it, and mailed to them the first
      * time. Owed, and so tried again, until it has failed [[CreateFailure.maxTries]] times in a row; then settled, and
-     * the owner's Check round is what tries again. */
+     * the owner's Check round is what tries again. Settled, with nothing recorded, if another try has claimed or
+     * created the match since this one gave it back. */
     private def createFailed(session: Session[IO], saved: Match, game: Game, error: Throwable): IO[Settlement] =
         new TournamentMatchRepo(session)
-            .createFailed(game = game.gameId, id = saved.matchId, at = now(), error = error.getMessage)
+            .createFailed(
+              game = game.gameId,
+              id = saved.matchId,
+              at = now(),
+              // What the owner reads, said plainly: the exception goes to the log, in the settlement's reason.
+              error = error match {
+                  case _: GameEngineError => ErrorText.round.engineFailed
+                  case _                  => ErrorText.round.failedHere
+              }
+            )
             .flatTap(tries =>
-                IO.whenA(tries == 1)(
-                  new TournamentRepo(session).read(game.gameId, saved.tournamentId).flatMap(
-                    _.traverse_(t => notifications.matchNotCreated(session = session, tournament = t, game = game))
-                  )
+                IO.whenA(tries.contains(1))(
+                  new TournamentRepo(session)
+                      .read(game.gameId, saved.tournamentId)
+                      .flatMap(
+                        _.traverse_(t => notifications.matchNotCreated(session = session, tournament = t, game = game))
+                      )
                 )
             )
-            .map { tries =>
-                val why = s"its engine could not create it: $error"
-                if (tries >= CreateFailure.maxTries) {
-                    System.err.println(s"$why; $tries tries have failed, so it waits on its owner's Check round")
-                    Settlement.Settled
-                } else Settlement.Owed(why)
+            .map {
+                case None => Settlement.Settled
+                case Some(tries) =>
+                    val why = s"its engine could not create it: $error"
+                    if (tries >= CreateFailure.maxTries) {
+                        System.err.println(s"$why; $tries tries have failed, so it waits on its owner's Check round")
+                        Settlement.Settled
+                    } else Settlement.Owed(why)
             }
 
     private enum Prepared {
@@ -688,7 +707,11 @@ class TournamentRounds[T](
                       case TournamentMatchStatus.Due =>
                           // A match the queue gave up creating gets its full count of tries again.
                           sessionPool.use(new TournamentMatchRepo(_).retryCreate(gameId, tm.matchId)) *>
-                              endings.tournamentMatchDue(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
+                              endings.tournamentMatchDue(
+                                gameId = gameId,
+                                tournamentId = tournamentId,
+                                matchId = tm.matchId
+                              )
                       case TournamentMatchStatus.Choosing =>
                           forfeitChooser(gameId = gameId, tournamentId = tournamentId, matchId = tm.matchId)
                       case TournamentMatchStatus.Done => IO.unit
@@ -698,9 +721,9 @@ class TournamentRounds[T](
             .as(Settlement.Settled)
 
     /** A match begun at least [[relaunchAfter]] ago that has no engine game -- the function creating it stopped, or
-      * lost its database connection, before it could record the game or put the match back -- made due again and
-      * queued to be created: the engine answers a create it has already made with that game, so nothing is played
-      * twice. Decided under the tournament's lock and the match's. Whether it was relaunched.
+      * lost its database connection, before it could record the game or put the match back -- made due again and queued
+      * to be created: the engine answers a create it has already made with that game, so nothing is played twice.
+      * Decided under the tournament's lock and the match's. Whether it was relaunched.
       */
     private def relaunchStranded(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Boolean] =
         sessionPool
@@ -768,11 +791,11 @@ class TournamentRounds[T](
     /** The owner stopping a tournament, so that no match of it is scheduled from now on.
       *
       * One that has not started, or none of whose matches has begun ([[TournamentRepo.hasBegunMatch]]), is deleted,
-      * matches, entries and all: nothing has been played that anybody would look for. One under way is marked stopped: its
-      * matches already scheduled are played out, no further round is begun, and it finishes as the round being played
-      * completes ([[settle]]) -- at once, if that round is already over. Its matches of later rounds are left scheduled
-      * and never played, as are those of every tournament that finishes before its pools do. A tournament that is over
-      * cannot be stopped, and neither can one stopped already.
+      * matches, entries and all: nothing has been played that anybody would look for. One under way is marked stopped:
+      * its matches already scheduled are played out, no further round is begun, and it finishes as the round being
+      * played completes ([[settle]]) -- at once, if that round is already over. Its matches of later rounds are left
+      * scheduled and never played, as are those of every tournament that finishes before its pools do. A tournament
+      * that is over cannot be stopped, and neither can one stopped already.
       */
     def stop(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
@@ -873,7 +896,9 @@ class TournamentRounds[T](
                           ConflictError(ErrorText.round.playedToEnd)
                         )
                         resultRepo = new ResultRepo(session)
-                        byParticipant <- resultRepo.forMatch(gameId, matchId).map(_.map(r => r.participantId -> r).toMap)
+                        byParticipant <- resultRepo
+                            .forMatch(gameId, matchId)
+                            .map(_.map(r => r.participantId -> r).toMap)
                         found = tm.seats.map(s => byParticipant.get(s.participantId))
                         // A cancel's forfeits are no result to the tournament, and the owner's ranks replace them.
                         cancelForfeit = (r: ResultRepo.RatedResultRow) => m.exists(_.isCancelled) && r.isForfeit

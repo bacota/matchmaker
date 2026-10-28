@@ -170,9 +170,13 @@ class ResultRepo(session: Session[IO]) {
     private val selectExistsForMatch: Query[(GameId, MatchId), Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM result r
                               JOIN participant p ON p.game_id = r.game_id AND p.participant_id = r.participant_id
-                             WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId})""".query(bool)
+                             WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}
+                               AND NOT r.is_manual)""".query(bool)
 
-    /** Whether any seat of the match has a result recorded: the engine's, or a forfeit's. */
+    /** Whether any seat of the match has a result recorded: the engine's, or a forfeit's. Not a rank given by hand,
+      * which is the last place a tournament records for a seat forfeited before its match began, the engine's results
+      * for the other seats still to come.
+      */
     def existsForMatch(gameId: GameId, matchId: MatchId): IO[Boolean] =
         session.unique(selectExistsForMatch)((gameId, matchId))
 
