@@ -42,7 +42,7 @@ readonly TERRAFORM_DIR="terraform"
 # module name : mill module : jar path : settings flag : build or keep, for each bundled engine.
 readonly ENGINES=(
   "tictactoe:engines.tictactoe:out/engines/tictactoe/assembly.dest/out.jar:deploy_tictactoe:keep"
-  "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps:keep"
+  "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps:build"
   "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing:build"
   "stratego:engines.stratego:out/engines/stratego/assembly.dest/out.jar:deploy_stratego:build"
   "wavinghands:engines.wavinghands:out/engines/wavinghands/assembly.dest/out.jar:deploy_wavinghands:build"
