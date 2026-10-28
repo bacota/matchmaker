@@ -822,6 +822,48 @@ class GameEngineService[T](
             } yield result
         }
 
+    /** Asks the engines for the results of the caller's finished matches that have none, before their completed list is
+      * read, so that no row of it is left without a result.
+      *
+      * Those are matches whose results callback was lost: the match was completed by a status answer that carried no
+      * results, from an engine that predates them, or by a forfeit. Each is asked about until its engine answers, and
+      * then never again — an engine with nothing to say for it will not have more next time. An engine that cannot be
+      * reached, or is slow to answer, is asked again on the next load; the list is read either way, as it stands.
+      *
+      * A few a load, most recently finished first, so that a player with a long history of them does not wait on them
+      * all at once.
+      */
+    private val ResultsRecoveryLimit = 4
+    // A ceiling for an engine that has hung, not a budget: the list waits on it. An engine on a cold start is slow.
+    private val ResultsRecoveryTimeout = 10.seconds
+
+    def recoverResults(callerExternalId: String): IO[Unit] =
+        sessionPool
+            .use { session =>
+                requireCaller(new PlayerRepo(session), callerExternalId).flatMap(player =>
+                    new MatchRepo(session).listResultlessForPlayer(player.playerId, ResultsRecoveryLimit)
+                )
+            }
+            .flatMap(found =>
+                IO.parTraverseN(ResultsRecoveryLimit)(found) { (gameId, matchId, statusUrl) =>
+                    sessionPool
+                        .use { session =>
+                            applyEngineStatus(
+                              session = session,
+                              gameId = gameId,
+                              matchId = matchId,
+                              statusUrl = statusUrl
+                            ) *>
+                                new MatchRepo(session).markResultsAsked(gameId, matchId)
+                        }
+                        .timeout(ResultsRecoveryTimeout)
+                        .handleErrorWith(error =>
+                            IO(System.err.println(s"could not recover the results of match ${matchId.value}: $error"))
+                        )
+                }
+            )
+            .void
+
     /** The match itself, for a player in it — which is how the UI gets the `playUrl` to send them to the game.
       */
     def read(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =

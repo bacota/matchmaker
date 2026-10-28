@@ -1505,6 +1505,69 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    /* The completed list's own repair: before it is read, each of the caller's finished matches with
+     * no results is asked about once, and an engine that has answered is not asked again. */
+    property("the completed list asks the engine once for a finished match's missing results") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.recoverResults(externalId)
+                    recovered <- resultsOf(started)
+                } yield recovered.map(r => (r.participantId, r.rank, r.isWinner)).toSet == Set(
+                  (mine.participantId, 1, true),
+                  (theirs.participantId, 2, false)
+                )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a finished match whose engine answered with no results is not asked about again") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    // Answered, with nothing: recorded as asked.
+                    _ <- services.engine.recoverResults(externalId)
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.recoverResults(externalId)
+                    after <- resultsOf(started)
+                } yield after.isEmpty
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     // A match with no time limit has no deadline to compute, whatever the engine reports as the
     // start of the turn — there is nothing for the player to run out of.
     property("refresh leaves the due date unset when the match has no time limit") {

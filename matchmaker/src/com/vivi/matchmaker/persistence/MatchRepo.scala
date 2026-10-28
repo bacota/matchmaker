@@ -255,6 +255,33 @@ class MatchRepo(session: Session[IO]) {
     def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
         session.unique(completeMatch)((gameId, matchId))
 
+    private val selectResultlessForPlayer: Query[(PlayerId, Int), (GameId, MatchId, String)] =
+        sql"""SELECT m.game_id, m.match_id, m.status_url FROM match m
+          WHERE m.completed_at IS NOT NULL AND NOT m.is_cancelled AND m.status_url IS NOT NULL
+            AND m.results_asked_at IS NULL
+            AND EXISTS (SELECT 1 FROM participant p
+                         WHERE p.game_id = m.game_id AND p.match_id = m.match_id AND p.player_id = $playerIdOf)
+            AND NOT EXISTS (SELECT 1 FROM participant p JOIN result r
+                              ON r.game_id = p.game_id AND r.participant_id = p.participant_id
+                             WHERE p.game_id = m.game_id AND p.match_id = m.match_id)
+          ORDER BY m.completed_at DESC
+          LIMIT $int4""".query(gameId *: matchId *: text)
+
+    /** The player's finished matches that have no results and whose engine has not yet been asked for them, most
+      * recently finished first: those whose results callback was lost. Not one called off, which has no result to
+      * recover, nor one never created in its engine.
+      */
+    def listResultlessForPlayer(playerId: PlayerId, limit: Int): IO[List[(GameId, MatchId, String)]] =
+        session.execute(selectResultlessForPlayer)((playerId, limit))
+
+    private val updateResultsAsked: Command[(GameId, MatchId)] =
+        sql"""UPDATE match SET results_asked_at = now()
+          WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Records that the match's engine has answered about its results, so that it is not asked again. */
+    def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.execute(updateResultsAsked)((gameId, matchId)).void
+
     private val playerId = SkunkIdCodecs.playerId
 
     // participant_id and character_id are decoded as raw int8 and wrapped below, because a
