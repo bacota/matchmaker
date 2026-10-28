@@ -120,5 +120,5 @@ What the security reviewer checks this engine against, beside what every engine 
   hide gestures in the full rules, are not played. Adding either one adds hidden information, and this section
   changes with it.
 - **Text players write:** the match's title and nicknames, which are the wizards' names and appear in the battle
-  reports. The page escapes them with `esc`.
+  reports. The page escapes them with the shared `escapeHtml`.
 - **Routes of its own:** none.
