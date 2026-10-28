@@ -176,12 +176,16 @@ class GameEngineService[T](
      * it is, when that turn is due, and who is finished — plus the match's own completed flag.
      *
      * Shared by `refresh`, which is this question asked again later, and by `start`, which asks it
-     * once so that the first turn is recorded the moment the match exists. */
+     * once so that the first turn is recorded the moment the match exists.
+     *
+     * `engineTimeout` caps the engine's answer alone, never the writes that follow it: once results are committed,
+     * what they set off -- the ranking, the tournament, the match-ended mail -- must not be cut off half done. */
     private def applyEngineStatus(
         session: skunk.Session[IO],
         gameId: GameId,
         matchId: MatchId,
-        statusUrl: String
+        statusUrl: String,
+        engineTimeout: Option[FiniteDuration] = None
     ): IO[Match] = {
         val matchRepo = new MatchRepo(session)
         val participantRepo = new ParticipantRepo(session)
@@ -192,7 +196,8 @@ class GameEngineService[T](
         // The key on the session already held, rather than one borrowed for the purpose.
         (turnRepo.latestTakenAt(gameId, matchId), new GameApiKeyRepo(session).forGame(gameId)).tupled
             .flatMap { (_, apiKey) =>
-                engine.status(statusUrl = statusUrl, apiKey = apiKey, since = None).flatMap { status =>
+                val asked = engine.status(statusUrl = statusUrl, apiKey = apiKey, since = None)
+                engineTimeout.fold(asked)(asked.timeout).flatMap { status =>
                     // The results first, where the engine sent them: a match whose results callback was lost is
                     // then completed, rated and told of with its results, just as the callback would have done
                     // it, and what follows finds it completed. Recorded once, as the callback's are: a match that
@@ -844,17 +849,18 @@ class GameEngineService[T](
                           session = session,
                           gameId = gameId,
                           matchId = matchId,
-                          statusUrl = statusUrl
+                          statusUrl = statusUrl,
+                          engineTimeout = Some(ResultsRecoveryTimeout)
                         ) *>
                         new ResultRepo(session).existsForMatch(gameId, matchId)
                 }
-                .timeout(ResultsRecoveryTimeout)
                 .handleErrorWith(error =>
                     IO(System.err.println(s"could not recover the results of match ${matchId.value}: $error")).as(false)
                 )
         }.map(_.exists(identity))
 
     // A ceiling for an engine that has hung, not a budget: the list waits on it. An engine on a cold start is slow.
+    // It caps the engine's answer only: what is done with the answer is not cut off once begun.
     private val ResultsRecoveryTimeout = 10.seconds
 
     /** The match itself, for a player in it — which is how the UI gets the `playUrl` to send them to the game.
