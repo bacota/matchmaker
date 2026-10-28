@@ -209,6 +209,24 @@ if ($isSignOutPressed) listeners.click();
         assert(after.isReloaded)
     }
 
+    // A live region is heard only if it is there before its text, so a line that appears after the page has loaded
+    // is unhidden first and written a moment later.
+    test("a sign-in after the page has loaded shows the line before saying whose account it is") {
+        val id = idToken("email" -> "alice@example.com", "exp" -> inAnHour)
+        val after = load(
+          "\"\"",
+          login = Some(login),
+          `then` = s"""
+            document.readyState = "complete";
+            storeTokens({ idToken: "$id" });
+            if (elements["signed-in-as"].hidden) throw new Error("the line is still hidden");
+            if (elements["signed-in-who"].textContent !== "") throw new Error("written as it was unhidden");
+            await new Promise(resolve => setTimeout(resolve, 200));
+          """
+        )
+        assertEquals(after.signedInAs, Some("Signed in as alice@example.com — not you?"))
+    }
+
     // The reload is not instant, and Cognito may answer a refresh begun before Sign out was pressed in the meantime.
     test("a refresh that Cognito answers after signing out does not sign the tab back in") {
         val fresh = idToken("email" -> "alice@example.com", "exp" -> inAnHour)

@@ -261,12 +261,25 @@ ${authScript(Some(login))}
    *
    * The address is read from the stored ID token whether or not it has expired: a refresh does not
    * change it, and a tab holding only a refresh token is still signed in. The text is set only when
-   * it changes, so the hourly refresh is not announced. */
+   * it changes, so the hourly refresh is not announced.
+   *
+   * A line shown after the page has loaded -- a sign-in on the page -- gets its text a moment after
+   * it is unhidden: a live region is heard only once it is there before its text. One shown as the
+   * page loads gets it at once, since there is nothing to announce and an empty line would flash. */
   function renderSignedInAs() {
     const line = typeof document === "undefined" ? null : document.getElementById("signed-in-as");
     if (!line) return;
     const isShown = !!login && isSignedIn();
+    const isAppearing = isShown && line.hidden && document.readyState === "complete";
     line.hidden = !isShown;
+    if (isAppearing) setTimeout(writeSignedInAs, 100);
+    else writeSignedInAs();
+  }
+
+  /* The line's words for the session as it is when this runs, which for a delayed write may have
+   * moved on since it was asked for. */
+  function writeSignedInAs() {
+    const isShown = !!login && isSignedIn();
     const token = sessionStorage.getItem(TokenKey);
     const claims = token && claimsOf(token);
     const email = claims && typeof claims.email === "string" ? claims.email : null;
