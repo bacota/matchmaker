@@ -101,13 +101,14 @@ class MatchService(
 
     /* The matches of a completed window that have no results and whose engine may be asked for them -- their
      * results callback was lost -- most recently finished first and a few at most, so that a window full of them
-     * does not wait on them all at once; or `None` when there are none. A match with a result on any seat has its
-     * results, and a match called off is not on the list. */
+     * does not wait on them all at once; or `None` when there are none. A match with a result on every seat has its
+     * results -- not on any one, since a seat forfeited before a tournament match began has its last place from the
+     * start -- and a match called off is not on the list. */
     private def owedResults(rows: List[MatchRepo.MatchSeatRow]): Option[List[(GameId, MatchId, String)]] = {
         val owed = rows
             .groupBy(r => (r.gameId, r.matchId))
             .values
-            .filter(seats => seats.forall(_.seatRank.isEmpty) && seats.head.isResultsAskable)
+            .filter(seats => seats.exists(_.seatRank.isEmpty) && seats.head.isResultsAskable)
             .map(_.head)
             .toList
             .sortBy(_.completedAt)(Ordering[Option[java.time.Instant]].reverse)

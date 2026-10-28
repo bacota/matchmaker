@@ -42,6 +42,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         @volatile var lastRequest: Option[CreateGameRequest] = None
         @volatile var whileCreating: CreateGameRequest => IO[Unit] = _ => IO.unit
         @volatile var cancelled: List[String] = Nil
+        @volatile var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil)
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO.defer {
                 if (refusals.getAndUpdate(n => math.max(0, n - 1)) > 0)
@@ -62,7 +63,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
             IO(synchronized { cancelled = cancelled :+ cancelUrl })
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
-            IO.pure(GameStatusResponse(isCompleted = false, participants = Nil))
+            IO(status)
     }
 
     /** The queue, run in the caller's fiber, so that by the time a call returns everything it queued has been done. */
@@ -902,6 +903,49 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(settled, Settlement.Settled)
         assertEquals(startedStatus, TournamentMatchStatus.Started)
         assertEquals(created, 1)
+    }
+
+    // A forfeited seat's last place is recorded at launch, by hand, before the engine has said anything: it is not the
+    // match's results, which are still owed when the match is completed by a status that carries none.
+    test("a match with a forfeited seat completed without its results still takes them") {
+        val (recovered, recorded) = run(for {
+            f <- started(
+              n = 4,
+              design = RoundRobin.id,
+              game = Some(Generators.genRolelessGame(least = 2, most = None)),
+              poolSize = Some(4)
+            )
+            entries <- detail(f).map(_.entries)
+            gone = entries.head.entrantId
+            _ <- f.w.services.tournaments.withdraw(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              entrantId = gone,
+              callerExternalId = f.players.head.externalId
+            )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.find(_.seats.exists(_.entrantId == gone)).get)
+            _ = f.w.engine.status = GameStatusResponse(isCompleted = true, participants = Nil)
+            recovered <- f.w.services.engine.recoverResults(
+              List((f.game.gameId, m.matchId, s"https://engine/status/${m.matchId.value}"))
+            )
+            played = m.seats.filterNot(_.entrantId == gone)
+            _ <- f.w.services.engine.recordResults(
+              gameId = f.game.gameId,
+              matchId = m.matchId,
+              results = played.zipWithIndex.map((s, i) =>
+                  ReportedResult(participantId = s.participantId, rank = i + 1, scores = Map.empty, isWinner = i == 0)
+              ),
+              callerExternalId = f.game.externalId
+            )
+            recorded <- TestSession.resource.use(new ResultRepo(_).existsForMatch(f.game.gameId, m.matchId))
+        } yield (recovered, recorded))
+        assert(!recovered)
+        assert(recorded)
     }
 
     // The engine is asked for its game with no transaction open, and the owner may call the match off meanwhile. The
