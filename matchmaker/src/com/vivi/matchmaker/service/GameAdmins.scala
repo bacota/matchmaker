@@ -2,9 +2,8 @@ package com.vivi.matchmaker.service
 
 import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
-import skunk.Session
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameAdminRepo, PlayerRepo}
+import com.vivi.matchmaker.persistence.Repos
 
 /** Who administers a game: an overall admin (`player.is_admin`), or one of the game's own. */
 object GameAdmins {
@@ -12,15 +11,15 @@ object GameAdmins {
     /** That `caller` administers game `gameId`, or an `UnauthorizedError` saying `refusal`. Their player row and their
       * admin row are both held FOR SHARE, so that losing either waits for whatever this is permitting to be written.
       */
-    def require(session: Session[IO], caller: PlayerId, gameId: GameId, refusal: => String): IO[Unit] =
+    def require(repos: Repos, caller: PlayerId, gameId: GameId, refusal: => String): IO[Unit] =
         for {
-            player <- new PlayerRepo(session).readForShare(caller).flatMap {
+            player <- repos.players.readForShare(caller).flatMap {
                 case Some(p) => IO.pure(p)
                 case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
             }
             allowed <-
                 if (player.isAdmin) IO.pure(true)
-                else new GameAdminRepo(session).isAdminForShare(player.playerId, gameId)
+                else repos.gameAdmins.isAdminForShare(player.playerId, gameId)
             _ <- IO.raiseUnless(allowed)(UnauthorizedError(refusal))
         } yield ()
 }

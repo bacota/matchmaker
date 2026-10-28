@@ -6,7 +6,7 @@ import cats.syntax.all._
 import skunk.SqlState
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.auth.ApiKeys
-import com.vivi.matchmaker.persistence.{GameApiKeyRepo, GameRepo, PlayerRepo, TextCodec, TournamentRepo}
+import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo, Repos, TextCodec, TournamentRepo}
 
 /** Creates or updates a Game, together with all of its roles, parameters, and parameter values. Only an admin may do
   * this.
@@ -26,13 +26,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def createOrUpdate(externalUserId: String, game: Game, apiKey: Option[String] = None): IO[Game] =
         sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
-            val gameRepo = new GameRepo[T](session)
+            val repos = Repos(session)
             // A game is its rows plus its roles, parameters and parameter values; the repo writes
             // them as separate statements, so the transaction that makes them one change lives here.
             session.transaction.use { _ =>
                 for {
-                    _ <- authorize(playerRepo, externalUserId)
+                    _ <- authorize(repos.players, externalUserId)
                     // Trimmed before it is checked, so that "  attacker  " and "attacker" are refused as the
                     // duplicate they are rather than stored as two roles that read identically.
                     trimmed = normalize(game)
@@ -49,21 +48,24 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                         )
                     )
                     result <-
-                        if (trimmed.gameId == GameId.unassigned) gameRepo.create(trimmed)
+                        if (trimmed.gameId == GameId.unassigned) repos.games[T].create(trimmed)
                         else
                             // Locked before it is read: `checkRoles` below decides what may be written
                             // from what is there now, and the update rewrites the roles and parameters it
                             // was checked against. Two admins saving the same game at once would
                             // otherwise both diff against the state before either of them wrote.
-                            gameRepo.lockForUpdate(trimmed.gameId) *> gameRepo.read(trimmed.gameId).flatMap {
+                            repos
+                                .games[T]
+                                .lockForUpdate(trimmed.gameId) *> repos.games[T].read(trimmed.gameId).flatMap {
                                 case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                                 case Some(existing) =>
                                     checkRoles(
                                       existing = existing,
                                       incoming = trimmed,
-                                      tournaments = new TournamentRepo(session)
-                                    ) *> gameRepo
-                                        .update(trimmed) *> gameRepo.read(trimmed.gameId).flatMap {
+                                      tournaments = repos.tournaments
+                                    ) *> repos
+                                        .games[T]
+                                        .update(trimmed) *> repos.games[T].read(trimmed.gameId).flatMap {
                                         case Some(updated) => IO.pure(updated)
                                         case None =>
                                             IO.raiseError(NotFoundError(ErrorText.game.notFound))
@@ -71,13 +73,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                             }
                     // A new game offers every tournament model it can play but the challenge, which its admins may then change.
                     _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
-                      TournamentModelService.offerPlayable(session, result).void
+                      TournamentModelService.offerPlayable(repos, result).void
                     )
                     // Unique across games. A clash rolls the whole save back, game and all.
                     _ <- newKey.traverse_(key =>
-                        new GameApiKeyRepo(session).set(result.gameId, key).recoverWith {
-                            case SqlState.UniqueViolation(_) =>
-                                IO.raiseError(ConflictError(ErrorText.game.apiKeyTaken))
+                        repos.gameApiKeys.set(result.gameId, key).recoverWith { case SqlState.UniqueViolation(_) =>
+                            IO.raiseError(ConflictError(ErrorText.game.apiKeyTaken))
                         }
                     )
                 } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
@@ -88,7 +89,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * authenticated against. Asked by the authenticator before there is any caller to authorize, which is why it takes
       * none.
       */
-    def engineKeys: IO[ApiKeys] = sessionPool.use(session => new GameApiKeyRepo(session).byIdentity)
+    def engineKeys: IO[ApiKeys] = sessionPool.use(session => Repos(session).gameApiKeys.byIdentity)
 
     /** Lists games for any registered caller. Unlike `createOrUpdate` this needs no admin rights — the game catalogue
       * is what every player browses — but the caller must still be a known player.
@@ -98,13 +99,13 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def list(callerExternalId: String, activeOnly: Boolean = false): IO[List[Game]] =
         sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
+            val repos = Repos(session)
             for {
-                _ <- playerRepo.readByExternalId(callerExternalId).flatMap {
+                _ <- repos.players.readByExternalId(callerExternalId).flatMap {
                     case Some(player) => IO.pure(player)
                     case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
-                games <- new GameRepo[T](session).list(activeOnly)
+                games <- repos.games[T].list(activeOnly)
             } yield games
         }
 

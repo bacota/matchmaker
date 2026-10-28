@@ -10,7 +10,7 @@ import scala.concurrent.duration._
 import com.vivi.matchmaker.archive.{ArchiveBucket, ArchiveStore, SignedDownload, SignedUpload}
 import com.vivi.matchmaker.archive.ArchiveBucket.isFriendly
 import com.vivi.matchmaker.model.{GameId, Match, MatchId, MatchSummary}
-import com.vivi.matchmaker.persistence.ArchiveRepo
+import com.vivi.matchmaker.persistence.{ArchiveRepo, Repos}
 import com.vivi.matchmaker.persistence.ArchiveRepo.ArchiveRow
 
 /** A match's archive copied to the permanent bucket ahead of saying the match is not friendly: see
@@ -75,10 +75,14 @@ class ArchiveService(
               ValidationError(ErrorText.archive.badFormatVersion)
             )
             decided <- sessionPool.use { session =>
-                val repo = new ArchiveRepo(session)
+                val repos = Repos(session)
                 session.transaction.use { _ =>
                     for {
-                        row <- requireForUpdate(repo = repo, matchId = matchId, callerExternalId = callerExternalId)
+                        row <- requireForUpdate(
+                          repo = repos.archives,
+                          matchId = matchId,
+                          callerExternalId = callerExternalId
+                        )
                         _ <- IO.raiseWhen(row.isCancelled)(
                           ConflictError(ErrorText.archive.cancelled)
                         )
@@ -95,7 +99,7 @@ class ArchiveService(
                                 )
                                 // The bucket the url is signed for, recorded with it: the match's as
                                 // it stands now, and where `confirm` will look.
-                                repo
+                                repos.archives
                                     .recordRequest(
                                       game = row.gameId,
                                       id = matchId,
@@ -141,7 +145,7 @@ class ArchiveService(
     def confirm(matchId: MatchId, callerExternalId: String): IO[Instant] =
         sessionPool
             .use(session =>
-                require(repo = new ArchiveRepo(session), matchId = matchId, callerExternalId = callerExternalId)
+                require(repo = Repos(session).archives, matchId = matchId, callerExternalId = callerExternalId)
             )
             .flatMap { before =>
                 before.archivedAt match {
@@ -153,11 +157,11 @@ class ArchiveService(
                             )
                             found <- store.head(bucketOf(before), key)
                             at <- sessionPool.use { session =>
-                                val repo = new ArchiveRepo(session)
+                                val repos = Repos(session)
                                 session.transaction.use { _ =>
                                     for {
                                         row <- requireForUpdate(
-                                          repo = repo,
+                                          repo = repos.archives,
                                           matchId = matchId,
                                           callerExternalId = callerExternalId
                                         )
@@ -182,7 +186,7 @@ class ArchiveService(
                                                     )(
                                                       ConflictError(ErrorText.archive.wrongArrival)
                                                     )
-                                                    at <- repo.recordArchived(row.gameId, matchId)
+                                                    at <- repos.archives.recordArchived(row.gameId, matchId)
                                                 } yield at
                                         }
                                     } yield at
@@ -200,7 +204,7 @@ class ArchiveService(
     def download(matchId: MatchId, callerExternalId: String): IO[SignedDownload] =
         sessionPool
             .use(session =>
-                require(repo = new ArchiveRepo(session), matchId = matchId, callerExternalId = callerExternalId)
+                require(repo = Repos(session).archives, matchId = matchId, callerExternalId = callerExternalId)
             )
             .flatMap { row =>
                 for {
@@ -228,7 +232,7 @@ class ArchiveService(
     def reportExpired(matchId: MatchId, callerExternalId: String): IO[Unit] =
         sessionPool
             .use(session =>
-                require(repo = new ArchiveRepo(session), matchId = matchId, callerExternalId = callerExternalId)
+                require(repo = Repos(session).archives, matchId = matchId, callerExternalId = callerExternalId)
             )
             .flatMap { row =>
                 for {
@@ -283,7 +287,7 @@ class ArchiveService(
      * no archive, a failed or slow check -- so that only a definite answer hides a link. */
     private def expiredNow(gameId: GameId, matchId: MatchId): IO[Boolean] =
         sessionPool
-            .use(session => new ArchiveRepo(session).read(gameId, matchId))
+            .use(session => Repos(session).archives.read(gameId, matchId))
             .flatMap {
                 case Some(row) if row.expiredAt.isDefined => IO.pure(true)
                 case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), _, _)) =>
@@ -312,7 +316,7 @@ class ArchiveService(
       * move.
       */
     def prepareMove(gameId: GameId, matchId: MatchId): IO[Option[PreparedMove]] =
-        sessionPool.use(session => new ArchiveRepo(session).read(gameId, matchId)).flatMap {
+        sessionPool.use(session => Repos(session).archives.read(gameId, matchId)).flatMap {
             case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), None, _))
                 if bucketOf(row).isFriendly =>
                 store.copy(from = ArchiveBucket.Friendly, to = ArchiveBucket.Permanent, key = key).flatMap {
@@ -332,19 +336,20 @@ class ArchiveService(
       * match's ending, which goes on asking until the match is archived (`EndingService`), if not before.
       */
     def recordMove(
-        session: skunk.Session[IO],
+        repos: Repos,
         prepared: Option[PreparedMove],
         gameId: GameId,
         matchId: MatchId
     ): IO[Boolean] = {
-        val repo = new ArchiveRepo(session)
-        repo.read(gameId, matchId).flatMap {
+        repos.archives.read(gameId, matchId).flatMap {
             case Some(row) if row.key.isDefined && row.expiredAt.isEmpty && bucketOf(row).isFriendly =>
                 (row.archivedAt, prepared) match {
-                    case (Some(_), Some(_)) => repo.recordMoved(game = gameId, id = matchId, friendly = false).as(true)
+                    case (Some(_), Some(_)) =>
+                        repos.archives.recordMoved(game = gameId, id = matchId, friendly = false).as(true)
                     case (Some(_), None) =>
                         IO.raiseError(ConflictError(ErrorText.archive.beingWritten))
-                    case (None, _) => repo.recordMoved(game = gameId, id = matchId, friendly = false).as(false)
+                    case (None, _) =>
+                        repos.archives.recordMoved(game = gameId, id = matchId, friendly = false).as(false)
                 }
             case _ => IO.pure(false)
         }
@@ -371,7 +376,7 @@ class ArchiveService(
             )
 
     private def recordExpired(row: ArchiveRow): IO[Unit] =
-        sessionPool.use(session => new ArchiveRepo(session).recordExpired(row.gameId, row.matchId))
+        sessionPool.use(session => Repos(session).archives.recordExpired(row.gameId, row.matchId))
 
     private def expired(matchId: MatchId): GoneError =
         GoneError(ErrorText.archive.expired)

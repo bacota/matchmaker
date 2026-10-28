@@ -5,7 +5,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
 import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
-import com.vivi.matchmaker.persistence.{PlayerRepo, SuppressionRepo}
+import com.vivi.matchmaker.persistence.{Repos, SuppressionRepo}
 
 /** What SES tells us about the mail we sent, and what a player can do about it.
   *
@@ -37,8 +37,8 @@ class SuppressionService(sessionPool: SessionPool) {
         if (events.isEmpty) IO.pure(0)
         else
             sessionPool.use { session =>
-                val repo = new SuppressionRepo(session)
-                events.toList.traverse(repo.record).map(_.count(identity))
+                val repos = Repos(session)
+                events.toList.traverse(repos.suppressions.record).map(_.count(identity))
             }
 
     /** Whether mail to the caller is being held back, and why. `None` means nothing has gone wrong with it.
@@ -52,10 +52,11 @@ class SuppressionService(sessionPool: SessionPool) {
       */
     def mine(callerExternalId: String): IO[Option[EmailSuppression]] =
         sessionPool.use { session =>
-            callerAddress(session, callerExternalId).flatMap {
+            val repos = Repos(session)
+            callerAddress(repos, callerExternalId).flatMap {
                 case None => IO.pure(None)
                 case Some(address) =>
-                    new SuppressionRepo(session).read(address).map(_.filter(_.isActive(Instant.now())))
+                    repos.suppressions.read(address).map(_.filter(_.isActive(Instant.now())))
             }
         }
 
@@ -68,12 +69,13 @@ class SuppressionService(sessionPool: SessionPool) {
       */
     def retryMine(callerExternalId: String): IO[Boolean] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             /* The one updating call in this codebase that is not wrapped in a transaction here, and
              * deliberately: `SuppressionRepo.releaseFor` already is one, taking the row's lock and
              * deciding inside it, and skunk refuses a nested `begin`. The read below only says which
              * address to act on, and the write is scoped by that address rather than derived from
              * anything else this read saw. */
-            callerAddress(session, callerExternalId).flatMap {
+            callerAddress(repos, callerExternalId).flatMap {
                 case None          => IO.pure(false)
                 case Some(address) =>
                     /* The decision is the repo's, taken under the row's lock, and this only turns it
@@ -89,7 +91,7 @@ class SuppressionService(sessionPool: SessionPool) {
                      * here. The screen does not offer the button in that case -- `Notice.canRetry`
                      * is false -- so reaching this is a client that asked anyway, and it gets a
                      * straight answer rather than an apparent success. */
-                    new SuppressionRepo(session).releaseFor(address).flatMap {
+                    repos.suppressions.releaseFor(address).flatMap {
                         case SuppressionRepo.Release.Released      => IO.pure(true)
                         case SuppressionRepo.Release.NotSuppressed => IO.pure(false)
                         case SuppressionRepo.Release.RefusedComplaint =>
@@ -102,8 +104,8 @@ class SuppressionService(sessionPool: SessionPool) {
      * local caller with no Cognito identity behind their `X-External-Id`. An unknown externalId is
      * `UnauthorizedError` for the same reason `PlayerService.me` says so: the caller holds a valid
      * identity that has never registered. */
-    private def callerAddress(session: skunk.Session[IO], callerExternalId: String): IO[Option[String]] =
-        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+    private def callerAddress(repos: Repos, callerExternalId: String): IO[Option[String]] =
+        repos.players.readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player.email.map(_.trim).filter(_.nonEmpty))
             case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }

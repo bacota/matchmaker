@@ -5,7 +5,7 @@ import cats.syntax.all._
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.engine.GameEngineClient
 import com.vivi.matchmaker.model.{GameId, MatchId}
-import com.vivi.matchmaker.persistence.{ArchiveRepo, GameApiKeyRepo}
+import com.vivi.matchmaker.persistence.{ArchiveRepo, Repos}
 import com.vivi.matchmaker.persistence.ArchiveRepo.EndingRow
 
 /** Whether a match's end is settled, or something is still owed and it is to be tried again later. */
@@ -50,7 +50,7 @@ class EndingService(
     private val ranking = new RankingService(sessionPool = sessionPool)
 
     def settle(gameId: GameId, matchId: MatchId): IO[Settlement] =
-        sessionPool.use(session => new ArchiveRepo(session).ending(gameId, matchId)).flatMap {
+        sessionPool.use(session => Repos(session).archives.ending(gameId, matchId)).flatMap {
             case Some(row) if row.isCancelled => (release(row), tournament(gameId, matchId)).mapN(EndingService.both)
             // Placed first: it is the database's alone, and a player is waiting to see it, where the archive may be
             // waiting on its engine.
@@ -82,7 +82,7 @@ class EndingService(
                 IO.pure(Settlement.Owed("it finished moments ago, and its engine is archiving it"))
             case (_, Some(url), _) =>
                 for {
-                    key <- sessionPool.use(session => new GameApiKeyRepo(session).forGame(row.gameId))
+                    key <- sessionPool.use(session => Repos(session).gameApiKeys.forGame(row.gameId))
                     // The answer is not wanted: asking is what prompts the engine, and whether it worked is read
                     // back from the match below.
                     _ <- engine
@@ -92,7 +92,7 @@ class EndingService(
                             log(s"prompting the engine to archive match ${row.matchId.value} failed: $e")
                         )
                     archived <- sessionPool.use(session =>
-                        new ArchiveRepo(session).read(row.gameId, row.matchId).map(_.exists(_.archivedAt.isDefined))
+                        Repos(session).archives.read(row.gameId, row.matchId).map(_.exists(_.archivedAt.isDefined))
                     )
                 } yield if (archived) Settlement.Settled else Settlement.Owed("its engine has not archived it")
         }
@@ -105,13 +105,13 @@ class EndingService(
             case None => IO.pure(Settlement.Settled)
             case Some(url) =>
                 sessionPool
-                    .use(session => new GameApiKeyRepo(session).forGame(row.gameId))
+                    .use(session => Repos(session).gameApiKeys.forGame(row.gameId))
                     .flatMap(key => engine.cancel(url, key))
                     .attempt
                     .flatMap {
                         case Right(_) =>
                             sessionPool
-                                .use(session => new ArchiveRepo(session).recordReleased(row.gameId, row.matchId))
+                                .use(session => Repos(session).archives.recordReleased(row.gameId, row.matchId))
                                 .as(Settlement.Settled)
                         case Left(e) => IO.pure(Settlement.Owed(s"telling its engine it was cancelled failed: $e"))
                     }

@@ -4,7 +4,6 @@ import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
-import skunk.Session
 import com.vivi.matchmaker.engine.GameEngineError
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
@@ -73,18 +72,19 @@ class TournamentRounds[T](
         callerExternalId: String
     ): IO[Option[Int]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
                 begun <- session.transaction.use { _ =>
                     for {
-                        caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        caller <- requireCaller(repos, callerExternalId)
+                        t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError(ErrorText.round.startNotOwner)
                         )
                         _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
                           ConflictError(ErrorText.round.notUnderWayIs(t.status.label.toLowerCase))
                         )
-                        begun <- begin(session, t)
+                        begun <- begin(repos, t)
                     } yield begun
                 }
                 (round, due) = begun
@@ -97,12 +97,13 @@ class TournamentRounds[T](
       */
     def autoStart(gameId: GameId, tournamentId: TournamentId): IO[Settlement] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
                 due <- session.transaction.use { _ =>
-                    new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
+                    repos.tournaments.readForUpdate(gameId, tournamentId).flatMap {
                         case Some(t) if isAutoStartable(t) =>
-                            stateRepo(session).isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
-                                if (isComplete) begin(session, t).map(_._2)
+                            repos.tournamentStates.isRoundComplete(gameId, tournamentId).flatMap { isComplete =>
+                                if (isComplete) begin(repos, t).map(_._2)
                                 else IO.pure(Nil)
                             }
                         case _ => IO.pure(Nil)
@@ -122,47 +123,47 @@ class TournamentRounds[T](
       * round.
       */
     private def begin(
-        session: Session[IO],
+        repos: Repos,
         t: Tournament
     ): IO[(Option[Int], List[MatchId])] =
         for {
             _ <- IO.raiseWhen(t.isStopped)(ConflictError(ErrorText.round.stopped))
-            game <- requireGame(session, t.gameId)
-            open <- requireOpenLoaded(session, t)
+            game <- requireGame(repos, t.gameId)
+            open <- requireOpenLoaded(repos, t)
             _ <- IO.raiseUnless(Progress.isRoundComplete(open.state))(
               ConflictError(ErrorText.round.unfinished)
             )
-            env <- envFor(session = session, t = t, game = game, design = open.design)
-            worked <- workedOut(session = session, t = t, open = open)(Progress.nextRound(_, env)._1)
+            env <- envFor(repos = repos, t = t, game = game, design = open.design)
+            worked <- workedOut(repos = repos, t = t, open = open)(Progress.nextRound(_, env)._1)
             (loaded, next) = worked
             result <-
-                if (next.isFinished) finish(session = session, t = t, loaded = loaded, state = next).as((None, Nil))
+                if (next.isFinished) finish(repos = repos, t = t, loaded = loaded, state = next).as((None, Nil))
                 else
                     for {
-                        _ <- stateRepo(session).save(
+                        _ <- repos.tournamentStates.save(
                           game = t.gameId,
                           tournament = t.tournamentId,
                           before = loaded,
                           after = next
                         )
                         at = now()
-                        _ <- stateRepo(session).beginRound(
+                        _ <- repos.tournamentStates.beginRound(
                           game = t.gameId,
                           tournament = t.tournamentId,
                           round = next.round,
                           at = at,
                           deadline = t.settings.roundDuration.map(at.plus)
                         )
-                        matches <- new TournamentMatchRepo(session).listRound(
+                        matches <- repos.tournamentMatches.listRound(
                           game = t.gameId,
                           tournament = t.tournamentId,
                           round = next.round
                         )
-                        players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
-                        seeds <- seedsIn(session, t)
+                        players <- repos.entrants.players(t.gameId, t.tournamentId)
+                        seeds <- seedsIn(repos, t)
                         due <- matches.flatTraverse(m =>
                             seat(
-                              session = session,
+                              repos = repos,
                               game = game,
                               state = next,
                               players = players,
@@ -176,8 +177,8 @@ class TournamentRounds[T](
 
     /* Each member's seed in the pool their match is in, for who keeps their seat when one player holds two. Read
      * again, now that the round's pools have their real ids; only the runs being played, which are the round's. */
-    private def seedsIn(session: Session[IO], t: Tournament): IO[Map[(Int, Long), Int]] =
-        requireOpenLoaded(session, t).map { loaded =>
+    private def seedsIn(repos: Repos, t: Tournament): IO[Map[(Int, Long), Int]] =
+        requireOpenLoaded(repos, t).map { loaded =>
             Progress.allPools(loaded.state.root).flatMap(p => p.members.map(m => (p.id, m.entrant) -> m.seedIn)).toMap
         }
 
@@ -186,7 +187,7 @@ class TournamentRounds[T](
       * choose. The match, if it is due to be created now.
       */
     private def seat(
-        session: Session[IO],
+        repos: Repos,
         game: Game,
         state: TournamentState,
         players: Map[EntrantId, Option[PlayerId]],
@@ -204,9 +205,8 @@ class TournamentRounds[T](
         val settled =
             TournamentRounds.settleChoices(seats = marked, allowed = allowedRoles(game, m.seats.size), at = at)
         val status = TournamentRounds.statusOf(settled, game.requiredSeats)
-        val matches = new TournamentMatchRepo(session)
-        settled.filterNot(m.seats.contains).traverse_(matches.updateSeat(m.gameId, _)) *>
-            matches
+        settled.filterNot(m.seats.contains).traverse_(repos.tournamentMatches.updateSeat(m.gameId, _)) *>
+            repos.tournamentMatches
                 .setStatus(game = m.gameId, id = m.matchId, to = status)
                 .as(Option.when(status == TournamentMatchStatus.Due)(m.matchId).toList)
     }
@@ -224,18 +224,18 @@ class TournamentRounds[T](
         callerExternalId: String
     ): IO[TournamentMatchView] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
                 chosen <- session.transaction.use { _ =>
-                    val matches = new TournamentMatchRepo(session)
                     for {
-                        caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
-                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
+                        caller <- requireCaller(repos, callerExternalId)
+                        t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
+                        tm <- requireMatchForUpdate(repos = repos, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(tm.status == TournamentMatchStatus.Choosing)(
                           ConflictError(ErrorText.round.notChoosingRoles)
                         )
-                        game <- requireGame(session, gameId)
-                        players <- new EntrantRepo(session).players(gameId, tournamentId)
+                        game <- requireGame(repos, gameId)
+                        players <- repos.entrants.players(gameId, tournamentId)
                         turn = TournamentRounds.nextChooser(tm.seats)
                         seat <- turn match {
                             case Some(s) if players.get(s.entrantId).flatten.contains(caller.playerId) => IO.pure(s)
@@ -253,9 +253,11 @@ class TournamentRounds[T](
                             else s
                         )
                         settled = TournamentRounds.settleChoices(seats = picked, allowed = allowed, at = at)
-                        _ <- settled.filterNot(tm.seats.contains).traverse_(matches.updateSeat(gameId, _))
+                        _ <- settled
+                            .filterNot(tm.seats.contains)
+                            .traverse_(repos.tournamentMatches.updateSeat(gameId, _))
                         status = TournamentRounds.statusOf(settled, game.requiredSeats)
-                        _ <- matches.setStatus(game = gameId, id = matchId, to = status)
+                        _ <- repos.tournamentMatches.setStatus(game = gameId, id = matchId, to = status)
                     } yield tm.copy(seats = settled, status = status)
                 }
                 _ <- IO.whenA(chosen.status == TournamentMatchStatus.Due)(
@@ -275,17 +277,18 @@ class TournamentRounds[T](
       */
     def choicesFor(callerExternalId: String): IO[List[TournamentChoice]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                caller <- requireCaller(session, callerExternalId)
-                waiting <- new TournamentMatchRepo(session).choosingFor(caller.playerId)
-                tournaments <- new TournamentRepo(session).readFor(
+                caller <- requireCaller(repos, callerExternalId)
+                waiting <- repos.tournamentMatches.choosingFor(caller.playerId)
+                tournaments <- repos.tournaments.readFor(
                   waiting.map(tm => TournamentKey(tm.gameId, tm.tournamentId)).distinct
                 )
                 // The few games they are in, read plainly, as everywhere here: see requireGame.
                 games <- waiting
                     .map(_.gameId)
                     .distinct
-                    .traverse(g => new GameRepo[T](session).read(g).map(_.map(g -> _)))
+                    .traverse(g => repos.games[T].read(g).map(_.map(g -> _)))
                     .map(_.flatten.toMap)
             } yield waiting.flatMap { tm =>
                 for {
@@ -311,9 +314,10 @@ class TournamentRounds[T](
       */
     def createMatch(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Settlement] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
                 prepared <- session.transaction.use(_ =>
-                    prepare(session = session, gameId = gameId, tournamentId = tournamentId, matchId = matchId)
+                    prepare(repos = repos, gameId = gameId, tournamentId = tournamentId, matchId = matchId)
                 )
                 settled <- prepared match {
                     case Prepared.Nothing               => IO.pure(Settlement.Settled)
@@ -321,19 +325,19 @@ class TournamentRounds[T](
                     case Prepared.Launch(saved, game, players, tiesAllowed) =>
                         engine
                             .launchTournamentMatch(
-                              session = session,
+                              repos = repos,
                               saved = saved,
                               game = game,
                               players = players,
                               tiesAllowed = tiesAllowed,
-                              undo = undo(session = session, gameId = gameId, matchId = matchId)
+                              undo = undo(repos = repos, gameId = gameId, matchId = matchId)
                             )
                             .attempt
                             .flatMap {
                                 case Right(_) =>
-                                    new TournamentMatchRepo(session).created(gameId, matchId).as(Settlement.Settled)
+                                    repos.tournamentMatches.created(gameId, matchId).as(Settlement.Settled)
                                 case Left(e) =>
-                                    createFailed(session = session, saved = saved, game = game, error = e)
+                                    createFailed(repos = repos, saved = saved, game = game, error = e)
                             }
                 }
             } yield settled
@@ -343,8 +347,8 @@ class TournamentRounds[T](
      * time. Owed, and so tried again, until it has failed [[CreateFailure.maxTries]] times in a row; then settled, and
      * the owner's Check round is what tries again. Settled, with nothing recorded, if another try has claimed or
      * created the match since this one gave it back. */
-    private def createFailed(session: Session[IO], saved: Match, game: Game, error: Throwable): IO[Settlement] =
-        new TournamentMatchRepo(session)
+    private def createFailed(repos: Repos, saved: Match, game: Game, error: Throwable): IO[Settlement] =
+        repos.tournamentMatches
             .createFailed(
               game = game.gameId,
               id = saved.matchId,
@@ -357,10 +361,10 @@ class TournamentRounds[T](
             )
             .flatTap(tries =>
                 IO.whenA(tries.contains(1))(
-                  new TournamentRepo(session)
+                  repos.tournaments
                       .read(game.gameId, saved.tournamentId)
                       .flatMap(
-                        _.traverse_(t => notifications.matchNotCreated(session = session, tournament = t, game = game))
+                        _.traverse_(t => notifications.matchNotCreated(repos = repos, tournament = t, game = game))
                       )
                 )
             )
@@ -386,25 +390,25 @@ class TournamentRounds[T](
     }
 
     private def prepare(
-        session: Session[IO],
+        repos: Repos,
         gameId: GameId,
         tournamentId: TournamentId,
         matchId: MatchId
     ): IO[Prepared] =
-        new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
+        repos.tournaments.readForUpdate(gameId, tournamentId).flatMap {
             case None => IO.pure(Prepared.Nothing)
             case Some(t) =>
-                new TournamentMatchRepo(session).readForUpdate(gameId, matchId).flatMap {
+                repos.tournamentMatches.readForUpdate(gameId, matchId).flatMap {
                     case Some(tm) if tm.status == TournamentMatchStatus.Due =>
-                        seatsFor(session = session, t = t, tm = tm)
+                        seatsFor(repos = repos, t = t, tm = tm)
                     case _ => IO.pure(Prepared.Nothing)
                 }
         }
 
-    private def seatsFor(session: Session[IO], t: Tournament, tm: TournamentMatch): IO[Prepared] =
+    private def seatsFor(repos: Repos, t: Tournament, tm: TournamentMatch): IO[Prepared] =
         for {
-            game <- requireGame(session, t.gameId)
-            players <- new EntrantRepo(session).players(t.gameId, t.tournamentId)
+            game <- requireGame(repos, t.gameId)
+            players <- repos.entrants.players(t.gameId, t.tournamentId)
             active = tm.seats.filter { s =>
                 val isSeated = players.get(s.entrantId).flatten.isDefined
                 // A seat of a match seated without roles has no role to wait for.
@@ -415,14 +419,14 @@ class TournamentRounds[T](
                     // Too few left to play: those still seated share first place, and everyone else is last.
                     val ranks =
                         tm.seats.map(s => s -> (if (active.exists(_.entrantId == s.entrantId)) 1 else active.size + 1))
-                    decideUnplayed(session = session, t = t, game = game, tm = tm, ranks = ranks).map(done =>
+                    decideUnplayed(repos = repos, t = t, game = game, tm = tm, ranks = ranks).map(done =>
                         Prepared.Decided(t, done)
                     )
-                } else launch(session = session, t = t, game = game, players = players, tm = tm, active = active)
+                } else launch(repos = repos, t = t, game = game, players = players, tm = tm, active = active)
         } yield prepared
 
     private def launch(
-        session: Session[IO],
+        repos: Repos,
         t: Tournament,
         game: Game,
         players: Map[EntrantId, Option[PlayerId]],
@@ -431,16 +435,15 @@ class TournamentRounds[T](
     ): IO[Prepared] = {
         val clock = TournamentRounds.clockOf(t = t, game = game, tm = tm)
         val at = now()
-        val matches = new TournamentMatchRepo(session)
         val roleName = game.roles.map(r => r.gameRoleId -> r.name).toMap
         // Roles nobody plays, for the seats that forfeit: a seat of a match being played always has one, in a game
         // that has roles.
         val spare = allowedRoles(game, tm.seats.size).filterNot(active.flatMap(_.gameRoleId).toSet)
         val forfeited = tm.seats.filterNot(s => active.exists(_.participantId == s.participantId))
         for {
-            entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId)
+            entries <- repos.entrants.list(t.gameId, t.tournamentId)
             characterOf = entries.map(e => e.entrantId -> e.characterId).toMap
-            _ <- matches.launch(
+            _ <- repos.tournamentMatches.launch(
               game = t.gameId,
               id = tm.matchId,
               at = at,
@@ -456,14 +459,14 @@ class TournamentRounds[T](
             )
             seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId))
             starting <- EloRatingService.startingRatings(
-              session = session,
+              repos = repos,
               gameId = t.gameId,
               seats = seatsOf,
               byRole = !game.isSeatedWithoutRoles
             )
             _ <- active.traverse_ { s =>
                 val player = players(s.entrantId).get
-                matches.launchSeat(
+                repos.tournamentMatches.launchSeat(
                   game = t.gameId,
                   seat = s.participantId,
                   player = player,
@@ -474,8 +477,8 @@ class TournamentRounds[T](
             // A forfeit is a last place, the worst any seat could finish, recorded now: the engine reports only the
             // seats it was told of.
             _ <- forfeited.zipWithIndex.traverse_ { (s, i) =>
-                matches.retireSeat(game = t.gameId, seat = s.participantId, role = spare.lift(i)) *>
-                    new ResultRepo(session).createManual(
+                repos.tournamentMatches.retireSeat(game = t.gameId, seat = s.participantId, role = spare.lift(i)) *>
+                    repos.results.createManual(
                       gameId = t.gameId,
                       id = s.participantId,
                       rank = tm.seats.size,
@@ -485,7 +488,7 @@ class TournamentRounds[T](
             // What choosing cost each seat is a turn of theirs, charged to their clock like any other.
             _ <- active.traverse_ { s =>
                 (s.chooseStartedAt, s.chosenAt).tupled.traverse_((from, to) =>
-                    new TurnRepo(session).create(
+                    repos.turns.create(
                       Turn(
                         gameId = t.gameId,
                         matchId = tm.matchId,
@@ -496,17 +499,17 @@ class TournamentRounds[T](
                     )
                 )
             }
-            saved <- new MatchRepo(session).read(t.gameId, tm.matchId).flatMap {
+            saved <- repos.matches.read(t.gameId, tm.matchId).flatMap {
                 case Some(m) => IO.pure(m)
                 case None    => IO.raiseError(NotFoundError(ErrorText.matches.notFound))
             }
-            seated <- new ParticipantRepo(session).listForMatch(t.gameId, tm.matchId)
+            seated <- repos.participants.listForMatch(t.gameId, tm.matchId)
             enginePlayers <- active.traverse { s =>
                 val participant = seated.map(_._1).find(_.participantId == s.participantId).get
-                new PlayerRepo(session).read(participant.playerId).flatMap {
+                repos.players.read(participant.playerId).flatMap {
                     case Some(player) =>
                         engine.tournamentPlayer(
-                          session = session,
+                          repos = repos,
                           participant = participant,
                           player = player,
                           roleName = s.gameRoleId.map(roleName),
@@ -523,22 +526,22 @@ class TournamentRounds[T](
       * read under its lock: one its owner called off or decided meanwhile keeps what that wrote. Swallowed: the
       * engine's failure is the news.
       */
-    private def undo(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
-        session.transaction
+    private def undo(repos: Repos, gameId: GameId, matchId: MatchId): IO[Unit] =
+        repos.session.transaction
             .use { _ =>
-                new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
+                repos.matches.readForUpdate(gameId, matchId).flatMap {
                     case Some(m) if m.status == MatchStatus.InProgress =>
-                        backToDue(session = session, gameId = gameId, matchId = matchId)
+                        backToDue(repos = repos, gameId = gameId, matchId = matchId)
                     case _ => IO.unit
                 }
             }
             .handleError(_ => ())
 
     /* A begun match due again, its turns and its forfeited seats' last places gone, under the lock its caller holds. */
-    private def backToDue(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
-        new TurnRepo(session).deleteForMatch(gameId, matchId) *>
-            new ResultRepo(session).deleteManualForMatch(gameId, matchId) *>
-            new TournamentMatchRepo(session).backToDue(gameId, matchId)
+    private def backToDue(repos: Repos, gameId: GameId, matchId: MatchId): IO[Unit] =
+        repos.turns.deleteForMatch(gameId, matchId) *>
+            repos.results.deleteManualForMatch(gameId, matchId) *>
+            repos.tournamentMatches.backToDue(gameId, matchId)
 
     // ---- a match's end ---------------------------------------------------------------------
 
@@ -547,16 +550,17 @@ class TournamentRounds[T](
       */
     def recordEnding(gameId: GameId, matchId: MatchId): IO[Unit] =
         sessionPool.use { session =>
-            new TournamentMatchRepo(session).tournamentOf(gameId, matchId).flatMap {
+            val repos = Repos(session)
+            repos.tournamentMatches.tournamentOf(gameId, matchId).flatMap {
                 case None => IO.unit
                 case Some(tournamentId) =>
                     session.transaction
                         .use { _ =>
                             for {
-                                t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                                t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                                 done <-
                                     if (t.status != TournamentStatus.Running) IO.pure(None)
-                                    else requireGame(session, gameId).flatMap(settle(session, t, _))
+                                    else requireGame(repos, gameId).flatMap(settle(repos, t, _))
                             } yield done.map(t -> _)
                         }
                         .flatMap {
@@ -570,31 +574,31 @@ class TournamentRounds[T](
       * and finishes it if that ends it, or if its owner has stopped it. The round's number, if this is what completed
       * it and the tournament goes on: a round is marked complete once, however many endings find it so.
       */
-    private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
+    private def settle(repos: Repos, t: Tournament, game: Game): IO[Option[Int]] =
         // Asked of the round's rows first: most endings leave the round going, and reading the whole tournament under
         // its lock to find that out made each ending cost as much as the tournament had matches.
-        stateRepo(session).isRoundComplete(t.gameId, t.tournamentId).flatMap { isComplete =>
-            if (isComplete) settleLoaded(session = session, t = t, game = game) else IO.pure(None)
+        repos.tournamentStates.isRoundComplete(t.gameId, t.tournamentId).flatMap { isComplete =>
+            if (isComplete) settleLoaded(repos = repos, t = t, game = game) else IO.pure(None)
         }
 
-    private def settleLoaded(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
-        requireOpenLoaded(session, t).flatMap { open =>
+    private def settleLoaded(repos: Repos, t: Tournament, game: Game): IO[Option[Int]] =
+        requireOpenLoaded(repos, t).flatMap { open =>
             if (!Progress.isRoundComplete(open.state) || open.state.round == 0) IO.pure(None)
             else
                 for {
-                    env <- envFor(session = session, t = t, game = game, design = open.design)
-                    worked <- workedOut(session = session, t = t, open = open)(Progress.advance(_, env))
+                    env <- envFor(repos = repos, t = t, game = game, design = open.design)
+                    worked <- workedOut(repos = repos, t = t, open = open)(Progress.advance(_, env))
                     (loaded, advanced) = worked
-                    first <- stateRepo(session).markRoundComplete(
+                    first <- repos.tournamentStates.markRoundComplete(
                       game = t.gameId,
                       tournament = t.tournamentId,
                       round = loaded.state.round
                     )
                     finished <-
                         if (advanced.isFinished || t.isStopped)
-                            finish(session = session, t = t, loaded = loaded, state = advanced).as(true)
+                            finish(repos = repos, t = t, loaded = loaded, state = advanced).as(true)
                         else
-                            stateRepo(session)
+                            repos.tournamentStates
                                 .save(game = t.gameId, tournament = t.tournamentId, before = loaded, after = advanced)
                                 .as(false)
                 } yield Option.when(first && !finished)(loaded.state.round)
@@ -605,7 +609,7 @@ class TournamentRounds[T](
       * played. The round's number, if this completed it.
       */
     private def decideUnplayed(
-        session: Session[IO],
+        repos: Repos,
         t: Tournament,
         game: Game,
         tm: TournamentMatch,
@@ -615,24 +619,24 @@ class TournamentRounds[T](
         val alone = ranks.count(_._2 == best) == 1
         for {
             _ <- ranks.traverse_((s, rank) =>
-                new ResultRepo(session).createManual(
+                repos.results.createManual(
                   gameId = t.gameId,
                   id = s.participantId,
                   rank = rank,
                   isWinner = alone && rank == best
                 )
             )
-            _ <- callOff(session = session, gameId = t.gameId, matchId = tm.matchId)
-            done <- settle(session = session, t = t, game = game)
+            _ <- callOff(repos = repos, gameId = t.gameId, matchId = tm.matchId)
+            done <- settle(repos = repos, t = t, game = game)
         } yield done
     }
 
     /* A tournament match over without being played to an end: called off, its seats finished with. */
-    private def callOff(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
-        new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
+    private def callOff(repos: Repos, gameId: GameId, matchId: MatchId): IO[Unit] =
+        repos.matches.readForUpdate(gameId, matchId).flatMap {
             case Some(m) if !m.isCancelled && !m.isCompleted =>
-                new MatchRepo(session).update(m.copy(isCancelled = true)) *>
-                    new ParticipantRepo(session).completeForMatch(gameId, matchId)
+                repos.matches.update(m.copy(isCancelled = true)) *>
+                    repos.participants.completeForMatch(gameId, matchId)
             case _ => IO.unit
         }
 
@@ -642,12 +646,12 @@ class TournamentRounds[T](
     private def afterRecording(t: Tournament, roundDone: Option[Int]): IO[Unit] =
         roundDone.traverse_ { round =>
             if (t.settings.isAutoStarted) endings.tournamentRoundDue(t.gameId, t.tournamentId)
-            else sessionPool.use(notifications.tournamentRoundDone(_, t, round))
+            else sessionPool.use(session => notifications.tournamentRoundDone(Repos(session), t, round))
         }
 
-    private def finish(session: Session[IO], t: Tournament, loaded: Loaded, state: TournamentState): IO[Unit] =
-        stateRepo(session).save(game = t.gameId, tournament = t.tournamentId, before = loaded, after = state) *>
-            new TournamentRepo(session).update(t.copy(status = TournamentStatus.Finished, endedAt = Some(now())))
+    private def finish(repos: Repos, t: Tournament, loaded: Loaded, state: TournamentState): IO[Unit] =
+        repos.tournamentStates.save(game = t.gameId, tournament = t.tournamentId, before = loaded, after = state) *>
+            repos.tournaments.update(t.copy(status = TournamentStatus.Finished, endedAt = Some(now())))
 
     // ---- the owner's tools -----------------------------------------------------------------
 
@@ -658,10 +662,11 @@ class TournamentRounds[T](
     def checkRound(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool
             .use { session =>
+                val repos = Repos(session)
                 session.transaction.use { _ =>
                     for {
-                        caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        caller <- requireCaller(repos, callerExternalId)
+                        t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError(ErrorText.round.checkNotOwner)
                         )
@@ -672,7 +677,7 @@ class TournamentRounds[T](
                         _ <- IO.raiseWhen(t.checkedAt.exists(c => at.isBefore(c.plus(checkInterval))))(
                           ConflictError(ErrorText.round.justChecked)
                         )
-                        _ <- new TournamentRepo(session).update(t.copy(checkedAt = Some(at)))
+                        _ <- repos.tournaments.update(t.copy(checkedAt = Some(at)))
                     } yield at
                 }
             }
@@ -688,10 +693,11 @@ class TournamentRounds[T](
     def runCheck(gameId: GameId, tournamentId: TournamentId): IO[Settlement] =
         sessionPool
             .use { session =>
+                val repos = Repos(session)
                 // Read plainly: nothing here is written from it. Each match is re-read under lock below.
-                new TournamentRepo(session).read(gameId, tournamentId).flatMap {
+                repos.tournaments.read(gameId, tournamentId).flatMap {
                     case Some(t) if t.status == TournamentStatus.Running =>
-                        new TournamentMatchRepo(session).listUnfinished(gameId, tournamentId)
+                        repos.tournamentMatches.listUnfinished(gameId, tournamentId)
                     case _ => IO.pure(Nil)
                 }
             }
@@ -706,7 +712,9 @@ class TournamentRounds[T](
                               .void
                       case TournamentMatchStatus.Due =>
                           // A match the queue gave up creating gets its full count of tries again.
-                          sessionPool.use(new TournamentMatchRepo(_).retryCreate(gameId, tm.matchId)) *>
+                          sessionPool.use(session =>
+                              Repos(session).tournamentMatches.retryCreate(gameId, tm.matchId)
+                          ) *>
                               endings.tournamentMatchDue(
                                 gameId = gameId,
                                 tournamentId = tournamentId,
@@ -728,16 +736,17 @@ class TournamentRounds[T](
     private def relaunchStranded(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Boolean] =
         sessionPool
             .use { session =>
+                val repos = Repos(session)
                 session.transaction.use { _ =>
                     for {
-                        _ <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
-                        m <- new MatchRepo(session).readForUpdate(gameId, matchId)
+                        _ <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
+                        m <- repos.matches.readForUpdate(gameId, matchId)
                         at = now()
                         isStranded = m.exists(m =>
                             m.status == MatchStatus.InProgress && m.statusUrl.isEmpty &&
                                 m.start.exists(s => !at.isBefore(s.plus(relaunchAfter)))
                         )
-                        _ <- IO.whenA(isStranded)(backToDue(session = session, gameId = gameId, matchId = matchId))
+                        _ <- IO.whenA(isStranded)(backToDue(repos = repos, gameId = gameId, matchId = matchId))
                     } yield isStranded
                 }
             }
@@ -753,13 +762,13 @@ class TournamentRounds[T](
       */
     private def forfeitChooser(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction
                 .use { _ =>
-                    val matches = new TournamentMatchRepo(session)
                     for {
-                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
-                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
-                        game <- requireGame(session, gameId)
+                        t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
+                        tm <- requireMatchForUpdate(repos = repos, t = t, matchId = matchId)
+                        game <- requireGame(repos, gameId)
                         at = now()
                         late = TournamentRounds.chooseBy(t = t, game = game, tm = tm).exists(!at.isBefore(_))
                         status <-
@@ -776,8 +785,12 @@ class TournamentRounds[T](
                                       at = at
                                     )
                                 val status = TournamentRounds.statusOf(settled, game.requiredSeats)
-                                settled.filterNot(tm.seats.contains).traverse_(matches.updateSeat(gameId, _)) *>
-                                    matches.setStatus(game = gameId, id = matchId, to = status).as(status)
+                                settled
+                                    .filterNot(tm.seats.contains)
+                                    .traverse_(repos.tournamentMatches.updateSeat(gameId, _)) *>
+                                    repos.tournamentMatches
+                                        .setStatus(game = gameId, id = matchId, to = status)
+                                        .as(status)
                             }
                     } yield status
                 }
@@ -799,33 +812,34 @@ class TournamentRounds[T](
       */
     def stop(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                    caller <- requireCaller(repos, callerExternalId)
+                    t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
                       UnauthorizedError(ErrorText.round.stopNotOwner)
                     )
                     hasBegun <-
                         if (t.status == TournamentStatus.Running)
-                            new TournamentRepo(session).hasBegunMatch(gameId, tournamentId)
+                            repos.tournaments.hasBegunMatch(gameId, tournamentId)
                         else IO.pure(false)
                     _ <- t.status match {
                         case TournamentStatus.Open | TournamentStatus.Running if !hasBegun =>
-                            new TournamentRepo(session).delete(gameId, tournamentId)
+                            repos.tournaments.delete(gameId, tournamentId)
                         case TournamentStatus.Running if t.isStopped =>
                             IO.raiseError(ConflictError(ErrorText.round.alreadyStopped))
                         case TournamentStatus.Running =>
-                            new TournamentRepo(session).stop(gameId, tournamentId) *>
-                                requireLoaded(session, t).flatMap { loaded =>
+                            repos.tournaments.stop(gameId, tournamentId) *>
+                                requireLoaded(repos, t).flatMap { loaded =>
                                     IO.whenA(Progress.isRoundComplete(loaded.state))(
-                                      requireGame(session, gameId)
+                                      requireGame(repos, gameId)
                                           .flatMap(game =>
-                                              envFor(session = session, t = t, game = game, design = loaded.design)
+                                              envFor(repos = repos, t = t, game = game, design = loaded.design)
                                           )
                                           .flatMap(env =>
                                               finish(
-                                                session = session,
+                                                repos = repos,
                                                 t = t,
                                                 loaded = loaded,
                                                 state = Progress.advance(loaded.state, env)
@@ -842,18 +856,19 @@ class TournamentRounds[T](
     /** The owner asking a stage that repeats until stopped to stop, after the run being played. */
     def stopRepeating(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                    caller <- requireCaller(repos, callerExternalId)
+                    t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                     _ <- IO.raiseUnless(t.owner == caller.playerId)(
                       UnauthorizedError(ErrorText.round.stopNotOwner)
                     )
                     _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
                       ConflictError(ErrorText.round.notUnderWay)
                     )
-                    loaded <- requireLoaded(session, t)
-                    _ <- stateRepo(session).save(
+                    loaded <- requireLoaded(repos, t)
+                    _ <- repos.tournamentStates.save(
                       game = gameId,
                       tournament = tournamentId,
                       before = loaded,
@@ -876,26 +891,27 @@ class TournamentRounds[T](
         callerExternalId: String
     ): IO[Unit] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction
                 .use { _ =>
                     for {
-                        caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
+                        caller <- requireCaller(repos, callerExternalId)
+                        t <- requireTournamentForUpdate(repos = repos, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError(ErrorText.round.decideNotOwner)
                         )
-                        tm <- requireMatchForUpdate(session = session, t = t, matchId = matchId)
+                        tm <- requireMatchForUpdate(repos = repos, t = t, matchId = matchId)
                         _ <- IO.raiseUnless(
                           ranks.keySet == tm.seats.map(_.entrantId).toSet && ranks.values.forall(_ >= 1)
                         )(
                           ValidationError(ErrorText.round.badRanks)
                         )
-                        game <- requireGame(session, gameId)
-                        m <- new MatchRepo(session).readForUpdate(gameId, matchId)
+                        game <- requireGame(repos, gameId)
+                        m <- repos.matches.readForUpdate(gameId, matchId)
                         _ <- IO.raiseWhen(m.exists(_.isCompleted))(
                           ConflictError(ErrorText.round.playedToEnd)
                         )
-                        resultRepo = new ResultRepo(session)
+                        resultRepo = repos.results
                         byParticipant <- resultRepo
                             .forMatch(gameId, matchId)
                             .map(_.map(r => r.participantId -> r).toMap)
@@ -922,8 +938,8 @@ class TournamentRounds[T](
                               )
                           }
                         )
-                        _ <- callOff(session = session, gameId = gameId, matchId = matchId)
-                        done <- settle(session = session, t = t, game = game)
+                        _ <- callOff(repos = repos, gameId = gameId, matchId = matchId)
+                        done <- settle(repos = repos, t = t, game = game)
                     } yield (t, Option.when(begun)(matchId), done)
                 }
                 .flatMap { (t, cancelled, done) =>
@@ -934,12 +950,10 @@ class TournamentRounds[T](
 
     // ---- shared ----------------------------------------------------------------------------
 
-    private def stateRepo(session: Session[IO]) = new TournamentStateRepo(session)
-
     /** Everyone's rating now, by entrant: a character entry's owner's, and the starting rating for anyone with none. */
-    private def envFor(session: Session[IO], t: Tournament, game: Game, design: TournamentDesign): IO[Env] =
+    private def envFor(repos: Repos, t: Tournament, game: Game, design: TournamentDesign): IO[Env] =
         for {
-            ratings <- new EntrantRepo(session).ratingsNow(t.gameId, t.tournamentId)
+            ratings <- repos.entrants.ratingsNow(t.gameId, t.tournamentId)
         } yield Env(
           design = design,
           game = TournamentGame.of(game, t.settings.playersPerMatch).copy(hasRoleChoice = t.settings.hasRoleChoice),
@@ -948,13 +962,13 @@ class TournamentRounds[T](
           hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
-    private def requireLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
-        requireState(t)(stateRepo(session).load(t.gameId, t.tournamentId))
+    private def requireLoaded(repos: Repos, t: Tournament): IO[Loaded] =
+        requireState(t)(repos.tournamentStates.load(t.gameId, t.tournamentId))
 
     /* The state without the runs its (sub)tournaments have completed (`TournamentStateRepo.loadOpen`): what a round's
      * end and the next round's start read, rather than every match the tournament has played. */
-    private def requireOpenLoaded(session: Session[IO], t: Tournament): IO[Loaded] =
-        requireState(t)(stateRepo(session).loadOpen(t.gameId, t.tournamentId))
+    private def requireOpenLoaded(repos: Repos, t: Tournament): IO[Loaded] =
+        requireState(t)(repos.tournamentStates.loadOpen(t.gameId, t.tournamentId))
 
     private def requireState(t: Tournament)(read: IO[Option[Loaded]]): IO[Loaded] =
         IO.raiseWhen(t.startedAt.isEmpty)(ConflictError(ErrorText.round.notStarted)) *>
@@ -966,35 +980,35 @@ class TournamentRounds[T](
     /* The rules' next state worked out from `open`, and the state to save it against -- or, where that finished a part
      * of the tournament whose completed runs `open` left out, which is ranked from every run it played, both worked
      * out again from the whole state: once for each (sub)tournament, as it ends. */
-    private def workedOut(session: Session[IO], t: Tournament, open: Loaded)(
+    private def workedOut(repos: Repos, t: Tournament, open: Loaded)(
         next: TournamentState => TournamentState
     ): IO[(Loaded, TournamentState)] = {
         val fromOpen = next(open.state)
         if (!TournamentStateRepo.isWholeLoadNeeded(open, fromOpen)) IO.pure((open, fromOpen))
-        else requireLoaded(session, t).map(whole => (whole, next(whole.state)))
+        else requireLoaded(repos, t).map(whole => (whole, next(whole.state)))
     }
 
-    private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
-        new PlayerRepo(session).readByExternalId(externalId).flatMap {
+    private def requireCaller(repos: Repos, externalId: String): IO[Player] =
+        repos.players.readByExternalId(externalId).flatMap {
             case Some(p) => IO.pure(p)
             case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     // Read plainly, as a reference table on the way to writes elsewhere: see the class's note.
-    private def requireGame(session: Session[IO], gameId: GameId): IO[Game] =
-        new GameRepo[T](session).read(gameId).flatMap {
+    private def requireGame(repos: Repos, gameId: GameId): IO[Game] =
+        repos.games[T].read(gameId).flatMap {
             case Some(g) => IO.pure(g)
             case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
         }
 
-    private def requireTournamentForUpdate(session: Session[IO], gameId: GameId, id: TournamentId): IO[Tournament] =
-        new TournamentRepo(session).readForUpdate(gameId, id).flatMap {
+    private def requireTournamentForUpdate(repos: Repos, gameId: GameId, id: TournamentId): IO[Tournament] =
+        repos.tournaments.readForUpdate(gameId, id).flatMap {
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(ErrorText.tournament.notFound))
         }
 
-    private def requireMatchForUpdate(session: Session[IO], t: Tournament, matchId: MatchId): IO[TournamentMatch] =
-        new TournamentMatchRepo(session).readForUpdate(t.gameId, matchId).flatMap {
+    private def requireMatchForUpdate(repos: Repos, t: Tournament, matchId: MatchId): IO[TournamentMatch] =
+        repos.tournamentMatches.readForUpdate(t.gameId, matchId).flatMap {
             case Some(m) if m.tournamentId == t.tournamentId => IO.pure(m)
             case _ => IO.raiseError(NotFoundError(ErrorText.round.noSuchMatch))
         }

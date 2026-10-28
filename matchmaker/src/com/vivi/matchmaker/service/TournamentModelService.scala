@@ -26,31 +26,33 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
       */
     def list(gameId: GameId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
-            requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listOffered(gameId)
+            val repos = Repos(session)
+            requireCaller(repos, callerExternalId) *> repos.tournamentModels.listOffered(gameId)
         }
 
     /** Every model a game could offer, by classification and then name. Any registered player may look. */
     def listAll(callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
-            requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listActive
+            val repos = Repos(session)
+            requireCaller(repos, callerExternalId) *> repos.tournamentModels.listActive
         }
 
     /** A game's admin offering a model in the game; nothing if it is offered already. The models the game now offers.
       */
     def offer(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
-                val repo = new TournamentModelRepo(session)
                 for {
-                    _ <- requireAdministered(session = session, gameId = gameId, callerExternalId = callerExternalId)
+                    _ <- requireAdministered(repos = repos, gameId = gameId, callerExternalId = callerExternalId)
                     // Held against a sync removing it before the choice is written.
-                    found <- repo.lockForShare(id)
-                    model <- if (found) repo.read(id) else IO.pure(None)
+                    found <- repos.tournamentModels.lockForShare(id)
+                    model <- if (found) repos.tournamentModels.read(id) else IO.pure(None)
                     _ <- model match {
-                        case Some(m) if m.isActive && m.isRoot => repo.offer(gameId, id)
+                        case Some(m) if m.isActive && m.isRoot => repos.tournamentModels.offer(gameId, id)
                         case _ => IO.raiseError(NotFoundError(ErrorText.model.noneToOffer))
                     }
-                    offered <- repo.listOffered(gameId)
+                    offered <- repos.tournamentModels.listOffered(gameId)
                 } yield offered
             }
         }
@@ -60,12 +62,12 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
       */
     def withdraw(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
-                val repo = new TournamentModelRepo(session)
                 for {
-                    _ <- requireAdministered(session = session, gameId = gameId, callerExternalId = callerExternalId)
-                    _ <- repo.withdraw(gameId, id)
-                    offered <- repo.listOffered(gameId)
+                    _ <- requireAdministered(repos = repos, gameId = gameId, callerExternalId = callerExternalId)
+                    _ <- repos.tournamentModels.withdraw(gameId, id)
+                    offered <- repos.tournamentModels.listOffered(gameId)
                 } yield offered
             }
         }
@@ -73,33 +75,34 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
     /** A site admin making the stored models what the code defines ([[TournamentModelService.sync]]). */
     def sync(callerExternalId: String): IO[TournamentModelSync] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
-                    caller <- requireCaller(session, callerExternalId)
+                    caller <- requireCaller(repos, callerExternalId)
                     _ <- IO.raiseUnless(caller.isAdmin)(
                       UnauthorizedError(ErrorText.model.syncNotAdmin)
                     )
-                    done <- TournamentModelService.sync(session)
+                    done <- TournamentModelService.sync(repos)
                 } yield done
             }
         }
 
-    private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
-        new PlayerRepo(session).readByExternalId(externalId).flatMap {
+    private def requireCaller(repos: Repos, externalId: String): IO[Player] =
+        repos.players.readByExternalId(externalId).flatMap {
             case Some(p) => IO.pure(p)
             case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }
 
     // Read plainly: see the class's note on the game.
-    private def requireAdministered(session: Session[IO], gameId: GameId, callerExternalId: String): IO[Game] =
+    private def requireAdministered(repos: Repos, gameId: GameId, callerExternalId: String): IO[Game] =
         for {
-            caller <- requireCaller(session, callerExternalId)
-            game <- new GameRepo[T](session).read(gameId).flatMap {
+            caller <- requireCaller(repos, callerExternalId)
+            game <- repos.games[T].read(gameId).flatMap {
                 case Some(g) => IO.pure(g)
                 case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
             }
             _ <- GameAdmins.require(
-              session = session,
+              repos = repos,
               caller = caller.playerId,
               gameId = gameId,
               refusal = ErrorText.game.notItsAdmin(game.displayName)
@@ -134,27 +137,25 @@ object TournamentModelService {
       * model the code no longer defines is deleted, with every tournament made from it, while nobody has entered one;
       * otherwise it is deactivated, kept for those tournaments, which carry on as they were.
       */
-    def sync(session: Session[IO]): IO[TournamentModelSync] = {
-        val repo = new TournamentModelRepo(session)
-        val tournaments = new TournamentRepo(session)
+    def sync(repos: Repos): IO[TournamentModelSync] = {
         for {
-            _ <- lockSync(session)
-            written <- StandardModels.all.traverse(m => write(repo, m))
-            stored <- repo.listRoots
+            _ <- lockSync(repos.session)
+            written <- StandardModels.all.traverse(m => write(repos.tournamentModels, m))
+            stored <- repos.tournamentModels.listRoots
             gone = stored.filterNot(s => StandardModels.find(s.tournamentModelId.value).isDefined)
             removed <- gone.traverse { s =>
                 val id = s.tournamentModelId
                 for {
-                    _ <- repo.lockForUpdate(id)
+                    _ <- repos.tournamentModels.lockForUpdate(id)
                     // Locked, so that nobody enters one between the look and the delete.
-                    madeFrom <- tournaments.lockMadeFrom(id)
-                    entered <- tournaments.anyEntrantMadeFrom(id)
+                    madeFrom <- repos.tournaments.lockMadeFrom(id)
+                    entered <- repos.tournaments.anyEntrantMadeFrom(id)
                     outcome <-
                         if (entered)
-                            if (s.isActive) repo.deactivate(id).as(Some(Left(id))) else IO.pure(None)
+                            if (s.isActive) repos.tournamentModels.deactivate(id).as(Some(Left(id))) else IO.pure(None)
                         else
-                            madeFrom.traverse_((g, t) => tournaments.delete(g, t)) *>
-                                repo.delete(id).as(Some(Right(id)))
+                            madeFrom.traverse_((g, t) => repos.tournaments.delete(g, t)) *>
+                                repos.tournamentModels.delete(id).as(Some(Right(id)))
                 } yield outcome
             }
         } yield TournamentModelSync(
@@ -188,12 +189,11 @@ object TournamentModelService {
       * models between the list and the offers -- an offer of a deleted model fails its foreign key -- and lock them in
       * an order of its own against these, a deadlock. Shared, so that games created at once do not queue for it.
       */
-    def offerPlayable(session: Session[IO], game: Game): IO[List[TournamentModelId]] = {
-        val repo = new TournamentModelRepo(session)
+    def offerPlayable(repos: Repos, game: Game): IO[List[TournamentModelId]] = {
         // A game without roles is judged at its smallest matches: whether a format suits a whole pool in one match is
         // the tournament's to say, which validates it when it is made.
         val tg = TournamentGame.of(game, game.fewestPlayers)
-        lockSyncShared(session) *> repo.listActive.flatMap { models =>
+        lockSyncShared(repos.session) *> repos.tournamentModels.listActive.flatMap { models =>
             // None for a game with no role a match could start with.
             val playable =
                 if (tg.requiredSeats == 0) Nil
@@ -206,7 +206,7 @@ object TournamentModelService {
                                 .forall(_.isWarning)
                         )
                         .map(_.tournamentModelId)
-            playable.traverse_(id => repo.offer(game.gameId, id)).as(playable)
+            playable.traverse_(id => repos.tournamentModels.offer(game.gameId, id)).as(playable)
         }
     }
 }

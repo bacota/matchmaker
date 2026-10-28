@@ -4,7 +4,6 @@ import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
-import skunk.Session
 import com.vivi.matchmaker.model.{
     CharacterId,
     CompletedPage,
@@ -27,14 +26,7 @@ import com.vivi.matchmaker.model.{
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.util.ChallengeSettings
-import com.vivi.matchmaker.persistence.{
-    GameAdminRepo,
-    MatchRepo,
-    ParticipantRepo,
-    PlayerRepo,
-    ResultRepo,
-    TournamentRepo
-}
+import com.vivi.matchmaker.persistence.{MatchRepo, Repos}
 
 /** Lists a player's matches, and lets the owner of one's tournament call it off.
   *
@@ -207,7 +199,8 @@ class MatchService(
     /* A list that may be about anybody: the caller only has to be a registered player. */
     private def forRegistered[A](callerExternalId: String)(query: MatchRepo => IO[A]): IO[A] =
         sessionPool.use { session =>
-            resolveCaller(session, callerExternalId).flatMap(_ => query(new MatchRepo(session)))
+            val repos = Repos(session)
+            resolveCaller(repos, callerExternalId).flatMap(_ => query(repos.matches))
         }
 
     /** A finished list as a player is shown it: any friendly archive that may have expired checked, and the links of an
@@ -338,17 +331,17 @@ class MatchService(
       */
     def results(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[List[ParticipantResult]] =
         sessionPool.use { session =>
-            val resultRepo = new ResultRepo(session)
+            val repos = Repos(session)
             for {
-                caller <- resolveCaller(session, callerExternalId)
-                asOf <- query.asOf.fold(new MatchRepo(session).now)(IO.pure)
+                caller <- resolveCaller(repos, callerExternalId)
+                asOf <- query.asOf.fold(repos.matches.now)(IO.pure)
                 span = MatchRepo.CompletedSpan(
                   from = query.from(asOf),
                   until = query.until(asOf),
                   gameId = query.gameId
                 )
-                rows <- resultRepo.listForPlayer(caller.playerId, span)
-                spent <- resultRepo.timeTakenForPlayer(caller.playerId, span)
+                rows <- repos.results.listForPlayer(caller.playerId, span)
+                spent <- repos.results.timeTakenForPlayer(caller.playerId, span)
             } yield {
                 val byParticipant = spent.map(row => (row.gameId, row.participantId) -> row.timeTaken).toMap
                 rows.map { row =>
@@ -398,21 +391,20 @@ class MatchService(
     def cancel(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
         sessionPool
             .use { session =>
-                val matchRepo = new MatchRepo(session)
-                val participantRepo = new ParticipantRepo(session)
+                val repos = Repos(session)
 
                 session.transaction
                     .use { _ =>
                         for {
-                            caller <- resolveCaller(session, callerExternalId)
+                            caller <- resolveCaller(repos, callerExternalId)
                             missing = NotFoundError(ErrorText.matches.notInGame)
                             // Read plainly for its tournament, which a match never changes, so that the tournament
                             // can be locked before the match is.
-                            found <- matchRepo.read(gameId, matchId).flatMap(IO.fromOption(_)(missing))
-                            tournament <- new TournamentRepo(session)
+                            found <- repos.matches.read(gameId, matchId).flatMap(IO.fromOption(_)(missing))
+                            tournament <- repos.tournaments
                                 .readForUpdate(gameId, found.tournamentId)
                                 .flatMap(IO.fromOption(_)(missing))
-                            existing <- matchRepo.readForUpdate(gameId, matchId).flatMap(IO.fromOption(_)(missing))
+                            existing <- repos.matches.readForUpdate(gameId, matchId).flatMap(IO.fromOption(_)(missing))
                             _ <- IO.raiseUnless(tournament.owner == caller.playerId)(
                               UnauthorizedError(ErrorText.matches.cancelNotOwner)
                             )
@@ -427,7 +419,7 @@ class MatchService(
                               ConflictError(ErrorText.matches.alreadyCancelled)
                             )
                             cancelled = existing.copy(isFriendly = true, isCancelled = true)
-                            _ <- matchRepo.update(cancelled)
+                            _ <- repos.matches.update(cancelled)
                             // And the seats, in the same lock: a cancelled match is over, so nobody's turn
                             // is pending in it and no clock is still running. Completion says this seat by
                             // seat as it records what each player scored; a cancellation has nothing to
@@ -436,11 +428,11 @@ class MatchService(
                             // Not merely tidiness. Anything asking "is this seat still in play" could
                             // otherwise only answer it by joining `match` for the cancelled flag, because
                             // the seat did not know -- see `NotificationRepo.restampParticipants`.
-                            _ <- participantRepo.completeForMatch(gameId, matchId)
+                            _ <- repos.participants.completeForMatch(gameId, matchId)
                             /* Every seat loses by forfeit, tied for last and none of them a winner, as a timeout
                              * that catches every seat at once ends one. No rating change: the match was made
                              * friendly first. */
-                            _ <- new ResultRepo(session).createForfeitsForMatch(gameId, matchId)
+                            _ <- repos.results.createForfeitsForMatch(gameId, matchId)
                         } yield (cancelled, caller)
                     }
                     .flatMap { (cancelled, caller) =>
@@ -449,7 +441,7 @@ class MatchService(
                          * the owner, who called it off and is looking at the answer. */
                         notifications
                             .matchEnded(
-                              session = session,
+                              repos = repos,
                               played = cancelled,
                               ending = MatchEnding.Cancelled,
                               except = Some(caller.playerId)
@@ -465,9 +457,10 @@ class MatchService(
         callerExternalId: String
     )(query: (MatchRepo, PlayerId) => IO[A]): IO[A] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                player <- resolveCaller(session, callerExternalId)
-                result <- query(new MatchRepo(session), player.playerId)
+                player <- resolveCaller(repos, callerExternalId)
+                result <- query(repos.matches, player.playerId)
             } yield result
         }
 
@@ -479,14 +472,15 @@ class MatchService(
       */
     def listForGame(gameId: GameId, callerExternalId: String, player: Option[PlayerId] = None): IO[List[GameMatch]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                caller <- resolveCaller(session, callerExternalId)
+                caller <- resolveCaller(repos, callerExternalId)
                 // Read plainly, like the list: nothing is written on the strength of it.
                 allowed <-
                     if (caller.isAdmin) IO.pure(true)
-                    else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
+                    else repos.gameAdmins.isAdmin(caller.playerId, gameId)
                 _ <- IO.raiseUnless(allowed)(UnauthorizedError(ErrorText.matches.listNotAdmin))
-                matches <- new MatchRepo(session).listForGame(
+                matches <- repos.matches.listForGame(
                   gameId = gameId,
                   limit = MatchService.gameMatchLimit,
                   player = player
@@ -521,8 +515,9 @@ class MatchService(
                 if (friendly) IO.pure(false)
                 else
                     sessionPool.use(session =>
+                        val repos = Repos(session)
                         mayMoveArchive(
-                          session = session,
+                          repos = repos,
                           gameId = gameId,
                           matchId = matchId,
                           callerExternalId = callerExternalId
@@ -532,20 +527,20 @@ class MatchService(
                 if (wanted) archives.flatTraverse(_.prepareMove(gameId, matchId))
                 else IO.pure(Option.empty[PreparedMove])
             decided <- sessionPool.use { session =>
-                val matchRepo = new MatchRepo(session)
+                val repos = Repos(session)
                 session.transaction.use { _ =>
                     for {
-                        caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
+                        caller <- repos.players.readByExternalIdForShare(callerExternalId).flatMap {
                             case Some(player) => IO.pure(player)
                             case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                         }
                         allowed <-
                             if (caller.isAdmin) IO.pure(true)
-                            else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
+                            else repos.gameAdmins.isAdminForShare(caller.playerId, gameId)
                         _ <- IO.raiseUnless(allowed)(
                           UnauthorizedError(ErrorText.matches.friendlyNotAdmin)
                         )
-                        existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                        existing <- repos.matches.readForUpdate(gameId, matchId).flatMap {
                             case Some(m) => IO.pure(m)
                             case None =>
                                 IO.raiseError(NotFoundError(ErrorText.matches.notInGame))
@@ -558,7 +553,7 @@ class MatchService(
                         // A match that is not friendly is rated, and cannot rate a player against
                         // themselves. Its seats are written once, at its start, so read under the match's
                         // lock they are what they will be when it ends.
-                        players <- new ParticipantRepo(session)
+                        players <- repos.participants
                             .listForMatch(gameId, matchId)
                             .map(_.map((p, _, _) => p.playerId))
                         _ <- IO.raiseWhen(changed && !friendly && !EloRating.hasDistinctPlayers(players))(
@@ -566,7 +561,7 @@ class MatchService(
                         )
                         _ <- IO.whenA(changed && existing.isCompleted)(
                           EloRatingService.reclassify(
-                            session = session,
+                            repos = repos,
                             gameId = gameId,
                             matchId = matchId,
                             friendly = friendly
@@ -576,7 +571,7 @@ class MatchService(
                             if (changed && existing.isCompleted && !friendly)
                                 archives.fold(IO.pure(false))(
                                   _.recordMove(
-                                    session = session,
+                                    repos = repos,
                                     prepared = prepared,
                                     gameId = gameId,
                                     matchId = matchId
@@ -584,7 +579,7 @@ class MatchService(
                                 )
                             else IO.pure(false)
                         classified = existing.copy(isFriendly = friendly)
-                        _ <- IO.whenA(changed)(matchRepo.update(classified))
+                        _ <- IO.whenA(changed)(repos.matches.update(classified))
                     } yield (classified, moved, changed && existing.isCompleted)
                 }
             }
@@ -598,24 +593,24 @@ class MatchService(
      * read plainly, for deciding whether to copy before the transaction that decides everything again.
      * Whether the archive is in the friendly bucket is `ArchiveService.prepareMove`'s to ask. */
     private def mayMoveArchive(
-        session: Session[IO],
+        repos: Repos,
         gameId: GameId,
         matchId: MatchId,
         callerExternalId: String
     ): IO[Boolean] =
-        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+        repos.players.readByExternalId(callerExternalId).flatMap {
             case None => IO.pure(false)
             case Some(caller) =>
                 for {
                     allowed <-
                         if (caller.isAdmin) IO.pure(true)
-                        else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
-                    found <- new MatchRepo(session).read(gameId, matchId)
+                        else repos.gameAdmins.isAdmin(caller.playerId, gameId)
+                    found <- repos.matches.read(gameId, matchId)
                 } yield allowed && found.exists(m => m.isCompleted && m.isFriendly)
         }
 
-    private def resolveCaller(session: Session[IO], callerExternalId: String) =
-        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+    private def resolveCaller(repos: Repos, callerExternalId: String) =
+        repos.players.readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
             case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }

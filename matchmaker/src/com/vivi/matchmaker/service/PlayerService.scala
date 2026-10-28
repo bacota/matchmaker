@@ -4,7 +4,7 @@ import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import skunk.SqlState
 import com.vivi.matchmaker.model.{Player, PlayerSearchResult}
-import com.vivi.matchmaker.persistence.PlayerRepo
+import com.vivi.matchmaker.persistence.{PlayerRepo, Repos}
 
 /** The caller's own player record: reading it, and the two parts of it they may change.
   *
@@ -26,7 +26,8 @@ class PlayerService(sessionPool: SessionPool) {
       */
     def me(callerExternalId: String): IO[Player] =
         sessionPool.use { session =>
-            new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+            val repos = Repos(session)
+            repos.players.readByExternalId(callerExternalId).flatMap {
                 case Some(player) => IO.pure(player)
                 case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
             }
@@ -53,12 +54,12 @@ class PlayerService(sessionPool: SessionPool) {
         val trimmed = prefix.trim
         IO.raiseWhen(trimmed.isEmpty)(ValidationError(ErrorText.search.blankPrefix)) *>
             sessionPool.use { session =>
-                val repo = new PlayerRepo(session)
+                val repos = Repos(session)
                 for {
                     // Registered callers only, like every other route: the search says who plays here,
                     // which is for the people who do.
-                    _ <- requireRegistered(repo, callerExternalId)
-                    found <- repo.searchByNicknamePrefix(trimmed, PlayerService.searchLimit + 1)
+                    _ <- requireRegistered(repos.players, callerExternalId)
+                    found <- repos.players.searchByNicknamePrefix(trimmed, PlayerService.searchLimit + 1)
                 } yield PlayerSearchResult(
                   found.take(PlayerService.searchLimit),
                   hasMore = found.sizeIs > PlayerService.searchLimit
@@ -77,16 +78,16 @@ class PlayerService(sessionPool: SessionPool) {
     def updateNickname(callerExternalId: String, nickname: String): IO[Player] =
         IO.raiseWhen(nickname.trim.isEmpty)(ValidationError(ErrorText.player.blankNickname)) *>
             sessionPool.use { session =>
-                val repo = new PlayerRepo(session)
+                val repos = Repos(session)
                 /* Read and write in one transaction, and the read takes the row's lock: `update`
                  * writes the whole row, so the values it carries through -- `isAdmin`, `externalId`
                  * -- are whatever this read saw. Outside the lock a change committing in the gap
                  * would be restated back to its old value by this rename. */
                 session.transaction.use { _ =>
                     for {
-                        player <- requireCaller(repo, callerExternalId)
+                        player <- requireCaller(repos.players, callerExternalId)
                         renamed = player.copy(nickname = nickname.trim)
-                        _ <- repo.update(renamed).recoverWith { case SqlState.UniqueViolation(_) =>
+                        _ <- repos.players.update(renamed).recoverWith { case SqlState.UniqueViolation(_) =>
                             IO.raiseError(ConflictError(ErrorText.player.nicknameTaken(renamed.nickname)))
                         }
                     } yield renamed
@@ -108,13 +109,13 @@ class PlayerService(sessionPool: SessionPool) {
     def updateEmail(callerExternalId: String, email: String): IO[Player] =
         validEmail(email).flatMap { address =>
             sessionPool.use { session =>
-                val repo = new PlayerRepo(session)
+                val repos = Repos(session)
                 // One transaction, and the read locks: the row written is the row read, so a caller
                 // deregistering or renaming in between cannot be written around.
                 session.transaction.use { _ =>
                     for {
-                        player <- requireCaller(repo, callerExternalId)
-                        _ <- repo.updateEmail(player.playerId, Some(address))
+                        player <- requireCaller(repos.players, callerExternalId)
+                        _ <- repos.players.updateEmail(player.playerId, Some(address))
                     } yield player.copy(email = Some(address))
                 }
             }

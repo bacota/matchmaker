@@ -4,7 +4,7 @@ import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import skunk.SqlState
 import com.vivi.matchmaker.model.{Player, PlayerId}
-import com.vivi.matchmaker.persistence.PlayerRepo
+import com.vivi.matchmaker.persistence.Repos
 
 /** Registers new players. Anyone may register (no authorization rule), subject to the precondition that nickname and
   * externalId are both non-blank and not already taken.
@@ -22,7 +22,8 @@ class RegistrationService(sessionPool: SessionPool) {
             _ <- IO.raiseWhen(nickname.trim.isEmpty)(ValidationError(ErrorText.player.blankNickname))
             _ <- IO.raiseWhen(externalId.trim.isEmpty)(ValidationError(ErrorText.registration.blankExternalId))
             player <- sessionPool.use { session =>
-                new PlayerRepo(session)
+                val repos = Repos(session)
+                repos.players
                     .create(
                       Player(
                         playerId = PlayerId.unassigned,

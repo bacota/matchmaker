@@ -2,7 +2,6 @@ package com.vivi.matchmaker.notify
 
 import cats.effect.IO
 import cats.syntax.all._
-import skunk.Session
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 
@@ -59,9 +58,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   up, which is more than that somebody entered. One mail either way, with
       *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the owner has not refused.
       */
-    def entered(session: Session[IO], tournament: Tournament, actor: Player, wasInvited: Boolean = false): IO[Unit] =
+    def entered(repos: Repos, tournament: Tournament, actor: Player, wasInvited: Boolean = false): IO[Unit] =
         entriesChanged(
-          session = session,
+          repos = repos,
           tournament = tournament,
           actor = actor,
           joined = true,
@@ -77,9 +76,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   whoever did it, which is usually the entrant and may be the owner — an owner may withdraw another player's
       *   entry, and should no more be told about that than about their own.
       */
-    def withdrawn(session: Session[IO], tournament: Tournament, entrant: Player, removedBy: Player): IO[Unit] =
+    def withdrawn(repos: Repos, tournament: Tournament, entrant: Player, removedBy: Player): IO[Unit] =
         entriesChanged(
-          session = session,
+          repos = repos,
           tournament = tournament,
           actor = entrant,
           joined = false,
@@ -96,8 +95,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * made to. The entrants are not waiting on it, and telling them would be reporting a decision that is not theirs
       * and may never come to anything.
       */
-    def invitationMade(session: Session[IO], tournament: Tournament, invited: Player): IO[Unit] =
-        aboutInvitation(session = session, tournament = tournament, kind = NotificationType.InvitationReceived)(owner =>
+    def invitationMade(repos: Repos, tournament: Tournament, invited: Player): IO[Unit] =
+        aboutInvitation(repos = repos, tournament = tournament, kind = NotificationType.InvitationReceived)(owner =>
             (invited, owner.nickname)
         )
 
@@ -107,8 +106,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * would say so: turning one down deletes the invitation and leaves everything else as it was, so an owner waiting
       * on somebody would otherwise find out by going to look.
       */
-    def invitationRejected(session: Session[IO], tournament: Tournament, rejector: Player): IO[Unit] =
-        aboutInvitation(session = session, tournament = tournament, kind = NotificationType.InvitationRejected)(owner =>
+    def invitationRejected(repos: Repos, tournament: Tournament, rejector: Player): IO[Unit] =
+        aboutInvitation(repos = repos, tournament = tournament, kind = NotificationType.InvitationRejected)(owner =>
             (owner, rejector.nickname)
         )
 
@@ -119,42 +118,42 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * One kind rather than a list, unlike a change to the entries: there is no second, plainer thing
      * any of these could say, so a recipient who has turned the kind off hears nothing -- which is what
      * turning it off means. */
-    private def aboutInvitation(session: Session[IO], tournament: Tournament, kind: NotificationType)(
+    private def aboutInvitation(repos: Repos, tournament: Tournament, kind: NotificationType)(
         addressee: Player => (Player, String)
     ): IO[Unit] =
-        dispatch(session, s"invitation to tournament ${tournament.tournamentId} of game ${tournament.gameId}") {
+        dispatch(repos, s"invitation to tournament ${tournament.tournamentId} of game ${tournament.gameId}") {
             (from, uiBaseUrl) =>
-                val notificationRepo = new NotificationRepo(session)
-                notificationRepo.gameNotice(tournament.gameId).flatMap {
+                repos.notifications.gameNotice(tournament.gameId).flatMap {
                     // A game that is no longer there is not a thing to write about, and this path reports rather
                     // than decides -- it sends nothing instead of failing what has already happened.
                     case None => IO.pure(Seq.empty[MailMessage])
                     case Some(notice) =>
                         for {
-                            owner <- new PlayerRepo(session).read(tournament.owner)
-                            room <- roomIn(session, tournament)
+                            owner <- repos.players.read(tournament.owner)
+                            room <- roomIn(repos, tournament)
                             mail <- owner.traverse { offeredBy =>
                                 val (recipient, subject) = addressee(offeredBy)
-                                notificationRepo.levelsForPlayer(recipient.playerId, tournament.gameId).map { levels =>
-                                    val news = newsOf(
-                                      notice = notice,
-                                      tournament = tournament,
-                                      actor = subject,
-                                      joined = true,
-                                      offeredBy,
-                                      room
-                                    )
-                                    Option
-                                        .when(NotificationPolicy.isWanted(kind, levels.apply))(())
-                                        .flatMap(_ =>
-                                            ChallengeMail.compose(
-                                              sender = from,
-                                              uiBaseUrl = uiBaseUrl,
-                                              recipient = recipient,
-                                              kind = kind,
-                                              news = news
-                                            )
+                                repos.notifications.levelsForPlayer(recipient.playerId, tournament.gameId).map {
+                                    levels =>
+                                        val news = newsOf(
+                                          notice = notice,
+                                          tournament = tournament,
+                                          actor = subject,
+                                          joined = true,
+                                          offeredBy,
+                                          room
                                         )
+                                        Option
+                                            .when(NotificationPolicy.isWanted(kind, levels.apply))(())
+                                            .flatMap(_ =>
+                                                ChallengeMail.compose(
+                                                  sender = from,
+                                                  uiBaseUrl = uiBaseUrl,
+                                                  recipient = recipient,
+                                                  kind = kind,
+                                                  news = news
+                                                )
+                                            )
                                 }
                             }
                         } yield mail.flatten.toSeq
@@ -186,9 +185,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     }
 
     /* How many more entries a tournament takes before it is full, if it takes a limited number. */
-    private def roomIn(session: Session[IO], tournament: Tournament): IO[Option[Int]] =
+    private def roomIn(repos: Repos, tournament: Tournament): IO[Option[Int]] =
         tournament.settings.maxEntrants.traverse { most =>
-            new EntrantRepo(session)
+            repos.entrants
                 .list(tournament.gameId, tournament.tournamentId)
                 .map(entries => math.max(0, most - entries.count(!_.isWithdrawn)))
         }
@@ -203,8 +202,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * one event whose news differs per recipient in more than its deadline. Nobody pressed anything to start it: a
       * match begins when its round has settled its roles, so everyone in it is owed this mail.
       */
-    def matchStarted(session: Session[IO], started: Match): IO[Unit] =
-        aboutMatch(session = session, played = started, about = s"start of match ${started.matchId.value}") {
+    def matchStarted(repos: Repos, started: Match): IO[Unit] =
+        aboutMatch(repos = repos, played = started, about = s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
@@ -246,8 +245,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * Whose turn it is now is read from the rows rather than taken from the engine's `next` list, because the rows are
       * what the rest of matchmaker answers with — and a game in which the mover moves again is then not a special case.
       */
-    def turnTaken(session: Session[IO], played: Match, moved: ParticipantId): IO[Unit] =
-        aboutMatch(session = session, played = played, about = s"move in match ${played.matchId.value}") {
+    def turnTaken(repos: Repos, played: Match, moved: ParticipantId): IO[Unit] =
+        aboutMatch(repos = repos, played = played, about = s"move in match ${played.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val mover = seats.find(_.participantId == moved).map(_.player.nickname)
                 val pending = participants.filter(_.isPending).map(_.participantId).toSet
@@ -295,12 +294,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * the engine anything — but a "Play" line on a match that is over invites a turn nobody can take.
       */
     def matchEnded(
-        session: Session[IO],
+        repos: Repos,
         played: Match,
         ending: MatchEnding,
         except: Option[PlayerId] = None
     ): IO[Unit] =
-        aboutMatch(session = session, played = played, about = s"end of match ${played.matchId.value}") {
+        aboutMatch(repos = repos, played = played, about = s"end of match ${played.matchId.value}") {
             (from, uiBaseUrl, notice, seats, _) =>
                 seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
                     NotificationPolicy
@@ -331,18 +330,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * The caller decides that it waits on them — a tournament that starts its own rounds does not — so this only
       * decides whether the owner wants to hear it.
       */
-    def tournamentRoundDone(session: Session[IO], tournament: Tournament, round: Int): IO[Unit] =
+    def tournamentRoundDone(repos: Repos, tournament: Tournament, round: Int): IO[Unit] =
         dispatch(
-          session,
+          repos,
           s"round $round of tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
         ) { (from, uiBaseUrl) =>
-            val notificationRepo = new NotificationRepo(session)
-            notificationRepo.gameNotice(tournament.gameId).flatMap {
+            repos.notifications.gameNotice(tournament.gameId).flatMap {
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
-                        owner <- new PlayerRepo(session).read(tournament.owner)
-                        levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
+                        owner <- repos.players.read(tournament.owner)
+                        levels <- repos.notifications.levelsForPlayer(tournament.owner, tournament.gameId)
                     } yield owner.toSeq.flatMap { recipient =>
                         Option
                             .when(NotificationPolicy.isWanted(NotificationType.TournamentRoundDone, levels.apply))(())
@@ -367,18 +365,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * game's -- since fixing it may be any of theirs, and not a preference anybody can turn off: it is a fault, not
       * news, and is said once, the first time a try fails.
       */
-    def matchNotCreated(session: Session[IO], tournament: Tournament, game: Game): IO[Unit] =
+    def matchNotCreated(repos: Repos, tournament: Tournament, game: Game): IO[Unit] =
         dispatch(
-          session,
+          repos,
           s"a match not created in tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
         ) { (from, uiBaseUrl) =>
-            val players = new PlayerRepo(session)
             for {
-                owner <- players.read(tournament.owner)
-                admins <- players.listAdmins
-                gameAdmins <- new GameAdminRepo(session)
+                owner <- repos.players.read(tournament.owner)
+                admins <- repos.players.listAdmins
+                gameAdmins <- repos.gameAdmins
                     .listForGame(game.gameId)
-                    .flatMap(_.getOrElse(Nil).traverse(a => players.read(a.player.playerId)))
+                    .flatMap(_.getOrElse(Nil).traverse(a => repos.players.read(a.player.playerId)))
             } yield {
                 val values = Seq("game" -> game.displayName, "tournament" -> tournament.name)
                 (owner.toList ++ admins ++ gameAdmins.flatten).distinctBy(_.playerId).flatMap { recipient =>
@@ -413,16 +410,15 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * An entry that answers an invitation is two reasons to write to the owner, so the kinds go to
      * `choose` as a list: "your invitation was accepted" over the plainer "somebody entered". */
     private def entriesChanged(
-        session: Session[IO],
+        repos: Repos,
         tournament: Tournament,
         actor: Player,
         joined: Boolean,
         except: Option[PlayerId],
         wasInvited: Boolean = false
     ): IO[Unit] =
-        dispatch(session, s"tournament ${tournament.tournamentId} of game ${tournament.gameId}") { (from, uiBaseUrl) =>
-            val notificationRepo = new NotificationRepo(session)
-            notificationRepo.gameNotice(tournament.gameId).flatMap {
+        dispatch(repos, s"tournament ${tournament.tournamentId} of game ${tournament.gameId}") { (from, uiBaseUrl) =>
+            repos.notifications.gameNotice(tournament.gameId).flatMap {
                 // A game that is not there is not a thing to write about, and this is the reporting path: it
                 // sends nothing rather than failing the entry that got here.
                 case None => IO.pure(Seq.empty[MailMessage])
@@ -430,9 +426,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                     IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
-                        room <- roomIn(session, tournament)
-                        levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
-                        owner <- new PlayerRepo(session).read(tournament.owner)
+                        room <- roomIn(repos, tournament)
+                        levels <- repos.notifications.levelsForPlayer(tournament.owner, tournament.gameId)
+                        owner <- repos.players.read(tournament.owner)
                     } yield owner.toSeq.flatMap { offeredBy =>
                         val news = newsOf(
                           notice = notice,
@@ -464,18 +460,16 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      *
      * A match whose game has gone is a broken row rather than a thing to write about, and this is the
      * reporting path -- so it sends nothing rather than failing the action that got here. */
-    private def aboutMatch(session: Session[IO], played: Match, about: String)(
+    private def aboutMatch(repos: Repos, played: Match, about: String)(
         compose: (String, String, GameNotice, List[Seat], List[Participant]) => Seq[MailMessage]
     ): IO[Unit] =
-        dispatch(session, about) { (from, uiBaseUrl) =>
-            val notificationRepo = new NotificationRepo(session)
-            val participantRepo = new ParticipantRepo(session)
-            notificationRepo.gameNotice(played.gameId).flatMap {
+        dispatch(repos, about) { (from, uiBaseUrl) =>
+            repos.notifications.gameNotice(played.gameId).flatMap {
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
-                        seats <- notificationRepo.preferencesForMatch(played.gameId, played.matchId)
-                        participants <- participantRepo
+                        seats <- repos.notifications.preferencesForMatch(played.gameId, played.matchId)
+                        participants <- repos.participants
                             .listForMatch(played.gameId, played.matchId)
                             .map(_.map((participant, _, _) => participant))
                     } yield compose(from, uiBaseUrl, notice, seats, participants)
@@ -485,7 +479,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     /* The four terms in the class comment, in the order they apply: no settings, no reads and no
      * mail; otherwise compose, drop whatever is addressed to somewhere that has stopped working,
      * enqueue the rest, and swallow whatever comes back with a line saying what it was about. */
-    private def dispatch(session: Session[IO], about: String)(
+    private def dispatch(repos: Repos, about: String)(
         compose: (String, String) => IO[Seq[MailMessage]]
     ): IO[Unit] =
         mail.sender
@@ -510,7 +504,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                  * that had not started. Making delivery survive a single bad send is the durable-outbox
                  * change the class comment describes, not this one. */
                 compose(sender, uiBaseUrl)
-                    .flatMap(deliverable(session, about, _))
+                    .flatMap(deliverable(repos, about, _))
                     .flatMap(_.parTraverse_(notifier.enqueue))
             }
             .handleError(error => System.err.println(s"could not queue notifications for $about: $error"))
@@ -533,10 +527,10 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      *
      * A held-back mail is logged, for the same reason a failed one is: a notification nobody was
      * owed and a notification we chose not to send look identical from everywhere else. */
-    private def deliverable(session: Session[IO], about: String, messages: Seq[MailMessage]): IO[Seq[MailMessage]] =
+    private def deliverable(repos: Repos, about: String, messages: Seq[MailMessage]): IO[Seq[MailMessage]] =
         if (messages.isEmpty) IO.pure(messages)
         else
-            new SuppressionRepo(session).activeFor(messages.map(_.recipient).toSet).map { suppressed =>
+            repos.suppressions.activeFor(messages.map(_.recipient).toSet).map { suppressed =>
                 if (suppressed.isEmpty) messages
                 else {
                     val (held, sending) =

@@ -4,7 +4,7 @@ import com.vivi.matchmaker.ErrorText
 import java.time.Instant
 import cats.effect.IO
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, SuppressionRepo}
+import com.vivi.matchmaker.persistence.{NotificationRepo, Repos}
 
 /** What each player wants to be told about.
   *
@@ -28,11 +28,11 @@ class NotificationService(sessionPool: SessionPool) {
       */
     def mine(callerExternalId: String): IO[NotificationSettings] =
         sessionPool.use { session =>
-            val repo = new NotificationRepo(session)
+            val repos = Repos(session)
             for {
-                player <- callerPlayer(session, callerExternalId)
-                overall <- repo.readForPlayer(player.playerId)
-                games <- repo.listForPlayer(player.playerId)
+                player <- callerPlayer(repos, callerExternalId)
+                overall <- repos.notifications.readForPlayer(player.playerId)
+                games <- repos.notifications.listForPlayer(player.playerId)
                 /* And whether any of it is reaching them.
                  *
                  * Read here rather than from a route of its own because a screen that showed the
@@ -47,7 +47,7 @@ class NotificationService(sessionPool: SessionPool) {
                 suppressed <- player.email.map(_.trim).filter(_.nonEmpty) match {
                     case None => IO.pure(None)
                     case Some(address) =>
-                        new SuppressionRepo(session)
+                        repos.suppressions
                             .read(address)
                             .map(_.filter(_.isActive(Instant.now())).map(EmailSuppression.Notice.of))
                 }
@@ -83,22 +83,23 @@ class NotificationService(sessionPool: SessionPool) {
         applyToMatches: Boolean = false
     ): IO[Unit] =
         sessionPool.use { session =>
-            val repo = new NotificationRepo(session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 // Inside the transaction, like every other read here: the row written below is the
                 // caller's, so which player that is has to be settled by the same transaction that
                 // writes it rather than by a statement that committed before it began.
-                callerPlayer(session, callerExternalId).flatMap { player =>
+                callerPlayer(repos, callerExternalId).flatMap { player =>
                     for {
-                        before <- repo.readForPlayerForUpdate(player.playerId)
+                        before <- repos.notifications.readForPlayerForUpdate(player.playerId)
                         changed = before.differences(preferences)
-                        _ <- repo.updateForPlayer(player.playerId, preferences)
+                        _ <- repos.notifications.updateForPlayer(player.playerId, preferences)
                         // Nothing changed is nothing to carry anywhere, whatever was ticked.
                         _ <- IO.whenA(applyToGames && changed.nonEmpty)(
-                          repo.alignGamesWithPlayer(id = player.playerId, preferences = preferences, changed = changed)
+                          repos.notifications
+                              .alignGamesWithPlayer(id = player.playerId, preferences = preferences, changed = changed)
                         )
                         _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
-                          repo.applyToMatches(id = player.playerId, game = None, changed = changed)
+                          repos.notifications.applyToMatches(id = player.playerId, game = None, changed = changed)
                         )
                     } yield ()
                 }
@@ -126,24 +127,28 @@ class NotificationService(sessionPool: SessionPool) {
         applyToMatches: Boolean = false
     ): IO[Unit] =
         sessionPool.use { session =>
-            val repo = new NotificationRepo(session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
                     // Caller and game resolved inside the transaction: both decide what is written
                     // below, and the existence check in particular is what turns a bad id into a 404
                     // rather than the foreign key violation a game deleted in the gap would produce.
-                    player <- callerPlayer(session, callerExternalId)
-                    exists <- repo.gameExists(gameId)
+                    player <- callerPlayer(repos, callerExternalId)
+                    exists <- repos.notifications.gameExists(gameId)
                     _ <- IO.raiseUnless(exists)(NotFoundError(ErrorText.game.notFound))
                     // The player's row, not this game's: the same lock every level of this service
                     // takes, and the only one available when the `player_game` row does not exist
                     // yet. See `NotificationRepo.lockSettings`.
-                    _ <- repo.lockSettings(player.playerId)
-                    before <- repo.readForPlayerGame(player.playerId, gameId)
+                    _ <- repos.notifications.lockSettings(player.playerId)
+                    before <- repos.notifications.readForPlayerGame(player.playerId, gameId)
                     changed = before.differences(preferences)
-                    _ <- repo.updateForPlayerGame(id = player.playerId, game = gameId, preferences = preferences)
+                    _ <- repos.notifications.updateForPlayerGame(
+                      id = player.playerId,
+                      game = gameId,
+                      preferences = preferences
+                    )
                     _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
-                      repo.applyToMatches(id = player.playerId, game = Some(gameId), changed = changed)
+                      repos.notifications.applyToMatches(id = player.playerId, game = Some(gameId), changed = changed)
                     )
                 } yield ()
             }
@@ -160,11 +165,11 @@ class NotificationService(sessionPool: SessionPool) {
       */
     def forMatch(callerExternalId: String, gameId: GameId, matchId: MatchId): IO[SeatNotifications] =
         sessionPool.use { session =>
-            val repo = new NotificationRepo(session)
+            val repos = Repos(session)
             for {
-                player <- callerPlayer(session, callerExternalId)
+                player <- callerPlayer(repos, callerExternalId)
                 // The read itself is the membership check: no seat, no row.
-                preferences <- repo
+                preferences <- repos.notifications
                     .readForPlayerInMatch(gameId = gameId, matchId = matchId, playerId = player.playerId)
                     .flatMap {
                         case Some(found) => IO.pure(found)
@@ -186,13 +191,13 @@ class NotificationService(sessionPool: SessionPool) {
         preferences: SeatNotifications
     ): IO[Unit] =
         sessionPool.use { session =>
-            val repo = new NotificationRepo(session)
+            val repos = Repos(session)
             // One statement's worth of writing, but still a transaction: the caller resolved above
             // is the key the write is scoped by, and the two belong to one another.
             session.transaction.use { _ =>
                 for {
-                    player <- callerPlayer(session, callerExternalId)
-                    written <- repo.updateForPlayerInMatch(
+                    player <- callerPlayer(repos, callerExternalId)
+                    written <- repos.notifications.updateForPlayerInMatch(
                       gameId = gameId,
                       matchId = matchId,
                       playerId = player.playerId,
@@ -209,8 +214,8 @@ class NotificationService(sessionPool: SessionPool) {
      * token's identity into a player -- and a caller with no player has nothing here to read or
      * write, which is Unauthorized rather than NotFound for the same reason it is in
      * `TournamentService`: the identity is real, it is simply not a player yet. */
-    private def callerPlayer(session: skunk.Session[IO], callerExternalId: String): IO[Player] =
-        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+    private def callerPlayer(repos: Repos, callerExternalId: String): IO[Player] =
+        repos.players.readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
             case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
         }

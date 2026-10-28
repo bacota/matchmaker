@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.persistence.{CharacterRepo, Repos, TextCodec}
 
 /** Records and updates characters, on behalf of the game engines they belong to.
   *
@@ -27,14 +27,13 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def listForGame(gameId: GameId, callerExternalId: String): IO[List[Character[T]]] =
         sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
-            val characterRepo = new CharacterRepo[T](session)
+            val repos = Repos(session)
             for {
-                player <- playerRepo.readByExternalId(callerExternalId).flatMap {
+                player <- repos.players.readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
                     case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
-                characters <- characterRepo.listForPlayerAndGame(player.playerId, gameId)
+                characters <- repos.characters[T].listForPlayerAndGame(player.playerId, gameId)
             } yield characters
         }
 
@@ -46,12 +45,13 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def namesFor(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[List[CharacterName]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+                _ <- repos.players.readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
                     case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
-                names <- new CharacterRepo[T](session).listNamesForPlayerAndGame(playerId, gameId)
+                names <- repos.characters[T].listNamesForPlayerAndGame(playerId, gameId)
             } yield names
         }
 
@@ -60,19 +60,19 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def profile(gameId: GameId, characterId: CharacterId, callerExternalId: String): IO[CharacterProfile] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+                _ <- repos.players.readByExternalId(callerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
                     case None    => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
-                characters = new CharacterRepo[T](session)
-                found <- characters.readProfile(gameId, characterId)
+                found <- repos.characters[T].readProfile(gameId, characterId)
                 profile <- found match {
                     case Some(p) => IO.pure(p)
                     case None    => IO.raiseError(NotFoundError(ErrorText.character.notFound))
                 }
                 // Worked out from the results each time it is asked for, not kept: see `ratedRecord`.
-                record <- characters.ratedRecord(gameId, characterId)
+                record <- repos.characters[T].ratedRecord(gameId, characterId)
             } yield profile.copy(record = record)
         }
 
@@ -94,9 +94,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         callerExternalId: String
     ): IO[Character[T]] =
         sessionPool.use { session =>
-            val gameRepo = new GameRepo[T](session)
-            val playerRepo = new PlayerRepo(session)
-            val characterRepo = new CharacterRepo[T](session)
+            val repos = Repos(session)
             // The checks below decide whether the insert is allowed; running them in the same
             // transaction as the insert keeps that decision from going stale before it lands.
             session.transaction.use { _ =>
@@ -104,31 +102,33 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError(ErrorText.character.blankName))
                     // Locked, not just read: the insert below references the game, and without the lock it
                     // could be deleted, or given to another engine, between the check and the insert.
-                    gameId <- callersGame(gameRepo.lockForShareByExternalId(callerExternalId))
+                    gameId <- callersGame(repos.games[T].lockForShareByExternalId(callerExternalId))
                     // A plain read, of the row just locked: FOR SHARE already keeps an admin's edit of the
                     // game's type from landing until this transaction ends, so what is checked here is what
                     // holds at the insert.
-                    game <- gameRepo.read(gameId).flatMap {
+                    game <- repos.games[T].read(gameId).flatMap {
                         case Some(g) => IO.pure(g)
                         case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                     }
                     _ <- IO.raiseUnless(game.gameType == GameType.Character)(
                       ValidationError(ErrorText.character.notACharacterGame(game.displayName))
                     )
-                    owner <- playerRepo.readByExternalIdForShare(ownerExternalId).flatMap {
+                    owner <- repos.players.readByExternalIdForShare(ownerExternalId).flatMap {
                         case Some(p) => IO.pure(p)
                         case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                     }
-                    character <- characterRepo.create(
-                      Character(
-                        characterId = CharacterId(0),
-                        gameId = gameId,
-                        name = name.trim,
-                        description = description.trim,
-                        state = state,
-                        playerId = Some(owner.playerId)
-                      )
-                    )
+                    character <- repos
+                        .characters[T]
+                        .create(
+                          Character(
+                            characterId = CharacterId(0),
+                            gameId = gameId,
+                            name = name.trim,
+                            description = description.trim,
+                            state = state,
+                            playerId = Some(owner.playerId)
+                          )
+                        )
                 } yield character
             }
         }
@@ -140,13 +140,14 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def listForOwner(ownerExternalId: String, callerExternalId: String): IO[List[Character[T]]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                gameId <- callersGame(new GameRepo[T](session).readIdsByExternalId(callerExternalId))
-                owner <- new PlayerRepo(session).readByExternalId(ownerExternalId).flatMap {
+                gameId <- callersGame(repos.games[T].readIdsByExternalId(callerExternalId))
+                owner <- repos.players.readByExternalId(ownerExternalId).flatMap {
                     case Some(p) => IO.pure(p)
                     case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                 }
-                characters <- new CharacterRepo[T](session).listForPlayerAndGame(owner.playerId, gameId)
+                characters <- repos.characters[T].listForPlayerAndGame(owner.playerId, gameId)
             } yield characters
         }
 
@@ -165,18 +166,18 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         callerExternalId: String
     ): IO[Character[T]] =
         sessionPool.use { session =>
-            val characterRepo = new CharacterRepo[T](session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
                     _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError(ErrorText.character.blankName))
                     existing <- ownedForUpdate(
-                      characterRepo = characterRepo,
+                      characterRepo = repos.characters[T],
                       characterId = characterId,
                       ownerExternalId = ownerExternalId,
                       callerExternalId = callerExternalId
                     )
                     edited = existing.copy(name = name.trim, description = description.trim)
-                    _ <- characterRepo.update(edited)
+                    _ <- repos.characters[T].update(edited)
                 } yield edited
             }
         }
@@ -193,17 +194,17 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         callerExternalId: String
     ): IO[Character[T]] =
         sessionPool.use { session =>
-            val characterRepo = new CharacterRepo[T](session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
                     existing <- ownedForUpdate(
-                      characterRepo = characterRepo,
+                      characterRepo = repos.characters[T],
                       characterId = characterId,
                       ownerExternalId = ownerExternalId,
                       callerExternalId = callerExternalId
                     )
                     // For share: the character is about to reference this player, who must still exist when it does.
-                    recipient <- new PlayerRepo(session).readByNicknameForShare(toNickname.trim).flatMap {
+                    recipient <- repos.players.readByNicknameForShare(toNickname.trim).flatMap {
                         case Some(p) => IO.pure(p)
                         case None    => IO.raiseError(ValidationError(ErrorText.player.noneCalled(toNickname.trim)))
                     }
@@ -211,7 +212,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                       ValidationError(ErrorText.character.alreadyYours(existing.name))
                     )
                     handed = existing.copy(playerId = Some(recipient.playerId))
-                    _ <- characterRepo.update(handed)
+                    _ <- repos.characters[T].update(handed)
                 } yield handed
             }
         }
@@ -252,12 +253,12 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         callerExternalId: String
     ): IO[Character[T]] =
         sessionPool.use { session =>
-            val characterRepo = new CharacterRepo[T](session)
+            val repos = Repos(session)
             // Same as update: the game checked here is the game the write is applied under.
             session.transaction.use { _ =>
                 for {
                     // Same as update: read, authorize and write the same row without releasing it.
-                    joined <- characterRepo.readWithGameForUpdate(characterId).flatMap {
+                    joined <- repos.characters[T].readWithGameForUpdate(characterId).flatMap {
                         case Some(t) => IO.pure(t)
                         case None    => IO.raiseError(NotFoundError(ErrorText.character.notFound))
                     }
@@ -267,7 +268,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                       UnauthorizedError(ErrorText.character.notThisGames)
                     )
                     updated = existing.copy(state = state)
-                    _ <- characterRepo.update(updated)
+                    _ <- repos.characters[T].update(updated)
                 } yield updated
             }
         }

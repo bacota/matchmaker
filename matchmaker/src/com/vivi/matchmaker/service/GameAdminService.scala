@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import com.vivi.matchmaker.ErrorText
 import cats.effect.IO
 import com.vivi.matchmaker.model.{GameAdmin, GameId, Player, PlayerId}
-import com.vivi.matchmaker.persistence.{GameAdminRepo, GameRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.persistence.{GameAdminRepo, Repos, TextCodec}
 
 /** Who administers a game: the players with special privileges in managing its matches.
   *
@@ -22,11 +22,12 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
       */
     def list(gameId: GameId, callerExternalId: String): IO[List[GameAdmin]] =
         sessionPool.use { session =>
+            val repos = Repos(session)
             for {
-                _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
+                _ <- requireCaller(repos.players.readByExternalId(callerExternalId), callerExternalId)
                 // Read plainly, and the game's existence in the same query: nothing is written, so there is
                 // nothing for a lock to protect.
-                admins <- new GameAdminRepo(session).listForGame(gameId).flatMap {
+                admins <- repos.gameAdmins.listForGame(gameId).flatMap {
                     case Some(admins) => IO.pure(admins)
                     case None         => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                 }
@@ -38,24 +39,24 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
       */
     def grant(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
-            val adminRepo = new GameAdminRepo(session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
                     // FOR SHARE throughout: the caller's own row, so that being demoted from overall admin
                     // waits for this grant; their row here, so that a revoke of it does too; and the game and
                     // the player, which the insert references.
-                    caller <- requireCaller(playerRepo.readByExternalIdForShare(callerExternalId), callerExternalId)
-                    _ <- requireGame(new GameRepo[T](session).lockForShare(gameId), gameId)
-                    allowed <- if (caller.isAdmin) IO.pure(true) else adminRepo.isAdminForShare(caller.playerId, gameId)
+                    caller <- requireCaller(repos.players.readByExternalIdForShare(callerExternalId), callerExternalId)
+                    _ <- requireGame(repos.games[T].lockForShare(gameId), gameId)
+                    allowed <-
+                        if (caller.isAdmin) IO.pure(true) else repos.gameAdmins.isAdminForShare(caller.playerId, gameId)
                     _ <- IO.raiseUnless(allowed)(
                       UnauthorizedError(ErrorText.gameAdmin.grantNotAllowed)
                     )
-                    _ <- playerRepo.readForShare(playerId).flatMap {
+                    _ <- repos.players.readForShare(playerId).flatMap {
                         case Some(_) => IO.unit
                         case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                     }
-                    _ <- adminRepo.grant(player = playerId, game = gameId, grantedBy = caller.playerId)
+                    _ <- repos.gameAdmins.grant(player = playerId, game = gameId, grantedBy = caller.playerId)
                 } yield ()
             }
         }
@@ -66,16 +67,16 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
       */
     def revoke(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
-            val adminRepo = new GameAdminRepo(session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
                 for {
                     // FOR SHARE, so that the caller's own demotion cannot land between this check and the delete.
                     caller <- requireCaller(
-                      new PlayerRepo(session).readByExternalIdForShare(callerExternalId),
+                      repos.players.readByExternalIdForShare(callerExternalId),
                       callerExternalId
                     )
                     // FOR UPDATE: the row about to be deleted, whose `granted_by` decides whether it may be.
-                    grantedBy <- adminRepo.grantedByForUpdate(playerId, gameId).flatMap {
+                    grantedBy <- repos.gameAdmins.grantedByForUpdate(playerId, gameId).flatMap {
                         case Some(by) => IO.pure(by)
                         case None =>
                             IO.raiseError(NotFoundError(ErrorText.gameAdmin.notAnAdmin))
@@ -85,11 +86,11 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                     allowed <-
                         if (caller.isAdmin) IO.pure(true)
                         else if (grantedBy != caller.playerId) IO.pure(false)
-                        else adminRepo.isAdminForShare(caller.playerId, gameId)
+                        else repos.gameAdmins.isAdminForShare(caller.playerId, gameId)
                     _ <- IO.raiseUnless(allowed)(
                       UnauthorizedError(ErrorText.gameAdmin.revokeNotAllowed)
                     )
-                    _ <- adminRepo.revoke(playerId, gameId)
+                    _ <- repos.gameAdmins.revoke(playerId, gameId)
                 } yield ()
             }
         }

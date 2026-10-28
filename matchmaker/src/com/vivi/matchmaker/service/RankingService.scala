@@ -6,7 +6,7 @@ import cats.effect.std.Random
 import cats.syntax.all._
 import skunk.exception.PostgresErrorException
 import com.vivi.matchmaker.model.{GameId, PlayerId}
-import com.vivi.matchmaker.persistence.EloRatingRepo
+import com.vivi.matchmaker.persistence.{EloRatingRepo, Repos}
 import com.vivi.matchmaker.persistence.EloRatingRepo.{Board, Placed, RatingKey, Standing}
 import scala.math.Ordering.Implicits._
 
@@ -38,7 +38,7 @@ class RankingService(
       */
     def rank(gameId: GameId): IO[Settlement] = {
         def pass: IO[Settlement] =
-            sessionPool.use(session => new EloRatingRepo(session).unplaced(gameId, RankingService.batch)).flatMap {
+            sessionPool.use(session => Repos(session).eloRatings.unplaced(gameId, RankingService.batch)).flatMap {
                 players =>
                     players.traverse(key => placeRetrying(gameId, key).attempt.map(key -> _)).flatMap { results =>
                         results.collect { case (player, Left(e)) => player -> e } match {
@@ -70,11 +70,13 @@ class RankingService(
 
     private def placeOnce(gameId: GameId, key: RatingKey): IO[Unit] =
         sessionPool.use { session =>
-            val repo = new EloRatingRepo(session)
+            val repos = Repos(session)
             session.transaction.use { _ =>
-                repo.tryLockRanking(gameId).flatMap {
+                repos.eloRatings.tryLockRanking(gameId).flatMap {
                     case false => IO.raiseError(RankingService.Busy)
-                    case true  => RankingService.place(repo = repo, game = Board(gameId, key.role), player = key.player)
+                    case true =>
+                        RankingService
+                            .place(repo = repos.eloRatings, game = Board(gameId, key.role), player = key.player)
                 }
             }
         }
