@@ -202,7 +202,7 @@ class GameRepoSpec extends PropertySuite {
             assertEquals(game.maxTurns, Some(12))
             assertEquals(
               game.roles.map(r => (r.name, r.roleType, r.preferenceLevel)).toSet,
-              Set(
+              Set[(String, RoleType, Option[Int])](
                 ("first", RoleType.Required, Some(2)),
                 ("second", RoleType.Recommended, None),
                 ("third", RoleType.Optional, Some(1))

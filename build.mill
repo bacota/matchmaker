@@ -147,7 +147,7 @@ def errorText(file: os.Path): String =
   textObject(file = file, objectName = "ErrorText", example = "game.notFound", pkg = "com.vivi.matchmaker", modifier = "")
 
 object matchmaker extends ScalaModule {
-  def scalaVersion = "3.3.8"
+  def scalaVersion = "3.9.0"
 
   /** The text of every error and warning matchmaker gives, in one file to be edited without touching the code: shared
     * with the UI, which compiles the model that raises some of them and shows its own beside them.
@@ -287,7 +287,7 @@ object matchmaker extends ScalaModule {
     * used to be here is gone with it.
     */
   object api extends ScalaModule {
-    def scalaVersion = "3.3.8"
+    def scalaVersion = "3.9.0"
     def moduleDeps = Seq(matchmaker)
     def mvnDeps = Seq(
       mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
@@ -323,8 +323,8 @@ object matchmaker extends ScalaModule {
     * `matchmaker`, which cannot cross-compile — skunk and cats-effect are JVM-only.
     */
   object ui extends ScalaJSModule {
-    def scalaVersion = "3.3.8"
-    def scalaJSVersion = "1.17.0"
+    def scalaVersion = "3.9.0"
+    def scalaJSVersion = "1.22.0"
 
     def sources = Task.Sources(Seq(moduleDir / "src") ++ sharedSources(moduleDir)*)
 
@@ -394,7 +394,7 @@ object matchmaker extends ScalaModule {
     * keeps the two statements of it honest, exactly as the engines' `ProtocolSpec` does.
     */
   object mailer extends ScalaModule {
-    def scalaVersion = "3.3.8"
+    def scalaVersion = "3.9.0"
 
     def mvnDeps = Seq(
       mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
@@ -418,7 +418,7 @@ object matchmaker extends ScalaModule {
     * shared via that resources directory (matchmaker's default resource path).
     */
   object flyway extends ScalaModule {
-    def scalaVersion = "3.3.8"
+    def scalaVersion = "3.9.0"
     def mvnDeps = Seq(
       mvn"org.flywaydb:flyway-core:10.20.1",
       mvn"org.flywaydb:flyway-database-postgresql:10.20.1",
@@ -464,7 +464,7 @@ object engines extends Module {
     * is a Lambda whose cold start is paid by a player waiting on a move.
     */
   trait EngineModule extends ScalaModule {
-    def scalaVersion = "3.3.8"
+    def scalaVersion = "3.9.0"
 
     def mvnDeps = Seq(
       mvn"com.lihaoyi::upickle:4.0.2",
