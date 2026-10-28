@@ -164,6 +164,10 @@ class TournamentService[T](
                 session.transaction.use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
+                        // Held FOR SHARE, the one exception to reading the game plainly: an admin retiring its roles
+                        // checks that none of its tournaments is open first (`GameService.checkRoles`), and that
+                        // check must wait for this one to commit, or the tournament is made for roles then retired.
+                        _ <- new GameRepo[T](session).lockForShare(gameId)
                         game <- requireGame(session, gameId)
                         _ <- IO.whenA(!request.settings.isFriendly)(
                           requireGameAdmin(session = session, player = caller, game = game)
