@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
 import skunk.Session
+import com.vivi.matchmaker.engine.GameEngineError
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.notify.Notifications
@@ -340,7 +341,16 @@ class TournamentRounds[T](
      * created the match since this one gave it back. */
     private def createFailed(session: Session[IO], saved: Match, game: Game, error: Throwable): IO[Settlement] =
         new TournamentMatchRepo(session)
-            .createFailed(game = game.gameId, id = saved.matchId, at = now(), error = error.getMessage)
+            .createFailed(
+              game = game.gameId,
+              id = saved.matchId,
+              at = now(),
+              // What the owner reads, said plainly: the exception goes to the log, in the settlement's reason.
+              error = error match {
+                  case _: GameEngineError => ErrorText.round.engineFailed
+                  case _                  => ErrorText.round.failedHere
+              }
+            )
             .flatTap(tries =>
                 IO.whenA(tries.contains(1))(
                   new TournamentRepo(session).read(game.gameId, saved.tournamentId).flatMap(

@@ -10,7 +10,7 @@ import munit.FunSuite
 import skunk.implicits._
 import skunk.codec.all.text
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.QuietTests
+import com.vivi.matchmaker.{ErrorText, QuietTests}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
@@ -46,7 +46,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO.defer {
                 if (refusals.getAndUpdate(n => math.max(0, n - 1)) > 0)
-                    IO.raiseError(new RuntimeException("engine down"))
+                    IO.raiseError(GameEngineError("engine down"))
                 else {
                     created.incrementAndGet()
                     lastRequest = Some(request)
@@ -823,7 +823,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assert(settlements.init.forall(_.isInstanceOf[Settlement.Owed]), settlements)
         assertEquals(settlements.last, Settlement.Settled)
         assertEquals(ownerSees.map(_.tries), Some(CreateFailure.maxTries))
-        assert(ownerSees.exists(f => f.isStopped && f.error == "engine down"), ownerSees)
+        assert(ownerSees.exists(f => f.isStopped && f.error == ErrorText.round.engineFailed), ownerSees)
         assertEquals(playerSees, None)
         assertEquals(subjects.count(_.contains("could not be started")), 1, subjects)
         assertEquals(afterCheck.status, TournamentMatchStatus.Started)
