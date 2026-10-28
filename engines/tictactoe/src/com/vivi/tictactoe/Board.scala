@@ -1,6 +1,5 @@
 package com.vivi.tictactoe
 
-
 /** Which of the two marks a seat plays. The engine's `role` names are these, spelled exactly as matchmaker's
   * `game_role.name` rows should be — see the README's setup section.
   */
