@@ -1595,6 +1595,42 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // The stamp goes down before the engine is asked, so that an engine that is down holds up one load
+    // of the list an hour rather than every one.
+    property("a finished match whose engine could not be reached is not asked about again for an hour".tag(Quiet)) {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                @volatile var isDown = false
+                val engine = StubEngine(beforeStatus =
+                    IO.defer(if (isDown) IO.raiseError(GameEngineError("engine is down")) else IO.unit)
+                )
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = finishedWithoutResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    _ <- IO { isDown = true }
+                    _ <- services.matches.completed(externalId)
+                    // Back, with the results; but the match was asked about within the hour.
+                    _ <- IO { isDown = false; engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.matches.completed(externalId)
+                    after <- resultsOf(started)
+                } yield after.isEmpty
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     // A match with no time limit has no deadline to compute, whatever the engine reports as the
     // start of the turn — there is nothing for the player to run out of.
     property("refresh leaves the due date unset when the match has no time limit") {

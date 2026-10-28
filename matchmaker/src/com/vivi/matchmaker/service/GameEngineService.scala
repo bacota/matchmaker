@@ -827,10 +827,10 @@ class GameEngineService[T](
       * reading again.
       *
       * Those are matches whose results callback was lost: the match was completed by a status answer that carried no
-      * results, from an engine that predates them, or by a forfeit. Each answer is recorded with the time, and the list
-      * does not ask about the match again for an hour: an engine with nothing to say for it may be one not yet deployed
-      * with results to send, and an hour later it may have them. An engine that cannot be reached, or is slow to
-      * answer, is asked again on the next load; the list is shown either way.
+      * results, from an engine that predates them, or by a forfeit. The time is recorded before the engine is asked,
+      * and the list does not ask about the match again for an hour, however the engine answers or fails to: an engine
+      * with nothing to say for it may be one not yet deployed with results to send, and one that is down or hung would
+      * otherwise hold up every load of the list until it came back. The list is shown either way.
       *
       * `owed` is each match's game, id and status url. The list passes a few at most.
       */
@@ -838,8 +838,14 @@ class GameEngineService[T](
         IO.parTraverseN(math.max(owed.size, 1))(owed) { (gameId, matchId, statusUrl) =>
             sessionPool
                 .use { session =>
-                    applyEngineStatus(session = session, gameId = gameId, matchId = matchId, statusUrl = statusUrl) *>
-                        new MatchRepo(session).markResultsAsked(gameId, matchId) *>
+                    // Committed on its own, so that it stands when the call below fails or is cut off.
+                    new MatchRepo(session).markResultsAsked(gameId, matchId) *>
+                        applyEngineStatus(
+                          session = session,
+                          gameId = gameId,
+                          matchId = matchId,
+                          statusUrl = statusUrl
+                        ) *>
                         new ResultRepo(session).existsForMatch(gameId, matchId)
                 }
                 .timeout(ResultsRecoveryTimeout)

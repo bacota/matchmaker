@@ -259,7 +259,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""UPDATE match SET results_asked_at = now()
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Records that the match's engine has answered about its results, so that the completed list does not ask again
+    /** Records that the match's engine is being asked for its results, so that the completed list does not ask again
       * for an hour.
       */
     def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
