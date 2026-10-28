@@ -1410,6 +1410,101 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    /* The results callback is sent once. When it is lost the engine's status answer still carries the
+     * results, and asking for it -- a Refresh, or a Review of the finished board -- is how they are
+     * recorded after all: ranks, winner and summary, as the callback would have left them. */
+    private def statusWithResults(mine: Participant, theirs: Participant): GameStatusResponse =
+        GameStatusResponse(
+          isCompleted = true,
+          participants = Nil,
+          results = Some(
+            EngineResults(
+              results = List(
+                EngineResult(participantId = mine.participantId.value, rank = 1, isWinner = true),
+                EngineResult(participantId = theirs.participantId.value, rank = 2, isWinner = false)
+              ),
+              summary = Some("<strong>me</strong> won")
+            )
+          )
+        )
+
+    property("refresh records the results a status answer carries, when their callback was lost") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    results <- resultsOf(started)
+                    completed <- services.matches.completed(externalId).map(_.matches.toList)
+                } yield refreshed.isCompleted &&
+                    results.map(r => (r.participantId, r.rank, r.isWinner)).toSet == Set(
+                      (mine.participantId, 1, true),
+                      (theirs.participantId, 2, false)
+                    ) &&
+                    completed.filter(_.matchId == started.matchId).map(m => (m.resultSummary, m.outcome)) ==
+                    List((Some("<strong>me</strong> won"), Some(MatchOutcome.Won)))
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("refresh recovers the results of a match already completed without them") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    // Completed by a status from an engine that sent no results, as before they were sent.
+                    _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    before <- resultsOf(started)
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    // A second look finds them recorded, and records nothing more.
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
+                    after <- resultsOf(started)
+                } yield before.isEmpty &&
+                    after.map(r => (r.participantId, r.rank, r.isWinner)).sortBy(_._2) == List(
+                      (mine.participantId, 1, true),
+                      (theirs.participantId, 2, false)
+                    )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     // A match with no time limit has no deadline to compute, whatever the engine reports as the
     // start of the turn — there is nothing for the player to run out of.
     property("refresh leaves the due date unset when the match has no time limit") {
