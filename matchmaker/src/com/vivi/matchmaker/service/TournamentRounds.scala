@@ -336,23 +336,26 @@ class TournamentRounds[T](
 
     /* A failed try at creating a match, recorded where its owner and admins will see it, and mailed to them the first
      * time. Owed, and so tried again, until it has failed [[CreateFailure.maxTries]] times in a row; then settled, and
-     * the owner's Check round is what tries again. */
+     * the owner's Check round is what tries again. Settled, with nothing recorded, if another try has claimed or
+     * created the match since this one gave it back. */
     private def createFailed(session: Session[IO], saved: Match, game: Game, error: Throwable): IO[Settlement] =
         new TournamentMatchRepo(session)
             .createFailed(game = game.gameId, id = saved.matchId, at = now(), error = error.getMessage)
             .flatTap(tries =>
-                IO.whenA(tries == 1)(
+                IO.whenA(tries.contains(1))(
                   new TournamentRepo(session).read(game.gameId, saved.tournamentId).flatMap(
                     _.traverse_(t => notifications.matchNotCreated(session = session, tournament = t, game = game))
                   )
                 )
             )
-            .map { tries =>
-                val why = s"its engine could not create it: $error"
-                if (tries >= CreateFailure.maxTries) {
-                    System.err.println(s"$why; $tries tries have failed, so it waits on its owner's Check round")
-                    Settlement.Settled
-                } else Settlement.Owed(why)
+            .map {
+                case None => Settlement.Settled
+                case Some(tries) =>
+                    val why = s"its engine could not create it: $error"
+                    if (tries >= CreateFailure.maxTries) {
+                        System.err.println(s"$why; $tries tries have failed, so it waits on its owner's Check round")
+                        Settlement.Settled
+                    } else Settlement.Owed(why)
             }
 
     private enum Prepared {
