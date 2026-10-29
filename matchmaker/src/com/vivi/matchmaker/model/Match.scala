@@ -59,8 +59,8 @@ case class Match(
     playUrl: Option[String] = None,
     publicUrl: Option[String] = None,
     /** What `timeLimit` is a limit on: each turn separately, or the player's whole match. Set from its tournament's
-      * round duration when it is created in the engine (`Clock.forMatch`), so that editing the tournament afterwards
-      * cannot change the terms of a match already being played.
+      * round or turn duration when it is created in the engine (`Clock.forMatch`), so that editing the tournament
+      * afterwards cannot change the terms of a match already being played.
       */
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     /** The unit `timeLimit` is shown in. */

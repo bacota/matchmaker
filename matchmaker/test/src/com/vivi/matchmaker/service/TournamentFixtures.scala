@@ -13,6 +13,13 @@ import com.vivi.matchmaker.persistence.{PoolRepo, StageRepo, TournamentModelRepo
 /** Tournaments for specs: the model of a standard format, offered in a game, and a tournament made from one. */
 object TournamentFixtures {
 
+    /** `settings` with the turn duration a tournament of `game` needs if its players move at once: the round's, unless
+      * `settings` give their own, so that a match of a game without roles has the whole round for its turn.
+      */
+    def timedByTurn(game: Game, settings: TournamentSettings): TournamentSettings =
+        if (game.moveType != MoveType.Simultaneous) settings
+        else settings.copy(turnDuration = settings.turnDuration.orElse(settings.roundDuration))
+
     /** The model of the standard format `key`, offered in `game`: added first if it is not stored yet, as a sync adds
       * it, under the sync's lock so that specs running at once do not both add it. A game that cannot play the format
       * -- one of a single role, say -- is given a plain round robin instead, a model of its own that is not a root, so

@@ -48,7 +48,7 @@ class TournamentRepo(session: Session[IO]) {
         Boolean,
         Int,
         Option[Double],
-        Option[Int],
+        Option[Double],
         Boolean,
         Option[Instant],
         Option[Instant],
@@ -64,7 +64,7 @@ class TournamentRepo(session: Session[IO]) {
 
     private val written: Codec[Written] =
         text *: text *: playerId *: status *: modelId *: int4.opt *: bool *: bool *: bool *: int4.opt *: int4.opt *:
-            bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
+            bool *: int4 *: float8.opt *: float8.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
             bool *: instant.opt *: bool *: int4.opt *: bool *: int4.opt
 
     // What is read: the written columns, then the round being played's start and deadline, and whether it is stopped,
@@ -75,7 +75,8 @@ class TournamentRepo(session: Session[IO]) {
     private def columnsOf(t: String): Fragment[Void] =
         sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
               #$t.is_friendly, #$t.is_invitational, #$t.has_late_entries, #$t.min_rating, #$t.max_rating,
-              #$t.is_public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
+              #$t.is_public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8,
+              EXTRACT(EPOCH FROM #$t.turn_duration)::float8,
               #$t.has_concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.is_live, #$t.start,
               #$t.has_role_choice, #$t.max_entrants, #$t.is_auto_started, #$t.players_per_match,
               (SELECT r.start_date FROM round r
@@ -102,7 +103,7 @@ class TournamentRepo(session: Session[IO]) {
           t.settings.isPublic,
           t.settings.entriesPerPlayer,
           seconds(t.settings.roundDuration),
-          t.settings.maxTurns,
+          seconds(t.settings.turnDuration),
           t.settings.hasConcurrentRounds,
           t.startedAt,
           t.endedAt,
@@ -133,7 +134,7 @@ class TournamentRepo(session: Session[IO]) {
           isPublic,
           entries,
           roundSeconds,
-          maxTurns,
+          turnSeconds,
           concurrentRounds,
           startedAt,
           endedAt,
@@ -162,7 +163,7 @@ class TournamentRepo(session: Session[IO]) {
             maxRating = maxRating,
             entriesPerPlayer = entries,
             roundDuration = duration(roundSeconds),
-            maxTurns = maxTurns,
+            turnDuration = duration(turnSeconds),
             hasConcurrentRounds = concurrentRounds,
             isPublic = isPublic,
             gameSettings = gameSettings,
@@ -188,11 +189,13 @@ class TournamentRepo(session: Session[IO]) {
     private val insert: Query[GameId *: Written, TournamentId] =
         sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
                                       is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
-                                      is_public, entries_per_player, round_duration, max_turns, has_concurrent_rounds,
-                                      started_at, ended_at, checked_at, settings, is_live, start, has_role_choice,
+                                      is_public, entries_per_player, round_duration, turn_duration,
+                                      has_concurrent_rounds, started_at, ended_at, checked_at, settings, is_live,
+                                      start, has_role_choice,
                                       max_entrants, is_auto_started, players_per_match, first_stage_id)
           VALUES ($gameId, $text, $text, $playerId, $status, $modelId, ${int4.opt}, $bool, $bool, $bool, ${int4.opt},
-                  ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
+                  ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second',
+                  ${float8.opt} * INTERVAL '1 second', $bool, ${instant.opt},
                   ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, ${int4.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
 
@@ -236,7 +239,8 @@ class TournamentRepo(session: Session[IO]) {
                  tournament_model_id = $modelId, default_pool_size = ${int4.opt}, is_friendly = $bool,
                  is_invitational = $bool, has_late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
                  is_public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
-                 max_turns = ${int4.opt}, has_concurrent_rounds = $bool, started_at = ${instant.opt},
+                 turn_duration = ${float8.opt} * INTERVAL '1 second', has_concurrent_rounds = $bool,
+                 started_at = ${instant.opt},
                  ended_at = ${instant.opt}, checked_at = ${instant.opt}, settings = $settings, is_live = $bool,
                  start = ${instant.opt}, has_role_choice = $bool, max_entrants = ${int4.opt}, is_auto_started = $bool,
                  players_per_match = ${int4.opt}

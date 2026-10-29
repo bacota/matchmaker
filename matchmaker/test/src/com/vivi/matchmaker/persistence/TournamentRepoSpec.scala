@@ -45,8 +45,11 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
           owner = f.owner.playerId,
           tournamentModelId = f.model.tournamentModelId,
           defaultPoolSize = Some(2),
-          settings =
-              TournamentSettings(roundDuration = Some(Duration.ofHours(48)), minRating = Some(1200), maxTurns = Some(5))
+          settings = TournamentSettings(
+            roundDuration = Some(Duration.ofHours(48)),
+            minRating = Some(1200),
+            turnDuration = Some(Duration.ofMinutes(90))
+          )
         )
 
     /** A tournament made from the fixture's model, as `TournamentService.create` makes one: the row, its stages and its

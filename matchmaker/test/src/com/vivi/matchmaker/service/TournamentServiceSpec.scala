@@ -63,7 +63,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
       name = "Open",
       tournamentModelId = f.model(standard).tournamentModelId,
       description = "an open",
-      settings = settings
+      settings = TournamentFixtures.timedByTurn(game = f.game, settings = settings)
     )
 
     private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
@@ -875,6 +875,51 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         } yield (edited.tournamentModelId == t.tournamentModelId && edited.name == "Renamed", over))
         assert(designKept)
         assert(overRefused.left.exists(_.isInstanceOf[ConflictError]))
+    }
+
+    test("a game whose players move at once needs a turn duration, which a running tournament may change") {
+        val (untimed, created, edited) = run(for {
+            f <- fixture(2, roleless = Some(Generators.genRolelessGame(least = 2, most = Some(2))))
+            round = TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
+            untimed <- tournaments
+                .create(
+                  gameId = f.game.gameId,
+                  // Past `request`, which would give it the round's.
+                  request = request(f = f).copy(settings = round),
+                  callerExternalId = f.owner.externalId
+                )
+                .attempt
+            t <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f, settings = round.copy(turnDuration = Some(Duration.ofMinutes(5)))),
+              callerExternalId = f.owner.externalId
+            )
+            _ <- f.players.traverse(p =>
+                tournaments.enter(
+                  gameId = f.game.gameId,
+                  tournamentId = t.tournamentId,
+                  characterId = None,
+                  callerExternalId = p.externalId
+                )
+            )
+            _ <- tournaments.start(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            edited <- tournaments.update(
+              gameId = f.game.gameId,
+              tournamentId = t.tournamentId,
+              request = request(f = f, settings = round.copy(turnDuration = Some(Duration.ofMinutes(10)))),
+              callerExternalId = f.owner.externalId
+            )
+        } yield (untimed, t, edited))
+        assert(
+          untimed.left.exists(e => e.getMessage.contains(com.vivi.matchmaker.ErrorText.design.needsTurnDuration)),
+          untimed.toString
+        )
+        assertEquals(created.settings.turnDuration, Some(Duration.ofMinutes(5)))
+        assertEquals(edited.settings.turnDuration, Some(Duration.ofMinutes(10)))
     }
 
     test("a player's tournaments list those they own, entered or were invited to") {

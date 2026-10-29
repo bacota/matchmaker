@@ -319,13 +319,22 @@ class TournamentService[T](
                                     _ <- IO.raiseWhen(t.settings.isLive && !roundDuration.exists(_.getSeconds >= 1))(
                                       ValidationError(ErrorText.tournament.liveRoundTooShort)
                                     )
+                                    _ <- IO.raiseWhen(s.turnDuration.exists(d => d.isZero || d.isNegative))(
+                                      ValidationError(ErrorText.tournament.turnNotPositive)
+                                    )
+                                    turnDuration = s.turnDuration.orElse(t.settings.turnDuration)
+                                    _ <- IO.raiseWhen(
+                                      t.settings.isLive && game.moveType == MoveType.Simultaneous &&
+                                          !turnDuration.exists(_.getSeconds >= 1)
+                                    )(ValidationError(ErrorText.tournament.liveTurnTooShort))
                                 } yield t.copy(
                                   name = request.name.trim,
                                   description = request.description.trim,
                                   settings = t.settings.copy(
                                     isAutoStarted = s.isAutoStarted,
                                     hasLateEntries = s.hasLateEntries,
-                                    roundDuration = roundDuration
+                                    roundDuration = roundDuration,
+                                    turnDuration = turnDuration
                                   )
                                 )
                             case _ => IO.raiseError(ConflictError(ErrorText.tournament.overUnchangeable))
@@ -769,7 +778,8 @@ class TournamentService[T](
                 .validate(
                   design = design,
                   game = TournamentGame.of(game, t.settings.playersPerMatch),
-                  maxTurns = t.settings.maxTurns,
+                  roundDuration = t.settings.roundDuration,
+                  turnDuration = t.settings.turnDuration,
                   defaultPoolSize = sized.defaultPoolSize
                 )
                 .filterNot(_.isWarning)
@@ -870,7 +880,7 @@ class TournamentService[T](
               Option.when(s.minRating.zip(s.maxRating).exists((lo, hi) => lo > hi))(
                 ErrorText.tournament.ratingsCrossed
               ),
-              Option.when(s.maxTurns.exists(_ < 1))(ErrorText.tournament.noTurns),
+              Option.when(s.turnDuration.exists(d => d.isZero || d.isNegative))(ErrorText.tournament.turnNotPositive),
               Option.when(s.maxEntrants.exists(_ < 1))(ErrorText.tournament.noEntries),
               // A game with roles seats one player per role, which is not the owner's to change.
               Option.when(s.playersPerMatch.isDefined && !game.isSeatedWithoutRoles)(
@@ -880,6 +890,10 @@ class TournamentService[T](
               Option.when(s.isLive && !s.roundDuration.exists(_.getSeconds >= 1))(
                 ErrorText.tournament.liveNeedsClock
               ),
+              // ... or, where everyone moves at once, the turn's.
+              Option.when(
+                s.isLive && game.moveType == MoveType.Simultaneous && !s.turnDuration.exists(_.getSeconds >= 1)
+              )(ErrorText.tournament.liveNeedsTurnClock),
               // Held to the values the game allows here, where the owner can be told, rather than found out when a
               // match starts and the engine is sent something it cannot play.
               ChallengeSettings.problem(s.gameSettings, parameterValues(game))
@@ -888,7 +902,8 @@ class TournamentService[T](
                     .validate(
                       design = model.design,
                       game = TournamentGame.of(game, s.playersPerMatch),
-                      maxTurns = s.maxTurns,
+                      roundDuration = s.roundDuration,
+                      turnDuration = s.turnDuration,
                       // A pool of everyone entered checked at the most it takes, and again as it starts.
                       defaultPoolSize = poolSize.orElse(s.maxEntrants)
                     )

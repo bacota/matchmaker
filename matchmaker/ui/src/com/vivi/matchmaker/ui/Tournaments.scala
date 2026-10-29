@@ -1305,17 +1305,22 @@ object Tournaments {
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
-        // The match time limit as typed, in the unit chosen: the largest unit it is a whole number of, and blank, in
-        // hours, for none.
-        val (limit0, unit0) = s0.roundDuration.orElse(defaultTimeLimit).fold(("", "hours")) { d =>
-            val minutes = d.toMinutes
-            timeUnits.reverse
-                .collectFirst { case (unit, size) if minutes % size == 0 => ((minutes / size).toString, unit) }
-                .getOrElse((minutes.toString, "minutes"))
-        }
+        // The match and turn time limits as typed, each in the unit chosen: the largest unit it is a whole number of,
+        // and blank for none.
+        def typed(d: Option[java.time.Duration], blankUnit: String): (String, String) =
+            d.fold(("", blankUnit)) { d =>
+                val minutes = d.toMinutes
+                timeUnits.reverse
+                    .collectFirst { case (unit, size) if minutes % size == 0 => ((minutes / size).toString, unit) }
+                    .getOrElse((minutes.toString, "minutes"))
+            }
+        val (limit0, unit0) = typed(s0.roundDuration.orElse(defaultTimeLimit), "hours")
         val timeLimit = Var(limit0)
         val timeUnit = Var(unit0)
-        val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
+        val (turnLimit0, turnUnit0) = typed(s0.turnDuration, "minutes")
+        val turnLimit = Var(turnLimit0)
+        val turnUnit = Var(turnUnit0)
+        val isSimultaneous = game.moveType == MoveType.Simultaneous
         val chooseRoles = Var(s0.hasRoleChoice)
         val live = Var(s0.isLive)
         val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
@@ -1382,15 +1387,26 @@ object Tournaments {
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
+        def durationOf(limit: Var[String], unit: Var[String]): Option[java.time.Duration] =
+            limit.now().trim.toDoubleOption.filter(_ > 0).map { n =>
+                val size = timeUnits.toMap.getOrElse(unit.now(), 60L)
+                java.time.Duration.ofMinutes((n * size).round)
+            }
         def duration: Option[java.time.Duration] =
             unlessLeftOut(
               key = "competition.timeLimit",
-              value = timeLimit.now().trim.toDoubleOption.filter(_ > 0).map { n =>
-                  val size = timeUnits.toMap.getOrElse(timeUnit.now(), 60L)
-                  java.time.Duration.ofMinutes((n * size).round)
-              },
+              value = durationOf(timeLimit, timeUnit),
               default = defaultTimeLimit
             )
+        // Only a game whose players move at once is clocked by the turn.
+        def turnDuration: Option[java.time.Duration] =
+            if (!isSimultaneous) None
+            else
+                unlessLeftOut(
+                  key = "competition.turnLimit",
+                  value = durationOf(turnLimit, turnUnit),
+                  default = fresh.turnDuration
+                )
         // Left out, the server's default: the format's suggestion, else the game's R.
         def poolSizeAsked: Option[Int] =
             unlessLeftOut(key = "competition.poolSize", value = int(poolSize), default = None)
@@ -1421,7 +1437,7 @@ object Tournaments {
             default = fresh.entriesPerPlayer
           ),
           roundDuration = duration,
-          maxTurns = unlessLeftOut(key = "competition.maxTurns", value = int(maxTurns), default = fresh.maxTurns),
+          turnDuration = turnDuration,
           hasConcurrentRounds = unlessLeftOut(
             key = "competition.concurrentRounds",
             value = concurrentRounds.now(),
@@ -1468,7 +1484,10 @@ object Tournaments {
                     Validation.validate(
                       design = m.design,
                       game = TournamentGame.of(game, playersPerMatch),
-                      maxTurns = settings.maxTurns,
+                      // The turn limit a match time limit needs is asked for as the form is saved, as the time
+                      // limit is: checked here, typing one would be undone for the want of the other.
+                      roundDuration = None,
+                      turnDuration = turnDuration,
                       // As the server checks it: a pool of everyone entered at the most it takes.
                       defaultPoolSize = poolSizeAsked
                           .orElse(m.poolSize)
@@ -1482,13 +1501,12 @@ object Tournaments {
          * banner instead. The problems are worked out rather than read back from `problems`, whose set, made inside
          * an observer, lands only after it returns. */
         type Fields =
-            (Boolean, String, Option[TournamentModel], Option[TournamentModelId], String, String, Boolean, Boolean)
+            (Boolean, String, Option[TournamentModel], Option[TournamentModelId], String, Boolean, Boolean)
         def fields: Fields = (
           wholePool.now(),
           perMatch.now(),
           chosen.now(),
           modelId.now(),
-          maxTurns.now(),
           poolSize.now(),
           lateEntries.now(),
           chooseRoles.now()
@@ -1518,13 +1536,12 @@ object Tournaments {
                 acceptedProblems = now
                 problems.set(now)
             } else {
-                val (pool, count, model, id, turns, size, late, roles) = accepted
+                val (pool, count, model, id, size, late, roles) = accepted
                 Var.set(
                   wholePool -> pool,
                   perMatch -> count,
                   chosen -> model,
                   modelId -> id,
-                  maxTurns -> turns,
                   poolSize -> size,
                   lateEntries -> late,
                   chooseRoles -> roles
@@ -1561,6 +1578,35 @@ object Tournaments {
               )
             ).amend(Views.shownWhen(caption))
         }
+        /* A time limit: a number, in the unit chosen beside it. `field` is its key in the captions and tips. */
+        def timeField(
+            field: String,
+            caption: String,
+            tip: String,
+            limit: Var[String],
+            unitKey: String,
+            unitCaption: String,
+            unit: Var[String]
+        ) =
+            Views.tipField(id = freshTipId(s"$key-tip"), caption = labelOf(field, caption), text = tipOf(field, tip))(
+              span(
+                cls := "time-limit",
+                input(
+                  tpe := "number",
+                  inputMode := "decimal",
+                  minAttr := "0",
+                  required := true,
+                  controlled(value <-- limit.signal, onInput.mapToValue --> limit)
+                ),
+                select(
+                  aria.label <-- labelOf(unitKey, unitCaption).map(_.getOrElse(unitCaption)),
+                  value <-- unit.signal,
+                  onChange.mapToValue --> unit,
+                  timeUnits.map((unit, _) => option(value := unit, unit))
+                )
+              )
+            )
+
         def number(caption: Signal[Option[String]], v: Var[String], tip: Signal[Option[String]]) =
             Views.tipField(id = freshTipId(s"$key-tip"), caption = caption, text = tip)(
               input(tpe := "number", inputMode := "numeric", controlled(value <-- v.signal, onInput.mapToValue --> v))
@@ -1818,34 +1864,24 @@ object Tournaments {
             v = entries,
             tip = tipOf("competition.entries", Tips.competition.entries)
           ),
-          Views.tipField(
-            id = freshTipId(s"$key-tip"),
-            caption = labelOf("competition.timeLimit", Labels.competition.timeLimit),
-            text = tipOf("competition.timeLimit", Tips.competition.timeLimit)
-          )(
-            span(
-              cls := "time-limit",
-              input(
-                tpe := "number",
-                inputMode := "decimal",
-                minAttr := "0",
-                required := true,
-                controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
-              ),
-              select(
-                aria.label <-- labelOf("competition.timeUnit", Labels.competition.timeUnit)
-                    .map(_.getOrElse(Labels.competition.timeUnit)),
-                value <-- timeUnit.signal,
-                onChange.mapToValue --> timeUnit,
-                timeUnits.map((unit, _) => option(value := unit, unit))
-              )
-            )
+          timeField(
+            field = "competition.timeLimit",
+            caption = Labels.competition.timeLimit,
+            tip = Tips.competition.timeLimit,
+            limit = timeLimit,
+            unitKey = "competition.timeUnit",
+            unitCaption = Labels.competition.timeUnit,
+            unit = timeUnit
           ),
-          if (game.moveType == MoveType.Simultaneous && game.maxTurns.isEmpty)
-              number(
-                caption = labelOf("competition.maxTurns", Labels.competition.maxTurns),
-                v = maxTurns,
-                tip = tipOf("competition.maxTurns", Tips.competition.maxTurns)
+          if (isSimultaneous)
+              timeField(
+                field = "competition.turnLimit",
+                caption = Labels.competition.turnLimit,
+                tip = Tips.competition.turnLimit,
+                limit = turnLimit,
+                unitKey = "competition.turnUnit",
+                unitCaption = Labels.competition.turnUnit,
+                unit = turnUnit
               )
           else emptyNode,
           if (existing.isDefined) emptyNode
@@ -1893,6 +1929,8 @@ object Tournaments {
                 // Asked for where it is shown; a format that leaves it out saves the default.
                 else if (duration.isEmpty && !isLeftOut("competition.timeLimit"))
                     raiseNotice(ErrorText.competitionForm.noTimeLimit)
+                else if (isSimultaneous && duration.isDefined && turnDuration.isEmpty)
+                    raiseNotice(ErrorText.competitionForm.noTurnLimit)
                 else if (errors.nonEmpty) raiseNotice(errors.map(_.describe).mkString("; "))
                 else if (isJoining && isCharacterGame && joinWith.now().isEmpty)
                     raiseNotice(ErrorText.competitionForm.noCharacter)
@@ -1945,7 +1983,7 @@ object Tournaments {
                 check()
             },
             wholePool.signal
-                .combineWith(perMatch.signal, chosen.signal, modelId.signal, maxTurns.signal, poolSize.signal)
+                .combineWith(perMatch.signal, chosen.signal, modelId.signal, poolSize.signal)
                 .changes
                 .debounce(500) --> (_ => checkChange()),
             children <-- problems.signal.map(
