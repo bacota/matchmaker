@@ -144,6 +144,18 @@ resource "aws_lambda_function" "ending" {
       # is begun and its matches are left due, never created. Sent as the API function sends, under
       # the shared role's sqs:SendMessage.
       MATCH_ENDED_QUEUE_URL = aws_sqs_queue.match_ended.url
+
+      # This function creates tournament matches (TournamentRounds.createMatch), and the engine is
+      # given its move and results callbacks from this. Without it a tournament match is created
+      # with none: the engine never reports its moves or results, and the match, its round and its
+      # tournament wait on somebody refreshing it. The same url as the API function's (main.tf).
+      MATCHMAKER_BASE_URL = "https://${aws_apigatewayv2_api.api.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
+
+      # The mail this function sends -- a round begun or done, a role to choose, a match ended --
+      # as the API function sends it. Without all three it sends none. See MailSettings.
+      MAIL_QUEUE_URL = var.mail_queue_url
+      MAIL_SENDER    = var.mail_sender
+      UI_BASE_URL    = var.ui_base_url
     }
   }
 
