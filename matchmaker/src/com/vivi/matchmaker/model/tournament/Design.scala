@@ -117,7 +117,6 @@ case class OpenSeats(minPlayers: Int, maxPlayers: Option[Int], playersPerMatch: 
 case class TournamentGame(
     roles: List[TournamentRole],
     moveType: com.vivi.matchmaker.model.MoveType,
-    maxTurns: Option[Int],
     hasRoleChoice: Boolean = false,
     open: Option[OpenSeats] = None
 ) {
@@ -181,7 +180,6 @@ object TournamentGame {
                           )
                       ),
           moveType = game.moveType,
-          maxTurns = game.maxTurns,
           open = game.fewestPlayers.map(least =>
               OpenSeats(minPlayers = least, maxPlayers = game.mostSeats, playersPerMatch = playersPerMatch)
           )
@@ -203,14 +201,16 @@ object Validation {
     /** How deep designs may nest: a stage's pools playing a design whose stages' pools play a design, and so on. */
     val MaxDepth = 4
 
-    /** Everything wrong with a tournament's design for this game: the design's problems, and the game's own. `maxTurns`
-      * is the tournament's, for a game whose players move at once; `defaultPoolSize` is the tournament's, for a stage
-      * that sets no pool size.
+    /** Everything wrong with a tournament's design for this game: the design's problems, and the game's own.
+      * `roundDuration` and `turnDuration` are the tournament's: a game whose players move at once is clocked by the
+      * turn, so a tournament of one that times its rounds must time its turns as well. `defaultPoolSize` is the
+      * tournament's, for a stage that sets no pool size.
       */
     def validate(
         design: TournamentDesign,
         game: TournamentGame,
-        maxTurns: Option[Int],
+        roundDuration: Option[java.time.Duration],
+        turnDuration: Option[java.time.Duration],
         defaultPoolSize: Option[Int]
     ): List[Problem] = {
         val gameProblems =
@@ -235,12 +235,12 @@ object Validation {
                   }
               ),
               Option.when(
-                game.moveType == com.vivi.matchmaker.model.MoveType.Simultaneous && game.maxTurns.isEmpty &&
-                    maxTurns.isEmpty
+                game.moveType == com.vivi.matchmaker.model.MoveType.Simultaneous && roundDuration.isDefined &&
+                    turnDuration.isEmpty
               )(
                 Problem(
                   where = "",
-                  message = ErrorText.design.needsMaxTurns
+                  message = ErrorText.design.needsTurnDuration
                 )
               )
             ).flatten

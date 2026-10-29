@@ -17,8 +17,7 @@ object Fixtures {
               (1 to recommended).toList.map(i =>
                   TournamentRole(id = roles + i, roleType = RoleType.Recommended, preferenceLevel = None)
               ),
-          moveType = MoveType.Sequential,
-          maxTurns = None
+          moveType = MoveType.Sequential
         )
 
     val twoPlayer: TournamentGame = game()
@@ -29,7 +28,6 @@ object Fixtures {
         TournamentGame(
           roles = Nil,
           moveType = MoveType.Simultaneous,
-          maxTurns = Some(1),
           open = Some(OpenSeats(minPlayers = least, maxPlayers = most, playersPerMatch = perMatch))
         )
 

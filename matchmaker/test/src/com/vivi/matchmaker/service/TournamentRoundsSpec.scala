@@ -143,7 +143,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               request = TournamentRequest(
                 name = "Cup",
                 tournamentModelId = model.tournamentModelId,
-                settings = settings,
+                settings = TournamentFixtures.timedByTurn(game = game, settings = settings),
                 defaultPoolSize = poolSize
               ),
               callerExternalId = owner.externalId
@@ -402,6 +402,29 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(d.state.flatMap(_.root.ranking).map(_.size), Some(4))
     }
 
+    test("a match of a game whose players move at once is sent to the engine with the turn duration as its limit") {
+        val request = run(for {
+            f <- started(
+              n = 2,
+              design = RoundRobin.id,
+              roles = false,
+              settings = TournamentSettings(
+                isInvitational = false,
+                roundDuration = Some(Duration.ofDays(2)),
+                turnDuration = Some(Duration.ofMinutes(5))
+              ),
+              poolSize = Some(2)
+            )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+        } yield f.w.engine.lastRequest)
+        // The turn's own limit, whatever the round lasts and however many turns the match may take.
+        assertEquals(request.flatMap(_.timeLimitSeconds), Some(Duration.ofMinutes(5).getSeconds))
+    }
+
     /** The players a match of `game`, of two players entered, is sent to the engine with, once its round begins: with
       * nothing to choose, it is created in the engine as the round begins.
       */
@@ -635,7 +658,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                   request = TournamentRequest(
                     name = "Cup",
                     tournamentModelId = model.tournamentModelId,
-                    settings = TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
+                    settings = TournamentSettings(
+                      isInvitational = false,
+                      roundDuration = Some(Duration.ofDays(2)),
+                      turnDuration = Some(Duration.ofDays(2))
+                    )
                   ),
                   callerExternalId = owner.externalId
                 )

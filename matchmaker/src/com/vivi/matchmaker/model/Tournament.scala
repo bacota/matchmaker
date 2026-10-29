@@ -28,10 +28,10 @@ object TournamentStatus {
 /** A tournament's settings (`tournament-design.md`, "Other Tournament Properties"), with its defaults.
   *
   * `isFriendly` false makes its matches rated, which only an admin of its game may ask for: friendly unless said.
-  * `roundDuration` is how long a round lasts, which is also every match's time limit (`Clock.forMatch`); `maxTurns` is
-  * for a game whose players move at once and that has no maximum of its own. `hasConcurrentRounds` lets every
-  * round-robin pool play all of its matches in one round. `isPublic` is whether anybody may see it listed, and its
-  * matches watched.
+  * `roundDuration` is how long a round lasts, which in a game of turns is also every match's time limit; `turnDuration`
+  * is how long each turn lasts in a game whose players move at once (`Clock.forMatch`). `hasConcurrentRounds` lets
+  * every round-robin pool play all of its matches in one round. `isPublic` is whether anybody may see it listed, and
+  * its matches watched.
   *
   * `gameSettings` is the owner's choice of each game parameter, as JSON, copied to every match and so to the engine;
   * `isLive` makes every match live, its turns and clock the engine's to run. `start` is when it is meant to be played,
@@ -49,7 +49,7 @@ case class TournamentSettings(
     maxRating: Option[Int] = None,
     entriesPerPlayer: Int = 1,
     roundDuration: Option[Duration] = None,
-    maxTurns: Option[Int] = None,
+    turnDuration: Option[Duration] = None,
     hasConcurrentRounds: Boolean = false,
     isPublic: Boolean = true,
     gameSettings: String = "{}",

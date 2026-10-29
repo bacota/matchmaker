@@ -17,7 +17,7 @@ class DesignSpec extends FunSuite {
           )
         )
         val problems = Validation
-            .validate(design = bad, game = twoPlayer, maxTurns = None, defaultPoolSize = None)
+            .validate(design = bad, game = twoPlayer, roundDuration = None, turnDuration = None, defaultPoolSize = None)
             .filterNot(_.isWarning)
             .map(_.describe)
         assert(problems.exists(_.startsWith("stage 1: demote must be greater than 1")), problems.toString)
@@ -62,23 +62,39 @@ class DesignSpec extends FunSuite {
         assert(!Ties.isAllowed(matches = 1, rubber = true, stage = Some(true)))
     }
 
-    test("a sequential game gives each seat a chess clock of d/n; a simultaneous one a turn limit of d/t") {
+    test("a sequential game gives each seat a chess clock of d/n; a simultaneous one the turn duration") {
         assertEquals(
-          Clock.forMatch(game = twoPlayer, d = hour, seats = 2, tiesAllowed = true, choosing = false, None).limit,
-          Duration.ofMinutes(30)
+          Clock.forMatch(game = twoPlayer, round = Some(hour), turn = None, seats = 2).map(_.limit),
+          Some(Duration.ofMinutes(30))
         )
-        val sim = twoPlayer.copy(moveType = com.vivi.matchmaker.model.MoveType.Simultaneous, maxTurns = Some(5))
+        val sim = twoPlayer.copy(moveType = com.vivi.matchmaker.model.MoveType.Simultaneous)
         assertEquals(
-          Clock.forMatch(game = sim, d = hour, seats = 2, tiesAllowed = true, choosing = false, None).limit,
-          Duration.ofMinutes(12)
+          Clock.forMatch(game = sim, round = Some(hour), turn = Some(Duration.ofMinutes(5)), seats = 2),
+          Some(MatchClock(kind = com.vivi.matchmaker.model.TimeLimitKind.PerTurn, limit = Duration.ofMinutes(5)))
         )
-        // One more turn when ties are not allowed, and one more for choosing roles: 60 / 7.
-        assertEquals(
-          Clock
-              .forMatch(game = sim, d = Duration.ofMinutes(70), seats = 2, tiesAllowed = false, choosing = true, None)
-              .limit,
-          Duration.ofMinutes(10)
+        // Each is clocked by its own duration alone.
+        assertEquals(Clock.forMatch(game = sim, round = Some(hour), turn = None, seats = 2), None)
+        assertEquals(Clock.forMatch(game = twoPlayer, round = None, turn = Some(hour), seats = 2), None)
+    }
+
+    test("a simultaneous game with a round duration needs a turn duration") {
+        val sim = twoPlayer.copy(moveType = com.vivi.matchmaker.model.MoveType.Simultaneous)
+        val design = TournamentDesign(List(StageDesign()))
+        def problems(round: Option[Duration], turn: Option[Duration]) =
+            Validation
+                .validate(
+                  design = design,
+                  game = sim,
+                  roundDuration = round,
+                  turnDuration = turn,
+                  defaultPoolSize = None
+                )
+                .map(_.message)
+        assert(
+          problems(round = Some(hour), turn = None).contains(com.vivi.matchmaker.ErrorText.design.needsTurnDuration)
         )
+        assertEquals(problems(round = Some(hour), turn = Some(Duration.ofMinutes(5))), Nil)
+        assertEquals(problems(round = None, turn = None), Nil)
     }
 
     test("a player seated twice forfeits all but their strongest seed's seat") {

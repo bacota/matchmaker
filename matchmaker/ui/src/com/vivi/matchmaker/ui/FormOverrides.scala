@@ -7,10 +7,11 @@ package com.vivi.matchmaker.ui
   */
 private[ui] object FormOverrides {
 
-    /** The fields every competition needs, or that the others need to be reached: never left out. The time unit is part
-      * of the time limit's field rather than a field of its own.
+    /** The fields every competition needs, or that the others need to be reached: never left out. The time units are
+      * part of the time limits' fields rather than fields of their own.
       */
-    val alwaysShown: Set[String] = Set("competition.name", "competition.format", "competition.timeUnit")
+    val alwaysShown: Set[String] =
+        Set("competition.name", "competition.format", "competition.timeUnit", "competition.turnUnit")
 
     /** The caption `key` names, as `overrides` words it, or `default`, the UI's own; `None` for a field left out. */
     def label(overrides: Map[String, Option[String]], key: String, default: String): Option[String] =

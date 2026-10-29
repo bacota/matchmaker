@@ -9,27 +9,21 @@ case class MatchClock(kind: TimeLimitKind, limit: Duration)
 /** How a tournament spends a round's time (`tournament-design.md`, "Rounds"). */
 object Clock {
 
-    /** The clock of a match lasting a round of `d`, with `seats` seated.
+    /** The clock of a match with `seats` seated, `None` where the tournament gives no time for it.
       *
-      * In a game of turns, each seat has a chess clock of `d / seats`. In a game where everyone moves at once, each
-      * turn has `d / t`, where `t` is its turns — one more when ties are not allowed, since the game may need another
-      * to find a winner (Q11), and one more again when roles are chosen first, for the choosing
-      * (`tournament-design.md`, "Choice of Roles"). `maxTurns` is the tournament's, used where the game has none.
+      * In a game of turns, each seat has a chess clock of `round / seats`, `round` being the round's duration. In a
+      * game where everyone moves at once, each turn has `turn`, the tournament's turn duration.
       */
     def forMatch(
         game: TournamentGame,
-        d: Duration,
-        seats: Int,
-        tiesAllowed: Boolean,
-        choosing: Boolean,
-        maxTurns: Option[Int]
-    ): MatchClock =
+        round: Option[Duration],
+        turn: Option[Duration],
+        seats: Int
+    ): Option[MatchClock] =
         game.moveType match {
-            case MoveType.Sequential => MatchClock(TimeLimitKind.Total, d.dividedBy(math.max(seats, 1).toLong))
-            case MoveType.Simultaneous =>
-                val t =
-                    game.maxTurns.orElse(maxTurns).getOrElse(1) + (if (tiesAllowed) 0 else 1) + (if (choosing) 1 else 0)
-                MatchClock(TimeLimitKind.PerTurn, d.dividedBy(math.max(t, 1).toLong))
+            case MoveType.Sequential =>
+                round.map(d => MatchClock(kind = TimeLimitKind.Total, limit = d.dividedBy(math.max(seats, 1).toLong)))
+            case MoveType.Simultaneous => turn.map(d => MatchClock(kind = TimeLimitKind.PerTurn, limit = d))
         }
 
     /** How long a seat has to choose its role: one turn's time in a game where everyone moves at once, and the seat's

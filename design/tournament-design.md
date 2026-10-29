@@ -192,9 +192,8 @@ end of the round.
 In games with sequential movement each seat has a chess clock.  IF the
 round duration is `d` and the number of seats in a match is `n` then
 each seat's chess clock is is `d/n`.  If a game has simultaneous
-movement with `max_turns` of `t` then each turn has a time limit of
-`d/t`.  If the game has a simultaneous_movement and `max_turns` is not
-set then it must be supplied as a tournament parameter.
+movement then each turn has the tournament's turn duration as its time
+limit, which a tournament with a round duration must give.
 
                 
 # Creating Pools from Seeds and Strata

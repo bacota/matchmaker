@@ -1052,19 +1052,15 @@ object TournamentRounds {
         if (nextChooser(seats).isEmpty || seats.count(!_.isForfeit) < math.max(required, 2)) TournamentMatchStatus.Due
         else TournamentMatchStatus.Choosing
 
-    /** A match's clock: the tournament's round duration, spent as the game spends time (`Clock.forMatch`). `None` for a
-      * tournament with no round duration.
+    /** A match's clock: the tournament's round or turn duration, as the game spends time (`Clock.forMatch`). `None` for
+      * a tournament that gives the game neither.
       */
     def clockOf(t: Tournament, game: Game, tm: TournamentMatch): Option[MatchClock] =
-        t.settings.roundDuration.map(d =>
-            Clock.forMatch(
-              game = TournamentGame.of(game, t.settings.playersPerMatch),
-              d = d,
-              seats = tm.seats.count(!_.isForfeit),
-              tiesAllowed = tm.canTie,
-              choosing = tm.seats.exists(_.chooseOrder.isDefined),
-              t.settings.maxTurns
-            )
+        Clock.forMatch(
+          game = TournamentGame.of(game, t.settings.playersPerMatch),
+          round = t.settings.roundDuration,
+          turn = t.settings.turnDuration,
+          seats = tm.seats.count(!_.isForfeit)
         )
 
     /** When the seat whose turn it is to choose runs out of time to. */
