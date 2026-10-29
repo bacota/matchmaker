@@ -1631,6 +1631,89 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    /* The active list's repair: a running match that may have ended without matchmaker hearing is asked about, at most
+     * every five minutes, and one whose turn is somebody's and not yet run out is not asked about at all. */
+    property("the active list asks the engine about a match waiting on nobody, and not again for five minutes") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val asked = java.util.concurrent.atomic.AtomicInteger(0)
+                val engine = StubEngine(beforeStatus = IO(asked.incrementAndGet()).void)
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (_, started, _, _) = seated
+                    _ <- services.matches.active(externalId)
+                    _ <- services.matches.active(externalId)
+                    within = asked.get
+                    _ <- TestSession.resource.use(
+                      _.execute(
+                        sql"""UPDATE match SET results_asked_at = results_asked_at - interval '6 minutes'
+                              WHERE match_id = ${SkunkIdCodecs.matchId}""".command
+                      )(started.matchId)
+                    )
+                    listed <- services.matches.active(externalId)
+                } yield within == 1 && asked.get == 2 && listed.map(_.matchId) == List(started.matchId)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("the active list does not ask the engine about a match whose turn is somebody's and not yet due") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val asked = java.util.concurrent.atomic.AtomicInteger(0)
+                val engine = StubEngine(beforeStatus = IO(asked.incrementAndGet()).void)
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (_, started, _, theirs) = seated
+                    _ <- TestSession.resource.use(
+                      _.execute(
+                        sql"""UPDATE participant SET is_pending = true, due = now() + interval '1 day'
+                              WHERE participant_id = ${SkunkIdCodecs.participantId}""".command
+                      )(theirs.participantId)
+                    )
+                    listed <- services.matches.active(externalId)
+                } yield asked.get == 0 && listed.map(_.matchId) == List(started.matchId)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("the active list completes a match whose engine says it is over, with its results") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
+                    listed <- services.matches.active(externalId)
+                    ended <- matchOf(fixture.game.gameId, started.matchId)
+                    recorded <- resultsOf(started)
+                } yield !listed.exists(_.matchId == started.matchId) && ended.exists(_.isCompleted) &&
+                    recorded.map(_.participantId).toSet == Set(mine.participantId, theirs.participantId)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     // A match with no time limit has no deadline to compute, whatever the engine reports as the
     // start of the turn — there is nothing for the player to run out of.
     property("refresh leaves the due date unset when the match has no time limit") {

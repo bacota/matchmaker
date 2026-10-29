@@ -260,7 +260,7 @@ class MatchRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the match's engine is being asked for its results, so that the completed list does not ask again
-      * for an hour.
+      * for an hour, nor the active list for five minutes.
       */
     def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
         session.execute(updateResultsAsked)((gameId, matchId)).void
@@ -405,7 +405,12 @@ class MatchRepo(session: Session[IO]) {
                  -- which list the match is being read for.
                  m.public_url, m.is_friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
-                 seat_cp.character_id, seat_char.name
+                 seat_cp.character_id, seat_char.name,
+                 -- Whether its engine may be asked whether it has ended: see `MatchSeatRow`. Every five
+                 -- minutes rather than every hour, as the completed list asks: a match still listed as
+                 -- running is one its players are waiting on.
+                 m.status_url,
+                 m.status_url IS NOT NULL AND (m.results_asked_at IS NULL OR m.results_asked_at < now() - interval '5 minutes')
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
@@ -438,7 +443,10 @@ class MatchRepo(session: Session[IO]) {
           -- with no deadline do not crowd out ones that have one; then by seat, so a match's
           -- rows arrive together and in a stable order.
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
-            .query(seatRow)
+            .query(seatRow *: (text.opt *: bool))
+            .map((row, statusUrl, isResultsAskable) =>
+                toSeatRow(row).copy(statusUrl = statusUrl, isResultsAskable = isResultsAskable)
+            )
 
     /* One window of the player's finished matches: the seats they finished with from `from`, up to
      * but not including `until` -- by the seat's own
@@ -614,7 +622,7 @@ class MatchRepo(session: Session[IO]) {
 
     /** Every match the player is in that is still running, most urgent first, one row per seat. */
     def listActiveForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
-        session.execute(selectActiveForPlayer)(playerId).map(_.map(toSeatRow))
+        session.execute(selectActiveForPlayer)(playerId)
 
     /** One window of the matches the player has finished, most recent first, one row per seat: see [[CompletedSpan]].
       */
@@ -987,8 +995,9 @@ object MatchRepo {
         seatPlayerId: Option[PlayerId] = None,
         // The character in that seat, in a character game.
         seatCharacter: Option[CharacterName] = None,
-        // On the caller's own completed list only: where its engine is asked about the match, and whether it may be
-        // asked for results the match has none of -- it was created there, and has not been asked in the last hour.
+        // On the caller's own lists only: where its engine is asked about the match, and whether it may be asked now --
+        // it was created there, and has not been asked lately. The completed list asks for results the match has none
+        // of, at most hourly; the active list whether it has ended, every five minutes.
         statusUrl: Option[String] = None,
         isResultsAskable: Boolean = false
     )

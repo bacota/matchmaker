@@ -109,7 +109,8 @@ object Services {
           notifications = notifications,
           archives = Some(archives),
           endings = endings,
-          recoverResults = engine.recoverResults
+          recoverResults = engine.recoverResults,
+          recoverEndings = engine.recoverEndings
         )
 
         lazy val engine: GameEngineService[T] =

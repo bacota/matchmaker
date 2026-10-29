@@ -44,7 +44,10 @@ class MatchService(
     endings: MatchEndings = MatchEndings.disabled,
     /* For the caller's completed list: asking the engines for the results its matches are missing, and whether any
      * arrived. See `GameEngineService.recoverResults`. */
-    recoverResults: List[(GameId, MatchId, String)] => IO[Boolean] = _ => IO.pure(false)
+    recoverResults: List[(GameId, MatchId, String)] => IO[Boolean] = _ => IO.pure(false),
+    /* For the caller's active list: asking the engines whether matches it shows as running have ended, and whether
+     * any had. See `GameEngineService.recoverEndings`. */
+    recoverEndings: List[(GameId, MatchId, String)] => IO[Boolean] = _ => IO.pure(false)
 ) {
 
     /** Matches in which it is the caller's turn. */
@@ -53,17 +56,56 @@ class MatchService(
 
     /** Matches the caller is in that are still being played, each with what every seat has left of a chess clock where
       * the match is played under one.
+      *
+      * A match that may have ended without matchmaker hearing -- see [[owedEndings]] -- is first checked with its
+      * engine, and the list read again if any had: a match the engine says is over is completed, and its tournament
+      * told, rather than left here with a Play button on it.
       */
-    def active(callerExternalId: String): IO[List[MatchSummary]] =
-        forCaller(callerExternalId) { (repo, playerId) =>
-            repo.listActiveForPlayer(playerId).flatMap(summarised(repo, _)).flatMap { summaries =>
-                // Asked for at all only when one of these matches is played under a chess clock, which
-                // most are not.
-                if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
-                    withClocks(repo, summaries)
-                else IO.pure(summaries)
+    def active(callerExternalId: String): IO[List[MatchSummary]] = {
+        // The rows as well as the summaries, for the matches among them that may have ended.
+        val read: IO[(List[MatchRepo.MatchSeatRow], List[MatchSummary])] =
+            forCaller(callerExternalId) { (repo, playerId) =>
+                for {
+                    rows <- repo.listActiveForPlayer(playerId)
+                    summaries <- summarised(repo, rows)
+                    // Asked for at all only when one of these matches is played under a chess clock, which
+                    // most are not.
+                    clocked <-
+                        if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
+                            withClocks(repo, summaries)
+                        else IO.pure(summaries)
+                } yield (rows, clocked)
             }
-        }
+        for {
+            first <- read
+            (rows, summaries) = first
+            // Asked with the session given back, since an engine may be slow; and read again only when one had ended.
+            isEnded <- owedEndings(rows).fold(IO.pure(false))(recoverEndings)
+            shown <- if (isEnded) read.map(_._2) else IO.pure(summaries)
+        } yield shown
+    }
+
+    /* The running matches that may have ended without matchmaker hearing, and whose engine may be asked: a live match,
+     * whose ending is the only thing its engine tells matchmaker; one whose turn has run out, whose clock is then
+     * matchmaker's to enforce; and one waiting on nobody, which is what a match looks like whose last move arrived and
+     * whose results did not. Most urgent first, as the list is, and a few at most; or `None` when there are none. */
+    private def owedEndings(rows: List[MatchRepo.MatchSeatRow]): Option[List[(GameId, MatchId, String)]] = {
+        val now = java.time.Instant.now()
+        val owed = rows
+            .foldRight(List.empty[List[MatchRepo.MatchSeatRow]]) {
+                case (row, (seats @ head :: _) :: rest) if head.gameId == row.gameId && head.matchId == row.matchId =>
+                    (row :: seats) :: rest
+                case (row, groups) => List(row) :: groups
+            }
+            .filter { seats =>
+                val onTheClock = seats.filter(seat => seat.isSeatPending && !seat.isSeatCompleted)
+                seats.head.isResultsAskable &&
+                (seats.head.isLive || onTheClock.isEmpty || onTheClock.exists(_.seatDue.exists(_.isBefore(now))))
+            }
+            .take(OwedResultsLimit)
+            .flatMap(seats => seats.head.statusUrl.map(url => (seats.head.gameId, seats.head.matchId, url)))
+        Option.when(owed.nonEmpty)(owed)
+    }
 
     /** One window of the matches the caller has finished: see [[CompletedQuery]] and [[CompletedPage]]. Never a
       * cancelled match.

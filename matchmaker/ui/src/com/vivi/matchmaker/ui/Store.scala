@@ -1019,7 +1019,7 @@ object Store {
 
     def refreshMatches(): Unit = {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
-        load(ApiClient.activeMatches(), Fetch.Active)(active.set)
+        load(ApiClient.activeMatches(), Fetch.Active)(setActive)
         completedFor(page.now()).foreach(showCompleted(_))
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
         load(ApiClient.myEndedTournaments(endedFrame.now()), Fetch.MyEndedTournaments)(myEndedTournaments.set)
@@ -1152,7 +1152,23 @@ object Store {
       */
     def reloadDue(): Future[Unit] = reload(ApiClient.dueMatches(), Fetch.Due)(due.set)
 
-    def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
+    def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(setActive)
+
+    /* The running matches, as the server answered. Asking for them is also how a match that ended without matchmaker
+     * hearing is found and completed (`MatchService.active`), so one that has left the list since it was last read --
+     * or is still on the "Your Turn" list -- may be over, and the lists and tournaments it would now be in are read
+     * again. Nothing reloads this list in turn, so it cannot go round. */
+    private def setActive(found: Seq[MatchSummary]): Unit = {
+        val running = found.map(m => (m.gameId, m.matchId)).toSet
+        val shown = (active.now() ++ due.now()).map(m => (m.gameId, m.matchId)).toSet
+        active.set(found)
+        if (!shown.subsetOf(running)) {
+            reloadDue()
+            reloadCompleted()
+            reloadMyTournaments()
+            reloadTournamentStandings()
+        }
+    }
 
     /** The finished matches and their results together: `showCompleted` brings a window's result tables with it. */
     def reloadCompleted(): Future[Unit] =
