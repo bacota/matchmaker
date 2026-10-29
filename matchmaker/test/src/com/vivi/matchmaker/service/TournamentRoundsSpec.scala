@@ -975,6 +975,39 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assert(recorded)
     }
 
+    // A match whose results callback was lost is still listed as running. Reading that list asks its engine, finds it
+    // over, and completes it there and then -- results, and the tournament moved on -- instead of offering a turn in it.
+    test(
+      "a match the engine says is over is completed when its player's active list is read, and its tournament ends"
+    ) {
+        val (listed, unfinished, status) = run(for {
+            f <- started(n = 2, roles = false)
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.head)
+            _ = f.w.engine.status = GameStatusResponse(
+              isCompleted = true,
+              participants = Nil,
+              results = Some(
+                EngineResults(results =
+                    m.seats.zipWithIndex.map((s, i) =>
+                        EngineResult(participantId = s.participantId.value, rank = i + 1, isWinner = i == 0)
+                    )
+                )
+              )
+            )
+            listed <- f.w.services.matches.active(f.players.head.externalId)
+            unfinished <- round(f)
+            d <- detail(f)
+        } yield (listed, unfinished, d.summary.tournament.status))
+        assertEquals(listed, Nil)
+        assertEquals(unfinished, Nil)
+        assertEquals(status, TournamentStatus.Finished)
+    }
+
     // The engine is asked for its game with no transaction open, and the owner may call the match off meanwhile. The
     // cancel finds no cancel url yet, so it is the launch, recording the one the engine answers with, that has the
     // engine told -- and nobody is mailed a start for a match they were told was cancelled.

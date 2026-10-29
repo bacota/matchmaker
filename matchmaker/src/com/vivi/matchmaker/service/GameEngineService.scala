@@ -840,23 +840,54 @@ class GameEngineService[T](
       * `owed` is each match's game, id and status url. The list passes a few at most.
       */
     def recoverResults(owed: List[(GameId, MatchId, String)]): IO[Boolean] =
+        askEngines(owed = owed, what = "results") { (repos, gameId, matchId, statusUrl) =>
+            applyEngineStatus(
+              repos = repos,
+              gameId = gameId,
+              matchId = matchId,
+              statusUrl = statusUrl,
+              engineTimeout = Some(ResultsRecoveryTimeout)
+            ) *> repos.results.existsForMatch(gameId, matchId)
+        }
+
+    /** Asks the engines whether matches the caller's active list still shows as running have ended: the ones it found
+      * that may have finished without matchmaker hearing -- a live match, whose turns and clock are the engine's; one
+      * whose turn has run out; one waiting on nobody. Answers whether any of them is now over, and so whether the list
+      * is worth reading again.
+      *
+      * Each is refreshed as [[refresh]] does it: the engine's answer applied, which completes a match whose results
+      * callback was lost -- results, rating, mail and the ending its tournament is told of with them -- and then the
+      * clock, which forfeits a turn that has run out. Recorded and limited as [[recoverResults]] is, but asked again
+      * after five minutes rather than an hour: a match listed as running is one somebody is waiting on.
+      *
+      * `owed` is each match's game, id and status url. The list passes a few at most.
+      */
+    def recoverEndings(owed: List[(GameId, MatchId, String)]): IO[Boolean] =
+        askEngines(owed = owed, what = "ending") { (repos, gameId, matchId, statusUrl) =>
+            applyEngineStatus(
+              repos = repos,
+              gameId = gameId,
+              matchId = matchId,
+              statusUrl = statusUrl,
+              engineTimeout = Some(ResultsRecoveryTimeout)
+            ).flatMap(m =>
+                enforceTimeouts(repos = repos, gameId = gameId, matchId = matchId, current = m, recheck = false)
+            ).map(m => m.isCompleted || m.isCancelled)
+        }
+
+    /* What the two recoveries above share: each match asked about at once, the time recorded first and committed on
+     * its own, so that it stands when the call fails or is cut off, and a failure logged and taken as "no". */
+    private def askEngines(owed: List[(GameId, MatchId, String)], what: String)(
+        ask: (Repos, GameId, MatchId, String) => IO[Boolean]
+    ): IO[Boolean] =
         IO.parTraverseN(math.max(owed.size, 1))(owed) { (gameId, matchId, statusUrl) =>
             sessionPool
                 .use { session =>
                     val repos = Repos(session)
-                    // Committed on its own, so that it stands when the call below fails or is cut off.
-                    repos.matches.markResultsAsked(gameId, matchId) *>
-                        applyEngineStatus(
-                          repos = repos,
-                          gameId = gameId,
-                          matchId = matchId,
-                          statusUrl = statusUrl,
-                          engineTimeout = Some(ResultsRecoveryTimeout)
-                        ) *>
-                        repos.results.existsForMatch(gameId, matchId)
+                    repos.matches.markResultsAsked(gameId, matchId) *> ask(repos, gameId, matchId, statusUrl)
                 }
                 .handleErrorWith(error =>
-                    IO(System.err.println(s"could not recover the results of match ${matchId.value}: $error")).as(false)
+                    IO(System.err.println(s"could not recover the $what of match ${matchId.value}: $error")).as(false)
                 )
         }.map(_.exists(identity))
 
@@ -893,13 +924,15 @@ class GameEngineService[T](
 
     /** Applies the game's timeout action to any participant whose turn has run out.
       *
-      * The two moments a clock is looked at are [[read]] — the call a player makes on their way to take a turn — and
-      * [[refresh]], the one they make by pressing Refresh. There is no timer and no sweeper: a deadline that nobody is
-      * waiting on has no effect anyone can see, and the first person to look is by definition someone it matters to.
+      * The moments a clock is looked at are [[read]] — the call a player makes on their way to take a turn —
+      * [[refresh]], the one they make by pressing Refresh, and [[recoverEndings]], when their list of running matches
+      * shows the turn has run out. There is no timer and no sweeper: a deadline that nobody is waiting on has no effect
+      * anyone can see, and the first person to look is by definition someone it matters to.
       *
       * The engine is asked first, because matchmaker's copy of whose turn it is arrives by callback and a callback can
       * be lost. A turn that looks overdue here may have been taken minutes ago, and ending a match on that would be
-      * ending it on a message that went astray. `recheck` is false only for [[refresh]], which has just asked.
+      * ending it on a message that went astray. `recheck` is false only for [[refresh]] and [[recoverEndings]], which
+      * have just asked.
       *
       * If the engine cannot be reached, nothing is enforced and the match is returned as it stands. A player is then
       * left able to play a turn they may have run out of, which is the lesser of the two errors: the other one ends
