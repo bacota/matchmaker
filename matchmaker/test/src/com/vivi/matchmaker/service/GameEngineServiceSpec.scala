@@ -1663,6 +1663,27 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // Both loads read the match as askable before either has stamped it; the stamp is a claim, so only one asks.
+    property("two loads of the active list at once ask the engine about a match only once") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val asked = java.util.concurrent.atomic.AtomicInteger(0)
+                val engine = StubEngine(beforeStatus = IO(asked.incrementAndGet()).void)
+                val services = TestServices.servicesWith(engine = engine)
+                val result = for {
+                    _ <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
+                    _ <- (services.matches.active(externalId), services.matches.active(otherExternalId)).parTupled
+                } yield asked.get == 1
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     property("the active list does not ask the engine about a match whose turn is somebody's and not yet due") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>

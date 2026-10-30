@@ -255,15 +255,19 @@ class MatchRepo(session: Session[IO]) {
     def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
         session.unique(completeMatch)((gameId, matchId))
 
-    private val updateResultsAsked: Command[(GameId, MatchId)] =
+    private val updateResultsAsked: Query[(GameId, MatchId, Duration), Int] =
         sql"""UPDATE match SET results_asked_at = now()
-          WHERE game_id = $gameId AND match_id = $matchId""".command
+          WHERE game_id = $gameId AND match_id = $matchId
+            AND (results_asked_at IS NULL OR results_asked_at < now() - $interval)
+          RETURNING 1""".query(int4)
 
-    /** Records that the match's engine is being asked for its results, so that the completed list does not ask again
-      * for an hour, nor the active list for five minutes.
+    /** Claims the asking of the match's engine for its results, so that the completed list does not ask again for an
+      * hour, nor the active list for five minutes: answers whether the claim was this caller's, the match not having
+      * been asked about within `window`. A claim rather than a plain stamp, so that two lists loaded at once, which
+      * both read the match as askable, do not both ask.
       */
-    def markResultsAsked(gameId: GameId, matchId: MatchId): IO[Unit] =
-        session.execute(updateResultsAsked)((gameId, matchId)).void
+    def claimResultsAsked(gameId: GameId, matchId: MatchId, window: Duration): IO[Boolean] =
+        session.option(updateResultsAsked)((gameId, matchId, window)).map(_.isDefined)
 
     private val playerId = SkunkIdCodecs.playerId
 
@@ -928,6 +932,12 @@ class MatchRepo(session: Session[IO]) {
 }
 
 object MatchRepo {
+
+    /* How long after its engine was asked for its results a match may be asked again: by the active list, for a match
+     * still running, and by the completed list, for one missing its results. The same windows as the `interval`s in
+     * `selectActiveForPlayer` and `selectOverForPlayer`, which choose what to ask about; these decide who asks. */
+    val ActiveResultsAskWindow: Duration = Duration.ofMinutes(5)
+    val CompletedResultsAskWindow: Duration = Duration.ofHours(1)
 
     /* One (match, seat) pair, which is what a list of matches comes back as.
      *

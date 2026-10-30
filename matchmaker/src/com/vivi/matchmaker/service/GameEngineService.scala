@@ -840,14 +840,15 @@ class GameEngineService[T](
       * `owed` is each match's game, id and status url. The list passes a few at most.
       */
     def recoverResults(owed: List[(GameId, MatchId, String)]): IO[Boolean] =
-        askEngines(owed = owed, what = "results") { (repos, gameId, matchId, statusUrl) =>
-            applyEngineStatus(
-              repos = repos,
-              gameId = gameId,
-              matchId = matchId,
-              statusUrl = statusUrl,
-              engineTimeout = Some(ResultsRecoveryTimeout)
-            ) *> repos.results.existsForMatch(gameId, matchId)
+        askEngines(owed = owed, what = "results", window = MatchRepo.CompletedResultsAskWindow) {
+            (repos, gameId, matchId, statusUrl) =>
+                applyEngineStatus(
+                  repos = repos,
+                  gameId = gameId,
+                  matchId = matchId,
+                  statusUrl = statusUrl,
+                  engineTimeout = Some(ResultsRecoveryTimeout)
+                ) *> repos.results.existsForMatch(gameId, matchId)
         }
 
     /** Asks the engines whether matches the caller's active list still shows as running have ended: the ones it found
@@ -863,28 +864,33 @@ class GameEngineService[T](
       * `owed` is each match's game, id and status url. The list passes a few at most.
       */
     def recoverEndings(owed: List[(GameId, MatchId, String)]): IO[Boolean] =
-        askEngines(owed = owed, what = "ending") { (repos, gameId, matchId, statusUrl) =>
-            applyEngineStatus(
-              repos = repos,
-              gameId = gameId,
-              matchId = matchId,
-              statusUrl = statusUrl,
-              engineTimeout = Some(ResultsRecoveryTimeout)
-            ).flatMap(m =>
-                enforceTimeouts(repos = repos, gameId = gameId, matchId = matchId, current = m, recheck = false)
-            ).map(m => m.isCompleted || m.isCancelled)
+        askEngines(owed = owed, what = "ending", window = MatchRepo.ActiveResultsAskWindow) {
+            (repos, gameId, matchId, statusUrl) =>
+                applyEngineStatus(
+                  repos = repos,
+                  gameId = gameId,
+                  matchId = matchId,
+                  statusUrl = statusUrl,
+                  engineTimeout = Some(ResultsRecoveryTimeout)
+                ).flatMap(m =>
+                    enforceTimeouts(repos = repos, gameId = gameId, matchId = matchId, current = m, recheck = false)
+                ).map(m => m.isCompleted || m.isCancelled)
         }
 
     /* What the two recoveries above share: each match asked about at once, the time recorded first and committed on
-     * its own, so that it stands when the call fails or is cut off, and a failure logged and taken as "no". */
-    private def askEngines(owed: List[(GameId, MatchId, String)], what: String)(
+     * its own, so that it stands when the call fails or is cut off, and a failure logged and taken as "no". The time
+     * is claimed, not just written: a match another caller claimed within `window` is left to them, so that lists
+     * loaded at once do not each ask its engine. */
+    private def askEngines(owed: List[(GameId, MatchId, String)], what: String, window: java.time.Duration)(
         ask: (Repos, GameId, MatchId, String) => IO[Boolean]
     ): IO[Boolean] =
         IO.parTraverseN(math.max(owed.size, 1))(owed) { (gameId, matchId, statusUrl) =>
             sessionPool
                 .use { session =>
                     val repos = Repos(session)
-                    repos.matches.markResultsAsked(gameId, matchId) *> ask(repos, gameId, matchId, statusUrl)
+                    repos.matches
+                        .claimResultsAsked(gameId = gameId, matchId = matchId, window = window)
+                        .ifM(ask(repos, gameId, matchId, statusUrl), IO.pure(false))
                 }
                 .handleErrorWith(error =>
                     IO(System.err.println(s"could not recover the $what of match ${matchId.value}: $error")).as(false)
