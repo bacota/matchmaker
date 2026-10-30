@@ -1595,6 +1595,10 @@ object Tournaments {
                   inputMode := "decimal",
                   minAttr := "0",
                   required := true,
+                  // Wrong, once a save has been tried, while it holds no positive number: what `durationOf` reads.
+                  aria.invalid <-- hasTriedSaving.signal.combineWithFn(limit.signal)((hasTried, typed) =>
+                      (hasTried && !typed.trim.toDoubleOption.exists(_ > 0)).toString
+                  ),
                   controlled(value <-- limit.signal, onInput.mapToValue --> limit)
                 ),
                 select(
