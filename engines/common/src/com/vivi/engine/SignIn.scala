@@ -196,9 +196,10 @@ ${authScript(Some(login))}
    * at once and must share one redemption rather than race to spend the token each. */
   let refreshing = null;
 
-  /* Which session the tab holds, moved on by `clearSession`: a refresh begun in one session stores
-   * nothing once the tab has left it, or Cognito answering after Sign out, or after a hand-off,
-   * would put the old session back. */
+  /* Which session the tab holds, moved on by `clearSession` and by a sign-in on the page's form
+   * (`succeed`): a refresh begun in one session stores nothing once the tab has left it, or
+   * Cognito answering after Sign out, after a hand-off or after signing in again would put the old
+   * session back, or end the new one. */
   let generation = 0;
 
   async function freshIdToken() {
@@ -670,6 +671,8 @@ ${authScript(Some(login))}
   }
 
   function succeed(tokens) {
+    // A new session, which a refresh still out for the one before must not overwrite; see `generation`.
+    generation++;
     storeTokens(tokens);
     resetSignIn();
     signedIn();

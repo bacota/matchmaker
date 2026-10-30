@@ -42,15 +42,23 @@ class SignInHandOffSpec extends FunSuite {
 
     /** Loads the page's sign-in script with `hash` — a JavaScript expression — as `location.hash`, and with `stored`
       * already in `sessionStorage`. The page has the `#signed-in-as` line; `isSignOutPressed` presses its button once
-      * the script has run. `then` is JavaScript run after that, and awaited, before what is left is read.
+      * the script has run. `then` is JavaScript run after that, and awaited, before what is left is read. `hasForm`
+      * loads the sign-in form's script too, with a `#signin` box to draw into, so `then` can sign in on the page.
       */
     private def load(
         hash: String,
         stored: Map[String, String] = Map.empty,
         login: Option[LoginConfig] = None,
         isSignOutPressed: Boolean = false,
-        `then`: String = ""
+        `then`: String = "",
+        hasForm: Boolean = false
     ): After = {
+        val form =
+            if (hasForm) s"""${HtmlText.escapeScript}
+${signIn.signInScript}
+function signedIn() {}"""
+            else ""
+
         val program =
             s"""const store = new Map(Object.entries(${ujson.write(
                   ujson.Obj.from(stored.view.mapValues(ujson.Str(_)))
@@ -68,10 +76,19 @@ const listeners = {};
 const elements = {
   "signed-in-as": { hidden: true },
   "signed-in-who": { textContent: "" },
-  "sign-out": { addEventListener: (type, f) => { listeners[type] = f; } }
+  "sign-out": { addEventListener: (type, f) => { listeners[type] = f; } },
+  "signin": {
+    innerHTML: "",
+    dataset: {},
+    contains: () => false,
+    querySelector: () => control()
+  }
 };
-globalThis.document = { getElementById: id => elements[id] || null };
+// The form's own inputs and buttons, when it is loaded.
+const control = () => ({ addEventListener: () => {}, focus: () => {}, value: "" });
+globalThis.document = { activeElement: null, getElementById: id => elements[id] || ($hasForm ? control() : null) };
 ${signIn.authScript(login)}
+$form
 if ($isSignOutPressed) listeners.click();
 (async () => {
   ${`then`}
@@ -246,5 +263,44 @@ if ($isSignOutPressed) listeners.click();
         assertEquals(after.storage, Map.empty[String, String])
         assertEquals(after.signedInAs, None)
         assert(after.isReloaded)
+    }
+
+    /** A refresh begun with the session held before an on-page sign-in, still out when the player signs in as Bob, and
+      * answered with `answer` — a JavaScript `fetch` response — after that.
+      */
+    private def signedInDuringRefresh(answer: String): After =
+        load(
+          "\"\"",
+          stored = Map("stratego.refreshToken" -> "r-old"),
+          login = Some(login),
+          hasForm = true,
+          `then` = s"""
+            let answer;
+            globalThis.fetch = () => new Promise(resolve => { answer = resolve; });
+            const refreshing = freshIdToken();
+            succeed({ idToken: "$bob", refreshToken: "r-bob" });
+            answer($answer);
+            await refreshing;
+          """
+        )
+
+    private val bob = idToken("email" -> "bob@example.com", "exp" -> inAnHour)
+
+    // Cognito unreachable and then back: the form was shown while a refresh of the old session was still out.
+    test("a refresh of the old session answered after signing in on the page does not overwrite the new one") {
+        val old = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
+        val after = signedInDuringRefresh(
+          s"""{ ok: true, text: async () => JSON.stringify({ AuthenticationResult: { IdToken: "$old" } }) }"""
+        )
+        assertEquals(after.storage, Map("stratego.idToken" -> bob, "stratego.refreshToken" -> "r-bob"))
+        assertEquals(after.signedInAs, Some("Signed in as bob@example.com — not you?"))
+    }
+
+    test("a refusal of the old session's refresh answered after signing in on the page does not sign the tab out") {
+        val after = signedInDuringRefresh(
+          """{ ok: false, status: 400, text: async () => JSON.stringify({ __type: "NotAuthorizedException" }) }"""
+        )
+        assertEquals(after.storage, Map("stratego.idToken" -> bob, "stratego.refreshToken" -> "r-bob"))
+        assertEquals(after.signedInAs, Some("Signed in as bob@example.com — not you?"))
     }
 }
