@@ -412,8 +412,9 @@ object Tournaments {
 
     /* Joining from a game's list. A plain game's entry is made here, and the competition's page then shown, which moves
      * focus off a row the entry may take out of the list; a character game's is made on that page, which asks which
-     * character enters. Refused, the list is read again: what it offered had stopped being true. The answer takes the
-     * player to the competition only if they are still where they pressed Join, as a save does. */
+     * character enters. Refused, the list is read again: what it offered had stopped being true. The answer is
+     * announced wherever the player is, but takes them to the competition only if they are still where they pressed
+     * Join, as a save does. */
     private def joinButton(game: Game, t: Tournament): HtmlElement = {
         val shown = () => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId))
         busyButton(label = Buttons.tournaments.join, busy = answerBusy(t))(busy =>
@@ -427,10 +428,8 @@ object Tournaments {
                 ) { _ =>
                     Store.reloadTournaments(t.gameId)
                     Store.reloadMyTournaments()
-                    if (Store.page.now() == from) {
-                        Views.announce(s"Joined ${t.name}.")
-                        shown()
-                    }
+                    Views.announce(s"Joined ${t.name}.")
+                    if (Store.page.now() == from) shown()
                 }
             }
         ).amend(aria.label := Buttons.tournaments.joinNamed(competition = t.name))
