@@ -1027,7 +1027,10 @@ class GameEngineService[T](
      *
      * Finding nobody overdue at that point is therefore an ordinary outcome, not an error: the
      * move landed first, and the match carries on. A match where every seat is overdue at once
-     * ends with no winner rather than with an arbitrary one. */
+     * ends with no winner rather than with an arbitrary one.
+     *
+     * A seat with a result already -- the last place a tournament gives a seat forfeited before its match began --
+     * keeps it, and is neither ranked nor rated again. */
     private def forfeit(repos: Repos, gameId: GameId, matchId: MatchId): IO[Match] = {
 
         repos.session.transaction
@@ -1052,8 +1055,13 @@ class GameEngineService[T](
                                       withTurn(p = p, pending = false, due = None, completed = true)
                                     )
                                 )
-                                ranks = participants
-                                    .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
+                                // Not a seat that already has a result: one a tournament forfeited before the
+                                // match began keeps the last place it was given then, and is not rated, as the
+                                // engine's results leave it.
+                                recorded <- repos.results.forMatch(gameId, matchId).map(_.map(_.participantId).toSet)
+                                playing = participants.map(_._1).filterNot(p => recorded(p.participantId))
+                                ranks = playing
+                                    .map(p => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
                                     .toMap
                                 // A forfeit is a result like any other to a rating: the player who ran out
                                 // of time lost. Rated as the engine's results are, in this transaction, and
@@ -1068,7 +1076,7 @@ class GameEngineService[T](
                                           ranks = ranks,
                                           forfeit = true
                                         )
-                                _ <- participants.traverse { (p, _, _) =>
+                                _ <- playing.traverse { p =>
                                     val lost = overdue.contains(p.participantId)
                                     repos.results.create(
                                       Result(

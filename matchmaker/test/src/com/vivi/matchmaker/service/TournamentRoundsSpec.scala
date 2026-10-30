@@ -21,6 +21,7 @@ import com.vivi.matchmaker.persistence.{
     Generators,
     MatchRepo,
     ResultRepo,
+    SkunkIdCodecs,
     TestSession,
     TournamentMatchRepo,
     TournamentRepo,
@@ -973,6 +974,67 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         } yield (recovered, recorded))
         assert(!recovered)
         assert(recorded)
+    }
+
+    // A forfeited seat's last place is recorded at launch; a clock running out later ranks the seats still playing,
+    // and leaves that one as it was, rather than failing on the result it already has.
+    test("a match with a forfeited seat is ended by a clock running out, the forfeited seat keeping its last place") {
+        val (ended, results, gone, late) = run(for {
+            f <- started(
+              n = 4,
+              design = RoundRobin.id,
+              game = Some(Generators.genRolelessGame(least = 2, most = None)),
+              poolSize = Some(4)
+            )
+            entries <- detail(f).map(_.entries)
+            goneEntrant = entries.head.entrantId
+            _ <- f.w.services.tournaments.withdraw(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              entrantId = goneEntrant,
+              callerExternalId = f.players.head.externalId
+            )
+            _ <- f.w.services.rounds.startRound(
+              gameId = f.game.gameId,
+              tournamentId = f.t.tournamentId,
+              callerExternalId = f.owner.externalId
+            )
+            m <- round(f).map(_.find(_.seats.exists(_.entrantId == goneEntrant)).get)
+            gone = m.seats.find(_.entrantId == goneEntrant).get.participantId
+            played = m.seats.filterNot(_.entrantId == goneEntrant).map(_.participantId)
+            late = played.head
+            // Ten minutes a turn, and the first seat still playing an hour into its turn.
+            _ <- TestSession.resource.use(
+              _.execute(
+                sql"UPDATE match SET time_limit = interval '10 minutes' WHERE match_id = ${SkunkIdCodecs.matchId}".command
+              )(m.matchId)
+            )
+            longAgo <- IO.realTimeInstant.map(_.minusSeconds(3600))
+            _ = f.w.engine.status = GameStatusResponse(
+              isCompleted = false,
+              participants = played.map(p =>
+                  EngineParticipantStatus(
+                    participantId = p.value,
+                    isPending = p == late,
+                    isCompleted = false,
+                    prevMoveAt = Option.when(p == late)(longAgo)
+                  )
+              )
+            )
+            ended <- f.w.services.engine.recoverEndings(
+              List((f.game.gameId, m.matchId, s"https://engine/status/${m.matchId.value}"))
+            )
+            results <- TestSession.resource.use(new ResultRepo(_).forMatch(f.game.gameId, m.matchId))
+        } yield (ended, results, gone, late))
+        assert(ended)
+        val ranks = results.map(r => r.participantId -> r.rank).toMap
+        assertEquals(ranks.get(gone), Some(4))
+        assert(!results.find(_.participantId == gone).exists(_.isForfeit), results)
+        assertEquals(ranks.get(late), Some(2))
+        assertEquals(
+          results.filterNot(r => r.participantId == gone || r.participantId == late).map(_.rank).toSet,
+          Set(1)
+        )
     }
 
     // A match whose results callback was lost is still listed as running. Reading that list asks its engine, finds it
