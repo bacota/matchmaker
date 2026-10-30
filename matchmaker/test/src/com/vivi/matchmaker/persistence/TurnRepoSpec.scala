@@ -103,7 +103,48 @@ class TurnRepoSpec extends PropertySuite {
         }
     }
 
-    property("timeUsed adds up what a seat has spent, and latestTakenAt is its last move") {
+    // A status call reports the whole history again, written in one statement: the turns already recorded are left
+    // as they are, a start reported later than the one recorded replaces it, and a turn given twice is written once.
+    property("createAll records a history over the turns already there") {
+        forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
+            seated(mid, player)
+                .flatMap { case (session, gameId, matchId, participantId) =>
+                    val repo = new TurnRepo(session)
+                    val start = Instant.parse("2026-01-01T00:00:00Z")
+                    def turn(taken: Long, started: Long) =
+                        Turn(
+                          gameId = gameId,
+                          matchId = matchId,
+                          participantId = participantId,
+                          takenAt = start.plusSeconds(taken),
+                          startedAt = start.plusSeconds(started)
+                        )
+                    for {
+                        _ <- repo.create(turn(taken = 60, started = 0))
+                        _ <- repo.create(turn(taken = 120, started = 60))
+                        _ <- repo.createAll(
+                          gameId = gameId,
+                          matchId = matchId,
+                          turns = List(
+                            turn(taken = 60, started = 0),
+                            turn(taken = 120, started = 90),
+                            turn(taken = 180, started = 120),
+                            turn(taken = 180, started = 150)
+                          )
+                        )
+                        _ <- repo.createAll(gameId = gameId, matchId = matchId, turns = Nil)
+                        found <- repo.listForMatch(gameId, matchId)
+                    } yield found == List(
+                      turn(taken = 60, started = 0),
+                      turn(taken = 120, started = 90),
+                      turn(taken = 180, started = 150)
+                    )
+                }
+                .unsafeRunSync()
+        }
+    }
+
+    property("timeUsed adds up what a seat has spent") {
         forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
             seated(mid, player)
                 .flatMap { case (session, gameId, matchId, participantId) =>
@@ -111,7 +152,6 @@ class TurnRepoSpec extends PropertySuite {
                     val start = Instant.parse("2026-01-01T00:00:00Z")
                     val last = start.plusSeconds(200)
                     for {
-                        empty <- repo.latestTakenAt(gameId, matchId)
                         // 30 seconds, then 45.
                         _ <- repo.create(
                           Turn(
@@ -132,10 +172,7 @@ class TurnRepoSpec extends PropertySuite {
                           )
                         )
                         used <- repo.timeUsed(gameId, matchId)
-                        latest <- repo.latestTakenAt(gameId, matchId)
-                    } yield empty.isEmpty &&
-                        used.get(participantId).contains(Duration.ofSeconds(75)) &&
-                        latest.contains(last)
+                    } yield used.get(participantId).contains(Duration.ofSeconds(75))
                 }
                 .unsafeRunSync()
         }

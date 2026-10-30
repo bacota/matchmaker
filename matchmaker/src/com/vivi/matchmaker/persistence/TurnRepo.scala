@@ -4,6 +4,7 @@ import cats.effect.IO
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
+import skunk.data.Arr
 import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantId, Turn}
@@ -35,19 +36,36 @@ class TurnRepo(session: Session[IO]) {
             .execute(insertTurn)((turn.gameId, turn.matchId, turn.participantId, turn.takenAt, turn.startedAt))
             .void
 
-    private val selectLatest: Query[(GameId, MatchId), Instant] =
-        sql"""SELECT taken_at FROM turn WHERE game_id = $gameId AND match_id = $matchId
-          ORDER BY taken_at DESC LIMIT 1"""
-            .query(instant)
+    // As `insertTurn`, for a whole history in one statement rather than a round trip a turn.
+    private val insertTurns: Command[(GameId, MatchId, Arr[Long], Arr[Instant], Arr[Instant])] =
+        sql"""INSERT INTO turn AS t (game_id, match_id, participant_id, taken_at, started_at)
+          SELECT $gameId, $matchId, u.participant_id, u.taken_at, u.started_at
+          FROM unnest(${_int8}, ${SkunkCodecs.instantArray}, ${SkunkCodecs.instantArray})
+              AS u (participant_id, taken_at, started_at)
+          ON CONFLICT (game_id, participant_id, taken_at)
+          DO UPDATE SET started_at = EXCLUDED.started_at
+          WHERE EXCLUDED.started_at > t.started_at""".command
 
-    /** When the most recent turn matchmaker knows about in this match was taken.
+    /** Records several turns of a match at once, each as [[create]] records one.
       *
-      * This is what the engine is asked to report past, so that a status call carries back the turns matchmaker missed
-      * rather than every turn of the match. `None` means none are recorded — a match that has not been moved in, or one
-      * whose first callback is the one that was lost.
+      * A turn given twice is written once, with the later of its starts: one statement cannot touch a row twice.
       */
-    def latestTakenAt(gameId: GameId, matchId: MatchId): IO[Option[Instant]] =
-        session.option(selectLatest)((gameId, matchId))
+    def createAll(gameId: GameId, matchId: MatchId, turns: List[Turn]): IO[Unit] = {
+        val distinct = turns.groupBy(t => (t.participantId, t.takenAt)).values.map(_.maxBy(_.startedAt)).toList
+        IO.whenA(distinct.nonEmpty)(
+          session
+              .execute(insertTurns)(
+                (
+                  gameId,
+                  matchId,
+                  Arr(distinct.map(_.participantId.value)*),
+                  Arr(distinct.map(_.takenAt)*),
+                  Arr(distinct.map(_.startedAt)*)
+                )
+              )
+              .void
+        )
+    }
 
     private val selectForMatch: Query[(GameId, MatchId), (ParticipantId, Instant, Instant)] =
         sql"""SELECT participant_id, taken_at, started_at FROM turn

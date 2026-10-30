@@ -187,12 +187,10 @@ class GameEngineService[T](
         statusUrl: String,
         engineTimeout: Option[FiniteDuration] = None
     ): IO[Match] = {
-        // Asked outside the transaction, like the engine call it is an argument to: it is the point
-        // the engine reports turns from, and a turn arriving between this read and the write below
-        // is simply reported again by the next status call.
         // The key on the session already held, rather than one borrowed for the purpose.
-        (repos.turns.latestTakenAt(gameId, matchId), repos.gameApiKeys.forGame(gameId)).tupled
-            .flatMap { (_, apiKey) =>
+        repos.gameApiKeys
+            .forGame(gameId)
+            .flatMap { apiKey =>
                 val asked = engine.status(statusUrl = statusUrl, apiKey = apiKey, since = None)
                 engineTimeout.fold(asked)(asked.timeout).flatMap { status =>
                     // The results first, where the engine sent them: a match whose results callback was lost is
@@ -363,29 +361,25 @@ class GameEngineService[T](
         turns: List[EngineTurn],
         since: Option[Instant]
     ): IO[Unit] = {
-        turns
-            .sortBy(_.takenAt)
-            // A match reporting turns has begun, so it has a start; the first reported turn stands in for
-            // one only so that this cannot fail on a row that somehow lacks it. With no turns it is unused.
-            .foldLeft(
-              IO.pure(since.orElse(m.start).orElse(turns.map(_.takenAt).minOption).getOrElse(Instant.EPOCH))
-            ) { (previous, reported) =>
-                previous.flatMap { prev =>
-                    val startedAt = reported.startedAt.getOrElse(prev)
-                    repos.turns
-                        .create(
-                          Turn(
-                            gameId = m.gameId,
-                            matchId = m.matchId,
-                            participantId = ParticipantId(reported.participantId),
-                            takenAt = reported.takenAt,
-                            startedAt = startedAt
-                          )
-                        )
-                        .as(reported.takenAt)
-                }
-            }
-            .void
+        val sorted = turns.sortBy(_.takenAt)
+        // A match reporting turns has begun, so it has a start; the first reported turn stands in for
+        // one only so that this cannot fail on a row that somehow lacks it. With no turns it is unused.
+        val first = since.orElse(m.start).orElse(sorted.headOption.map(_.takenAt)).getOrElse(Instant.EPOCH)
+        val previous = first :: sorted.map(_.takenAt)
+        // One statement for the lot: a status call reports the whole history, and this runs under the match's lock.
+        repos.turns.createAll(
+          gameId = m.gameId,
+          matchId = m.matchId,
+          turns = sorted.zip(previous).map { (reported, prev) =>
+              Turn(
+                gameId = m.gameId,
+                matchId = m.matchId,
+                participantId = ParticipantId(reported.participantId),
+                takenAt = reported.takenAt,
+                startedAt = reported.startedAt.getOrElse(prev)
+              )
+          }
+        )
     }
 
     /* What each seat has spent on the turns it has finished — needed only by a total limit, and

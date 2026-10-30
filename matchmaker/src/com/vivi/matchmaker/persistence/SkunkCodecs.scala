@@ -22,6 +22,16 @@ object SkunkCodecs {
     val instant: Codec[Instant] =
         timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))
 
+    /** A `timestamptz[]`, for unnesting beside other arrays: skunk has none of its own. Each element is written and
+      * read as [[instant]] writes and reads a single value.
+      */
+    val instantArray: Codec[Arr[Instant]] =
+        Codec.array[Instant](
+          i => instant.encode(i).head.fold("")(_.value),
+          s => instant.decode(0, List(Some(s))).left.map(_.message),
+          Type._timestamptz
+        )
+
     /** A `boolean[]`, for unnesting beside other arrays: skunk has none of its own. */
     val boolArray: Codec[Arr[Boolean]] =
         Codec.array[Boolean](
