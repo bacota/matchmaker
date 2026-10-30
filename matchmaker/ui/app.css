@@ -891,6 +891,13 @@ label.field > .hint {
   flex: none;
 }
 
+/* A box beside its ⓘ is a target of its own a few pixels from another, so it is made big enough to
+   be one (24px, WCAG's target size) rather than the browser's 13px. */
+.card .with-tip > label > input[type="checkbox"] {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
 /* An offer to carry what is being saved down a level: the box, its caption beside it, and the line
    saying what it will actually touch underneath the caption.
 

@@ -329,7 +329,7 @@ try {
     await call("POST", `${MM}/tournament-models/sync`, {}, alice);
     await call("PUT", `${MM}/games/${gameId}/tournament-models/RR`, {}, alice);
 
-    // A one-match competition of the round robin format, as the New Competition dialog makes one: created with its
+    // A one-match competition of the round robin format, as the Issue Challenge or Create Tournament dialog makes one: created with its
     // owner entered, and its invitations sent.
     async function challenge({ poolSize, isAutoStarted = false, isOpen, isPublic = false, invitations = [] }, sub = alice) {
         const t = (await call("POST", `${MM}/games/${gameId}/tournaments`, {
@@ -352,6 +352,14 @@ try {
         await eventually(async () => {
             const active = await call("GET", `${MM}/me/matches`, undefined, alice);
             return active.some(m => m.matchId === matchId) ? matchId : null;
+        }, "the match in the player's list");
+        // Listed is not yet created: the engine's create arrives a moment after matchmaker lists the match, and a move
+        // sent before it is answered "there is no such match". The engine here runs with no matchmaker key, so its
+        // status route is open.
+        await eventually(async () => {
+            const r = await fetch(`${ENGINE}/matches/${matchId}/status`);
+            await r.text();
+            return r.ok ? matchId : null;
         }, "the engine's game");
         return matchId;
     }
@@ -415,7 +423,7 @@ try {
         }],
         ["new competition dialog", alice, async (page, settle) => {
             await game(page, settle);
-            await page.getByRole("button", { name: "New Competition" }).click();
+            await page.getByRole("button", { name: "Issue Challenge or Create Tournament" }).click();
             await page.getByRole("dialog").waitFor();
         }],
         ["add a game form", alice, menu("Add a Game")],
