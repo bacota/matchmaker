@@ -391,7 +391,7 @@ object MatchTables {
                   )
                       Store.runSignedIn(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy) { _ =>
                           Views.announce("Match cancelled.")
-                          Store.refreshMatches()
+                          Store.refreshMatchesAfterEnding(gameId = summary.gameId, matchId = summary.matchId)
                       }
               }
           else emptyNode

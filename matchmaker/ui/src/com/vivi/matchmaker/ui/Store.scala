@@ -1017,6 +1017,17 @@ object Store {
             }
     }
 
+    /** Reloads every list after a match has ended by the caller's own hand: taken off the running lists first, so that
+      * its absence from the fresh active list is not mistaken for an ending the server has just found, which would ask
+      * for the other lists a second time. See `setActive`.
+      */
+    def refreshMatchesAfterEnding(gameId: GameId, matchId: MatchId): Unit = {
+        val isEnded = (m: MatchSummary) => m.gameId == gameId && m.matchId == matchId
+        active.update(_.filterNot(isEnded))
+        due.update(_.filterNot(isEnded))
+        refreshMatches()
+    }
+
     def refreshMatches(): Unit = {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
         load(ApiClient.activeMatches(), Fetch.Active)(setActive)
@@ -1157,7 +1168,9 @@ object Store {
     /* The running matches, as the server answered. Asking for them is also how a match that ended without matchmaker
      * hearing is found and completed (`MatchService.active`), so one that has left the list since it was last read --
      * or is still on the "Your Turn" list -- may be over, and the lists and tournaments it would now be in are read
-     * again. Nothing reloads this list in turn, so it cannot go round. */
+     * again. Nothing reloads this list in turn, so it cannot go round. A match the caller has just ended is taken off
+     * these lists before they are asked for (`refreshMatchesAfterEnding`), since the round that follows reads the
+     * others already. */
     private def setActive(found: Seq[MatchSummary]): Unit = {
         val running = found.map(m => (m.gameId, m.matchId)).toSet
         val shown = (active.now() ++ due.now()).map(m => (m.gameId, m.matchId)).toSet
