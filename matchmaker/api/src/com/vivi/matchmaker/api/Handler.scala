@@ -66,7 +66,11 @@ object Handler {
       * the container, and there is no shutdown hook that could run it at a useful moment anyway.
       */
     lazy val services: Services[String] =
-        Services.resource[String](config = dbConfig(), poolSize = poolSize).allocated.unsafeRunSync()._1
+        Services
+            .resource[String](config = dbConfig(), poolSize = poolSize, poolMax = poolMax)
+            .allocated
+            .unsafeRunSync()
+            ._1
 
     /** How the caller is identified, chosen by `AUTH_MODE`.
       *
@@ -84,6 +88,9 @@ object Handler {
 
     private def poolSize: Int =
         sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
+
+    private def poolMax: Int =
+        sys.env.get("DB_POOL_MAX").flatMap(_.toIntOption).getOrElse(Services.defaultPoolMax)
 
     /** The five database variables, read by `DbConfig` because the bounce consumer is built from this same jar and
       * reads them too.

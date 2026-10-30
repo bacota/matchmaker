@@ -35,6 +35,7 @@ object LocalServer {
     def main(args: Array[String]): Unit = {
         val port = env("PORT").flatMap(_.toIntOption).getOrElse(8080)
         val poolSize = env("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
+        val poolMax = env("DB_POOL_MAX").flatMap(_.toIntOption).getOrElse(Services.defaultPoolMax)
         val config = dbConfig()
 
         // Unlike the Lambda, this process has a shutdown, so the pool's finalizer is kept and run.
@@ -61,6 +62,7 @@ object LocalServer {
                 .resource[String](
                   config = config,
                   poolSize = poolSize,
+                  poolMax = poolMax,
                   notifier = Notifier.logging,
                   archiveStore = archiveStore
                 )

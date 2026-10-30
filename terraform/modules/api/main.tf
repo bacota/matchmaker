@@ -161,6 +161,7 @@ resource "aws_lambda_function" "api" {
       DB_NAME      = var.db_name
       DB_USER      = var.db_user
       DB_POOL_SIZE = tostring(var.db_pool_size)
+      DB_POOL_MAX  = tostring(var.db_pool_max)
 
       # In the function's configuration in plaintext, readable by anyone with lambda:GetFunction,
       # and in the terraform state. That is the trade this variable makes; see its description.

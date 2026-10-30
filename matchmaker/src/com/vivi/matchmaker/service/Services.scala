@@ -37,15 +37,26 @@ object Services {
       */
     val defaultPoolSize: Int = 4
 
+    /** Default most sessions lent at once: the pool's, and an overflow opened past it and closed as each is released
+      * (see `DbSession.pooled`). A safety net for work that holds a session while it borrows another, not capacity.
+      */
+    val defaultPoolMax: Int = 20
+
     /** Opens a connection pool and nothing else, for a process that wants one but not the services.
       *
       * The one caller is the bounce consumer, which is a separate function built from the same jar: it records what SES
       * reported and touches one table, and building the whole graph would have it construct an engine client and a
       * queue notifier it will never call. That it needs its own pool rather than sharing one is not a loophole in
       * `DbSession` being private — it is a different process, with its own container and its own connections.
+      *
+      * It has no overflow unless `poolMax` asks for one: its connections are budgeted against the API's.
       */
-    def poolResource(config: DbConfig, poolSize: Int = defaultPoolSize): Resource[IO, SessionPool] =
-        DbSession.pooled(config, poolSize)
+    def poolResource(
+        config: DbConfig,
+        poolSize: Int = defaultPoolSize,
+        poolMax: Option[Int] = None
+    ): Resource[IO, SessionPool] =
+        DbSession.pooled(config = config, size = poolSize, max = poolMax.getOrElse(poolSize))
 
     /** Opens the connection pool and builds the services on top of it. Acquire once at startup: releasing this closes
       * every pooled connection.
@@ -53,6 +64,7 @@ object Services {
     def resource[T](
         config: DbConfig,
         poolSize: Int = defaultPoolSize,
+        poolMax: Int = defaultPoolMax,
         engineClient: GameEngineClient = new HttpGameEngineClient(),
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
@@ -62,7 +74,7 @@ object Services {
         codec: TextCodec[T]
     ): Resource[IO, Services[T]] =
         DbSession
-            .pooled(config, poolSize)
+            .pooled(config = config, size = poolSize, max = poolMax)
             .map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail, archiveStore))
 
     /** Builds the services over an already-open pool.

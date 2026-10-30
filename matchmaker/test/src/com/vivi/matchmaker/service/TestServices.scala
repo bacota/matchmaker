@@ -39,14 +39,15 @@ object TestServices {
       */
     lazy val pool: SessionPool = {
         TestMigration.ensure()
-        DbSession.pooled(config, poolSize).allocated.unsafeRunSync()._1
+        DbSession.pooled(config = config, size = poolSize, max = poolSize).allocated.unsafeRunSync()._1
     }
 
-    /** A pool of its own, of `size` connections: for a test of what a small pool does. Never released, like [[pool]].
+    /** A pool of its own, of `size` connections lending up to `max`: for a test of what a small pool does. Never
+      * released, like [[pool]].
       */
-    def poolOf(size: Int): SessionPool = {
+    def poolOf(size: Int, max: Option[Int] = None): SessionPool = {
         TestMigration.ensure()
-        DbSession.pooled(config, size).allocated.unsafeRunSync()._1
+        DbSession.pooled(config = config, size = size, max = max.getOrElse(size)).allocated.unsafeRunSync()._1
     }
 
     lazy val services: Services[String] =

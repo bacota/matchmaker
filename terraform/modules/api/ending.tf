@@ -134,6 +134,7 @@ resource "aws_lambda_function" "ending" {
       DB_PASSWORD = var.db_password
       # One match at a time, and a little concurrency within one.
       DB_POOL_SIZE = "2"
+      DB_POOL_MAX  = tostring(var.db_pool_max)
 
       ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
       FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket

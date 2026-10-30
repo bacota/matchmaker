@@ -79,9 +79,23 @@ variable "lambda_snap_start" {
 }
 
 variable "db_pool_size" {
-  description = "Maximum pooled database connections per Lambda container."
+  description = "Database connections each api Lambda container keeps open in its pool."
   type        = number
   default     = 4
+}
+
+variable "db_pool_max" {
+  description = <<-EOT
+    The most database connections an api or ending Lambda container may hold at once. Past its
+    pool's size, a container opens a connection for one borrow and closes it as that is released,
+    so a request that holds one connection while it asks for another does not wait on itself. A
+    safety net, not capacity: each of those pays a full connect.
+
+    The worst case against the database is this times the containers running at once, which is
+    the number to check against the instance's max_connections.
+  EOT
+  type        = number
+  default     = 20
 }
 
 variable "hosted_login_domain_prefix" {
