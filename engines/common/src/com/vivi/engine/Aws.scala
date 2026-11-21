@@ -2,11 +2,12 @@ package com.vivi.engine
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.nio.charset.StandardCharsets.UTF_8
 import java.time.{Clock, Duration}
 import scala.jdk.CollectionConverters._
 import software.amazon.awssdk.http.{ContentStreamProvider, SdkHttpMethod, SdkHttpRequest}
 import software.amazon.awssdk.http.auth.aws.signer.{AwsV4FamilyHttpSigner, AwsV4HttpSigner}
-import software.amazon.awssdk.http.auth.spi.signer.HttpSigner
+import software.amazon.awssdk.http.auth.spi.signer.{HttpSigner, SignRequest}
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
 import software.amazon.awssdk.identity.spi.{AwsCredentialsIdentity, IdentityProvider}
 
@@ -36,12 +37,15 @@ object AwsCredentials {
 
 class AwsError(message: String, cause: Throwable = null) extends RuntimeException(message, cause)
 
-/** Signed HTTP, for the two AWS things this engine does itself: storing matches in DynamoDB, and calling matchmaker's
-  * `AWS_IAM`-authorized callback routes.
+/** Signed HTTP, for the AWS things an engine does itself: storing matches in DynamoDB, pushing to Play Live, and
+  * keeping files in S3.
   *
   * The SDK's signer, but not an SDK service client — the same trade matchmaker's own `SigV4` makes. A DynamoDB client
-  * would bring Netty and Apache HttpClient for what is here two JSON calls with no paging, no waiters and no retries
+  * would bring Netty and Apache HttpClient for what is here a few JSON calls with no paging, no waiters and no retries
   * beyond the one below.
+  *
+  * S3 is signed as S3 wants it, which differs from every other service in two ways: the path is encoded once, not
+  * twice, and the payload's SHA-256 is sent as `x-amz-content-sha256`. A request whose `service` is `s3` gets both.
   */
 class SignedHttp(
     credentials: Option[IdentityProvider[? <: AwsCredentialsIdentity]],
@@ -84,8 +88,26 @@ class SignedHttp(
         service: String,
         headers: Map[String, String]
     ): (Int, String) = {
+        val answer = exchangeBytes(
+          method = method,
+          url = url,
+          body = body.map(_.getBytes(UTF_8)),
+          service = service,
+          headers = headers
+        )
+        (answer.status, String(answer.body, UTF_8))
+    }
+
+    /** [[exchange]] with a body of bytes each way, and the response's headers: for S3, whose objects are not text. */
+    def exchangeBytes(
+        method: String,
+        url: String,
+        body: Option[Array[Byte]],
+        service: String,
+        headers: Map[String, String]
+    ): HttpAnswer = {
         val uri = URI.create(url)
-        val payload = body.getOrElse("")
+        val payload = body.getOrElse(Array.emptyByteArray)
         val signed = credentials match {
             case Some(provider) =>
                 // `join` on a provider that answers from its cache almost always; a refresh is a
@@ -103,28 +125,53 @@ class SignedHttp(
 
         val builder = HttpRequest.newBuilder(uri).timeout(timeout)
         (headers ++ signed)
-            // Host is the JDK client's to set, and its value is the one already signed.
-            .filterNot((name, _) => name.equalsIgnoreCase("host"))
+            // Host is the JDK client's to set, and its value is the one already signed; so is the length.
+            .filterNot((name, _) => name.equalsIgnoreCase("host") || name.equalsIgnoreCase("content-length"))
             .foreach((name, value) => builder.header(name, value))
 
         val request = body match {
-            case Some(payload) => builder.method(method, HttpRequest.BodyPublishers.ofString(payload)).build()
-            case None          => builder.method(method, HttpRequest.BodyPublishers.noBody()).build()
+            case Some(bytes) => builder.method(method, HttpRequest.BodyPublishers.ofByteArray(bytes)).build()
+            case None        => builder.method(method, HttpRequest.BodyPublishers.noBody()).build()
         }
 
         val response =
-            try httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            try httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray())
             catch { case e: Exception => throw AwsError(s"$method $url failed: ${e.getMessage}", e) }
 
-        (response.statusCode, response.body)
+        HttpAnswer(
+          status = response.statusCode,
+          body = response.body,
+          headers = response.headers.map.asScala.map((name, values) => name.toLowerCase -> values.asScala.toSeq).toMap
+        )
     }
 
-    /** The headers that sign this request: what [[exchange]] adds to it. */
+    /** `url` signed in its query string, good for `expiresIn`, for a browser to fetch without credentials of its own:
+      * an S3 object's presigned GET. With no credentials, `url` as it is, which is what the local case can use.
+      */
+    def presign(method: String, url: String, service: String, expiresIn: Duration): String =
+        credentials match {
+            case None => url
+            case Some(provider) =>
+                val request =
+                    SdkHttpRequest.builder().uri(URI.create(url)).method(SdkHttpMethod.fromValue(method.toUpperCase))
+                val result = signer.sign { r =>
+                    configure(r.identity(provider.resolveIdentity().join()).request(request.build()), service)
+                        .putProperty(
+                          AwsV4FamilyHttpSigner.AUTH_LOCATION,
+                          AwsV4FamilyHttpSigner.AuthLocation.QUERY_STRING
+                        )
+                        .putProperty(AwsV4FamilyHttpSigner.EXPIRATION_DURATION, expiresIn)
+                        .putProperty(AwsV4FamilyHttpSigner.PAYLOAD_SIGNING_ENABLED, java.lang.Boolean.FALSE)
+                }
+                result.request.getUri.toString
+        }
+
+    /** The headers that sign this request: what [[exchangeBytes]] adds to it. */
     private[engine] def sign(
         method: String,
         uri: URI,
         headers: Map[String, String],
-        body: String,
+        body: Array[Byte],
         service: String,
         identity: AwsCredentialsIdentity
     ): Map[String, String] = {
@@ -136,21 +183,37 @@ class SignedHttp(
             .build()
 
         val result = signer.sign { r =>
-            r.identity(identity)
-                .request(request)
-                .payload(ContentStreamProvider.fromUtf8String(body))
-                .putProperty(AwsV4FamilyHttpSigner.SERVICE_SIGNING_NAME, service)
-                .putProperty(AwsV4HttpSigner.REGION_NAME, region)
-                .putProperty(HttpSigner.SIGNING_CLOCK, clock)
-            // The signer's defaults otherwise, which encode the path a second time: what every AWS
-            // service but S3 expects, and what its own clients do. Turning that off was a no-op for
-            // DynamoDB's "/" and matchmaker's callback paths, which have nothing to encode, and broke
-            // every Play Live push — a connection id ends in "=", sent as "%3D", and API Gateway's
-            // @connections answered each one with a signature mismatch.
+            configure(r.identity(identity).request(request).payload(ContentStreamProvider.fromByteArray(body)), service)
         }
 
         result.request.headers.asScala.view.mapValues(_.asScala.mkString(",")).toMap
     }
+
+    private def configure(
+        request: SignRequest.Builder[AwsCredentialsIdentity],
+        service: String
+    ): SignRequest.Builder[AwsCredentialsIdentity] = {
+        val configured = request
+            .putProperty(AwsV4FamilyHttpSigner.SERVICE_SIGNING_NAME, service)
+            .putProperty(AwsV4HttpSigner.REGION_NAME, region)
+            .putProperty(HttpSigner.SIGNING_CLOCK, clock)
+        // The signer's defaults otherwise, which encode the path a second time: what every AWS
+        // service but S3 expects, and what its own clients do. Turning that off was a no-op for
+        // DynamoDB's "/" and matchmaker's callback paths, which have nothing to encode, and broke
+        // every Play Live push — a connection id ends in "=", sent as "%3D", and API Gateway's
+        // @connections answered each one with a signature mismatch. S3 is the exception: its keys
+        // are signed as they are sent, encoded once, and its path is never normalized.
+        if (service == "s3")
+            configured
+                .putProperty(AwsV4FamilyHttpSigner.DOUBLE_URL_ENCODE, java.lang.Boolean.FALSE)
+                .putProperty(AwsV4FamilyHttpSigner.NORMALIZE_PATH, java.lang.Boolean.FALSE)
+        else configured
+    }
+}
+
+/** A response of [[SignedHttp.exchangeBytes]]: its header names lowercased. */
+case class HttpAnswer(status: Int, body: Array[Byte], headers: Map[String, Seq[String]]) {
+    def text: String = String(body, UTF_8)
 }
 
 /** DynamoDB's JSON API, one signed call at a time — for the match store and Play Live's connections, which between them

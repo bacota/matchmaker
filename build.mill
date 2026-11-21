@@ -1,6 +1,7 @@
 package build
 
 import mill._, scalalib._, scalajslib._
+import mill.scalalib.publish._
 
 /** Sources compiled for both the JVM API and the Scala.js UI.
   *
@@ -574,7 +575,23 @@ object engines extends Module {
     * Like the engines, it does not depend on `matchmaker` — the wire types are restated here, once,
     * rather than shared — and its `ProtocolSpec` is where the two statements are compared.
     */
-  object common extends EngineModule {
+  object common extends EngineModule with PublishModule {
+
+    /** Published, for engines that live in repositories of their own, such as vascala's server: installed in the local
+      * Ivy repository with `mill -j 4 --ticker false engines.common.publishLocal`, and depended on as
+      * `mvn"com.vivi::engines-common:<publishVersion>"`. The generated text objects are compiled in, so it needs nothing
+      * from this repository at run time.
+      */
+    def publishVersion = "0.1.0"
+
+    def pomSettings = PomSettings(
+      description = "What every vivi game engine shares: the Lambda event, signed HTTP, DynamoDB, S3, sign-in",
+      organization = "com.vivi",
+      url = "https://github.com/bacota/matchmaker",
+      licenses = Seq(),
+      versionControl = VersionControl(),
+      developers = Seq()
+    )
 
     /** The text of every error and warning the engines give alike: matchmaker's file is not theirs to depend on, any
       * more than its code is. A game's own are in its own `errors.properties`; see [[GameModule]].
