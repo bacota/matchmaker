@@ -81,6 +81,15 @@ class SignedHttpSpec extends FunSuite {
         assertEquals(query("X-Amz-Signature"), "30e1936db50b888c2be088e8c21469b01527965a3bfcc80336bab726637aef61")
     }
 
+    test("an S3 bucket with a dot in its name is addressed path style, which S3's certificate covers") {
+        val s3 = S3(http, "us-east-1")
+        assertEquals(s3.url("games-bucket", "a b"), "https://games-bucket.s3.us-east-1.amazonaws.com/a%20b")
+        assertEquals(
+          s3.url("site.example.com", "modules/index.json"),
+          "https://s3.us-east-1.amazonaws.com/site.example.com/modules/index.json"
+        )
+    }
+
     test("an S3 key keeps its slashes and unreserved characters and encodes every other byte") {
         assertEquals(S3.encodeKey("modules/ab~c_d-e.f/x y+z=é"), "modules/ab~c_d-e.f/x%20y%2Bz%3D%C3%A9")
     }

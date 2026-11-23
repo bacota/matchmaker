@@ -7,11 +7,16 @@ import java.time.Duration
   * game's files need, without the SDK's client.
   *
   * Objects are addressed virtual-hosted style, `https://<bucket>.s3.<region>.amazonaws.com/<key>`, the key encoded once
-  * as S3 signs it: every byte but the unreserved characters and `/`.
+  * as S3 signs it: every byte but the unreserved characters and `/`. A bucket whose name has a dot, such as one named
+  * after the site it serves, is addressed path style, `https://s3.<region>.amazonaws.com/<bucket>/<key>`, as the SDKs
+  * do: S3's certificate is for `*.s3.<region>.amazonaws.com`, and a wildcard matches one label, so TLS refuses a host
+  * with a dotted bucket name in it.
   */
 class S3(http: SignedHttp, region: String) {
 
-    def url(bucket: String, key: String): String = s"https://$bucket.s3.$region.amazonaws.com/${S3.encodeKey(key)}"
+    def url(bucket: String, key: String): String =
+        if (bucket.contains('.')) s"https://s3.$region.amazonaws.com/$bucket/${S3.encodeKey(key)}"
+        else s"https://$bucket.s3.$region.amazonaws.com/${S3.encodeKey(key)}"
 
     def put(bucket: String, key: String, bytes: Array[Byte], contentType: String): Unit = {
         val answer = http.exchangeBytes(
