@@ -19,8 +19,10 @@ security_group_ids = ["sg-ee324e96"]
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
 // anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash
 // included, and must equal the URL the browser reports for the page.
-callback_urls = ["http://localhost:5173/", "http://localhost:8080/"]
-logout_urls   = ["http://localhost:5173/", "http://localhost:8080/"]
+// vascala's page (github.com/bacota/vascala) signs its online players in against this pool too:
+// locally on :8080, like this UI, and deployed at vascala-dev.vivi.com.
+callback_urls = ["http://localhost:5173/", "http://localhost:8080/", "https://vascala-dev.vivi.com/"]
+logout_urls   = ["http://localhost:5173/", "http://localhost:8080/", "https://vascala-dev.vivi.com/"]
 
 // Origins only: no path, no trailing slash.
 cors_allowed_origins = ["http://localhost:5173", "http://localhost:8080"]
