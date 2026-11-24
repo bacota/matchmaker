@@ -202,9 +202,16 @@ class PlayLive(storagePrefix: String) {
         lastPing = Date.now();
         try { socket.send(JSON.stringify({ action: "ping" })); } catch (e) {}
       }
+      // Not while the tab is hidden: a forgotten tab on a match that lasts days would otherwise
+      // poll it all that time. A push still refreshes a hidden page, and the page catches up the
+      // moment it is shown again.
+      if (document.hidden) return;
       // Every tick without a connection, as the page always polled; once a minute with one.
       if (Date.now() - lastFetch >= (open ? 60000 : 2000) - 100) fetchNow();
     }, 2000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && active()) fetchNow();
+    });
   }
 """
 }
