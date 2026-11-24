@@ -11,6 +11,18 @@ import java.time.Duration
   * after the site it serves, is addressed path style, `https://s3.<region>.amazonaws.com/<bucket>/<key>`, as the SDKs
   * do: S3's certificate is for `*.s3.<region>.amazonaws.com`, and a wildcard matches one label, so TLS refuses a host
   * with a dotted bucket name in it.
+  *
+  * For a caller, since nothing here guards against either:
+  *
+  *   - **The bucket and key are used as given.** A key built from anything a player sends must be checked to stay
+  *     inside that player's own prefix before it gets here, and a player must never choose the bucket. Neither the
+  *     signer nor the HTTP client normalizes a `../` in a key, so it is sent and stored literally, and the raw key is
+  *     what to check. A `presignedGet` url carries the Lambda role's session token, as any url presigned with temporary
+  *     credentials does, and goes only to a player who may read that object.
+  *   - **`put` and `copy` overwrite unconditionally**, with no `If-None-Match` or `If-Match`. That is safe for a key
+  *     only one writer uses, or one named after its content. A read-modify-write of one object, by two invocations at
+  *     once, loses one of the writes; it needs a conditional write and a retry, as `DynamoDbMatchStore.save` does with
+  *     its `version`.
   */
 class S3(http: SignedHttp, region: String) {
 
