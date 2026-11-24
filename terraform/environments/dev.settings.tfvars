@@ -1,7 +1,9 @@
 // Dev policy. Committed on purpose: unlike dev.tfvars, which names real infrastructure, these are
 // decisions, and a change to one should be visible in a diff.
 
-// Small and cheap. Everything here is disposable.
+// As prod's memory, so that a cold start in dev is the one players will see; nothing waits on
+// the ending or bounce functions, which set their own. Logs are kept a week: everything here is
+// disposable.
 lambda_memory_mb   = 2048
 log_retention_days = 7
 

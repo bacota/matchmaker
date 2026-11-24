@@ -576,7 +576,7 @@ resource "aws_lambda_function" "bounce" {
   filename         = var.lambda_jar_path
   source_code_hash = filebase64sha256(var.lambda_jar_path)
 
-  memory_size = var.lambda_memory_mb
+  memory_size = var.bounce_memory_mb
   timeout     = var.bounce_timeout_s
 
   # As on the engine function: drops Lambda's START, END and REPORT lines.

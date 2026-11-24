@@ -356,6 +356,18 @@ variable "bounce_timeout_s" {
   default     = 30
 }
 
+variable "bounce_memory_mb" {
+  description = <<-EOT
+    Memory for the bounce consumer. Like the ending function, nobody waits on its cold start and
+    memory is what it is billed by, so it does not take lambda_memory_mb, which is sized for the
+    api function's. Higher than ending_memory_mb's 256 because its timeout is bounce_timeout_s, not
+    fifteen minutes: a cold container boots a JVM and a connection pool within it, and less memory
+    is less CPU to do that with.
+  EOT
+  type        = number
+  default     = 512
+}
+
 variable "bounce_db_pool_size" {
   description = <<-EOT
     Connections the bounce consumer's pool may open. Smaller than the api function's: a batch is
