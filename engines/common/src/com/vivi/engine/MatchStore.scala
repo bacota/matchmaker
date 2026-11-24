@@ -119,8 +119,10 @@ class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: S
           ujson.Obj(
             "TableName" -> table,
             "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> matchId)),
-            // A move must not be decided against a stale replica, and a strongly consistent read of
-            // one small item is what this costs.
+            // Strongly consistent for both callers, at twice an eventual read's cost. A move must not
+            // be decided against a stale replica. And a poll (`get`) is, with Play Live, the fetch a
+            // push starts the moment a move is written: an eventual read then could return the state
+            // before the move, and the page would show it until its once-a-minute check.
             "ConsistentRead" -> true
           )
         )

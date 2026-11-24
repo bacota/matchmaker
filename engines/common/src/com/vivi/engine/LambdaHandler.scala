@@ -28,7 +28,9 @@ abstract class LambdaHandler extends RequestStreamHandler {
             try {
                 val request = LambdaEvent.decode(event)
                 val answer = respond(request)
-                log(s"${request.method} ${request.path} -> ${answer.status}")
+                // Only a failure: the stage's access log already has a line for every request, and a
+                // second one here was most of what a poll cost in logs.
+                if (answer.status >= 500) log(s"${request.method} ${request.path} -> ${answer.status}")
                 answer
             } catch {
                 case e: Throwable =>

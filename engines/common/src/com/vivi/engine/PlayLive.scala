@@ -2,7 +2,8 @@ package com.vivi.engine
 
 import HtmlText.escapeJs
 
-/** The play page's half of Play Live: the switch a player turns it on with, and what keeps the page current either way.
+/** The play page's half of Play Live: the switch a player turns it off or on with, and what keeps the page current
+  * either way.
   *
   * A page puts [[PlayLive.markup]] where the switch belongs and [[PlayLive.css]] among its styles, includes [[script]]
   * after the sign-in's, and hands its own refresh to `keepCurrent` in place of the poll it would otherwise run:
@@ -11,11 +12,11 @@ import HtmlText.escapeJs
   * keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
   * }}}
   *
-  * With Play Live off — the default, and the only thing on offer when the engine has no live url — that is the
-  * two-second poll every page has always run. With it on, the page opens a connection and refreshes when told the match
-  * has changed, checking once a minute besides in case a push was lost. While the connection is down the page polls as
-  * before and reconnects with a growing pause, so turning Play Live on can make a page slower to hear of a move only
-  * for as long as a connection is failing, and never stops it hearing at all.
+  * With Play Live off — the only thing on offer when the engine has no live url, and the player's to choose otherwise —
+  * that is the two-second poll every page has always run. With it on — the default wherever it is offered — the page
+  * opens a connection and refreshes when told the match has changed, checking once a minute besides in case a push was
+  * lost. While the connection is down the page polls as before and reconnects with a growing pause, so Play Live can
+  * make a page slower to hear of a move only for as long as a connection is failing, and never stops it hearing at all.
   *
   * Every answer a page shows — a refresh, a move's answer, the first fetch — is asked for with a ticket from `ask()`
   * and shown only if `latest(ticket)`:
@@ -81,6 +82,7 @@ class PlayLive(storagePrefix: String) {
     const box = document.getElementById("live");
     const toggle = document.getElementById("live-toggle");
     const note = document.getElementById("live-status");
+    const heard = document.getElementById("live-alert");
     let socket = null, open = false, opening = false, retries = 0, retryTimer = null;
     let lastFetch = Date.now(), lastPing = 0;
 
@@ -109,12 +111,18 @@ class PlayLive(storagePrefix: String) {
     toggle.addEventListener("blur", hideTip);
     document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
 
-    // Storage can be refused outright — a private window, a browser set to block site data — and
-    // the switch must still work for the visit, just without being remembered.
-    function chosen() { try { return localStorage.getItem(LiveChoiceKey) === "on"; } catch (e) { return false; } }
+    // On unless the player turned it off: a page told of changes makes about a thirtieth of the
+    // requests of one that polls every two seconds. Storage can be refused outright — a private
+    // window, a browser set to block site data — and the switch must still work for the visit, just
+    // without being remembered.
+    function chosen() { try { return localStorage.getItem(LiveChoiceKey) !== "off"; } catch (e) { return true; } }
     function choose(on) { try { localStorage.setItem(LiveChoiceKey, on ? "on" : "off"); } catch (e) {} }
-    // Only when it changes: the note is a live region, and repeating it would repeat the announcement.
+    /* The note is only shown: a screen reader would otherwise hear "connecting…" and "live" on every
+     * page load, now that Play Live is on by default. Only losing the connection is told, through the
+     * live region beside it, and only when that changes, as repeating it would repeat the announcement.
+     * It is left alone while a retry is connecting, so each retry does not announce it again. */
     function say(text) { if (note.textContent !== text) note.textContent = text; }
+    function tell(text) { if (heard.textContent !== text) heard.textContent = text; }
     /* One refresh out at a time. A push that arrives while one is out asks for exactly one more
      * after it, rather than being dropped — the one out may have been answered before the change
      * the push reports — or starting a race with it. */
@@ -161,6 +169,7 @@ class PlayLive(storagePrefix: String) {
         retries = 0;
         lastPing = Date.now();
         say("live");
+        tell("");
         // Whatever changed while the connection was opening was pushed to nobody.
         fetchNow();
       };
@@ -170,7 +179,12 @@ class PlayLive(storagePrefix: String) {
         if (socket !== s) return;
         socket = null;
         open = false;
-        if (wanted()) { say("reconnecting — checking every 2 seconds meanwhile"); retryLater(); } else say("");
+        if (wanted()) {
+          const lost = "reconnecting — checking every 2 seconds meanwhile";
+          say(lost);
+          tell(lost);
+          retryLater();
+        } else { say(""); tell(""); }
       };
     }
 
@@ -191,6 +205,7 @@ class PlayLive(storagePrefix: String) {
       retries = 0;
       if (socket) { const s = socket; socket = null; open = false; s.close(); }
       say("");
+      tell("");
     }
 
     sync();
@@ -202,9 +217,16 @@ class PlayLive(storagePrefix: String) {
         lastPing = Date.now();
         try { socket.send(JSON.stringify({ action: "ping" })); } catch (e) {}
       }
+      // Not while the tab is hidden: a forgotten tab on a match that lasts days would otherwise
+      // poll it all that time. A push still refreshes a hidden page, and the page catches up the
+      // moment it is shown again.
+      if (document.hidden) return;
       // Every tick without a connection, as the page always polled; once a minute with one.
       if (Date.now() - lastFetch >= (open ? 60000 : 2000) - 100) fetchNow();
     }, 2000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && active()) fetchNow();
+    });
   }
 """
 }
@@ -218,7 +240,8 @@ object PlayLive {
     val markup: String =
         """<div id="live" hidden>
     <label for="live-toggle"><input type="checkbox" id="live-toggle" aria-describedby="live-hint"> Play Live</label>
-    <span id="live-status" role="status" aria-live="polite"></span>
+    <span id="live-status"></span>
+    <span id="live-alert" class="live-sr" role="status" aria-live="polite"></span>
     <p id="live-hint" role="tooltip">See every move the moment it is made, instead of every few seconds.</p>
   </div>"""
 
@@ -234,6 +257,9 @@ object PlayLive {
   #live input { width: 1.25rem; height: 1.25rem; margin: 0; accent-color: seagreen; cursor: pointer; }
   #live input:focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
   #live-status:empty { display: none; }
+  /* Read out, not shown: the note beside it already says the same thing to anyone who can see it. */
+  .live-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   /* The tooltip: under the switch, over whatever follows it, and only while asked for. */
   #live-hint { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 20; margin: .25rem 0 0;
                width: max-content; max-width: min(18rem, calc(100vw - 32px)); padding: .375rem .625rem;

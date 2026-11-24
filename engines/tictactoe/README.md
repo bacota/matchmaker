@@ -117,8 +117,9 @@ the redirect to come back — deployed, the terraform adds the engine's own call
 
 ## Play Live
 
-Every engine's play page and public board carry a **Play Live** switch. It is off by default, the
-player turns it on, and the choice is remembered in the browser under the game's name. All of it is
+Every engine's play page and public board carry a **Play Live** switch. It is on by default, the
+player may turn it off, and the choice is remembered in the browser under the game's name. On is
+the default because a page told of changes makes about a thirtieth of the requests of one that polls. All of it is
 in `engines.common` (`Live`, `PlayLive`, `LocalLiveServer`); a game gives it nothing.
 
 - **Off**, the page polls its state every two seconds, as it always has.

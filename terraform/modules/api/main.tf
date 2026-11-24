@@ -102,6 +102,7 @@ resource "aws_lambda_function" "api" {
   function_name = "${local.name}-api"
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.api.Handler::handleRequest"
 
   filename         = var.lambda_jar_path
@@ -109,6 +110,13 @@ resource "aws_lambda_function" "api" {
 
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
+
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
 
   /* SnapStart: the JVM is initialized once at publish time and every cold start resumes that
    * snapshot instead of booting a JVM and loading classes again.
@@ -559,6 +567,7 @@ resource "aws_lambda_function" "bounce" {
   function_name = "${local.name}-bounce"
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.bounce.Handler::handleRequest"
 
   # The same jar as the api function, and so the same source_code_hash: one build, two handlers.
@@ -567,8 +576,15 @@ resource "aws_lambda_function" "bounce" {
   filename         = var.lambda_jar_path
   source_code_hash = filebase64sha256(var.lambda_jar_path)
 
-  memory_size = var.lambda_memory_mb
+  memory_size = var.bounce_memory_mb
   timeout     = var.bounce_timeout_s
+
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
 
   /* The same execution role as the api function.
    *

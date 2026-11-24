@@ -92,6 +92,7 @@ resource "aws_lambda_function" "ending" {
   function_name = local.ending_name
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.ending.Handler::handleRequest"
 
   # The same jar as the api function, for the reason the bounce function gives.
@@ -100,6 +101,13 @@ resource "aws_lambda_function" "ending" {
 
   memory_size = var.ending_memory_mb
   timeout     = local.ending_timeout_s
+
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
 
   /* SnapStart, as the api function has it and on the same terms (see main.tf): nobody waits on this
    * function, but a cold JVM is most of what a small batch costs, and the leaderboard a player is
