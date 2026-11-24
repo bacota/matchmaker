@@ -82,6 +82,7 @@ class PlayLive(storagePrefix: String) {
     const box = document.getElementById("live");
     const toggle = document.getElementById("live-toggle");
     const note = document.getElementById("live-status");
+    const heard = document.getElementById("live-alert");
     let socket = null, open = false, opening = false, retries = 0, retryTimer = null;
     let lastFetch = Date.now(), lastPing = 0;
 
@@ -116,8 +117,12 @@ class PlayLive(storagePrefix: String) {
     // without being remembered.
     function chosen() { try { return localStorage.getItem(LiveChoiceKey) !== "off"; } catch (e) { return true; } }
     function choose(on) { try { localStorage.setItem(LiveChoiceKey, on ? "on" : "off"); } catch (e) {} }
-    // Only when it changes: the note is a live region, and repeating it would repeat the announcement.
+    /* The note is only shown: a screen reader would otherwise hear "connecting…" and "live" on every
+     * page load, now that Play Live is on by default. Only losing the connection is told, through the
+     * live region beside it, and only when that changes, as repeating it would repeat the announcement.
+     * It is left alone while a retry is connecting, so each retry does not announce it again. */
     function say(text) { if (note.textContent !== text) note.textContent = text; }
+    function tell(text) { if (heard.textContent !== text) heard.textContent = text; }
     /* One refresh out at a time. A push that arrives while one is out asks for exactly one more
      * after it, rather than being dropped — the one out may have been answered before the change
      * the push reports — or starting a race with it. */
@@ -164,6 +169,7 @@ class PlayLive(storagePrefix: String) {
         retries = 0;
         lastPing = Date.now();
         say("live");
+        tell("");
         // Whatever changed while the connection was opening was pushed to nobody.
         fetchNow();
       };
@@ -173,7 +179,12 @@ class PlayLive(storagePrefix: String) {
         if (socket !== s) return;
         socket = null;
         open = false;
-        if (wanted()) { say("reconnecting — checking every 2 seconds meanwhile"); retryLater(); } else say("");
+        if (wanted()) {
+          const lost = "reconnecting — checking every 2 seconds meanwhile";
+          say(lost);
+          tell(lost);
+          retryLater();
+        } else { say(""); tell(""); }
       };
     }
 
@@ -194,6 +205,7 @@ class PlayLive(storagePrefix: String) {
       retries = 0;
       if (socket) { const s = socket; socket = null; open = false; s.close(); }
       say("");
+      tell("");
     }
 
     sync();
@@ -228,7 +240,8 @@ object PlayLive {
     val markup: String =
         """<div id="live" hidden>
     <label for="live-toggle"><input type="checkbox" id="live-toggle" aria-describedby="live-hint"> Play Live</label>
-    <span id="live-status" role="status" aria-live="polite"></span>
+    <span id="live-status"></span>
+    <span id="live-alert" class="live-sr" role="status" aria-live="polite"></span>
     <p id="live-hint" role="tooltip">See every move the moment it is made, instead of every few seconds.</p>
   </div>"""
 
@@ -244,6 +257,9 @@ object PlayLive {
   #live input { width: 1.25rem; height: 1.25rem; margin: 0; accent-color: seagreen; cursor: pointer; }
   #live input:focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
   #live-status:empty { display: none; }
+  /* Read out, not shown: the note beside it already says the same thing to anyone who can see it. */
+  .live-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   /* The tooltip: under the switch, over whatever follows it, and only while asked for. */
   #live-hint { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 20; margin: .25rem 0 0;
                width: max-content; max-width: min(18rem, calc(100vw - 32px)); padding: .375rem .625rem;

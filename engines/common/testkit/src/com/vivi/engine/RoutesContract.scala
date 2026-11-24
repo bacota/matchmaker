@@ -547,7 +547,7 @@ abstract class RoutesContract extends FunSuite with QuietTests {
         assert(offered.contains("""const liveUrl = "ws://engine.test/live";"""))
         assert(offered.contains("""<input type="checkbox" id="live-toggle""""))
         assert(offered.contains("> Play Live</label>"), "the switch is called Play Live")
-        assert(offered.contains("""id="live-status" role="status" aria-live="polite""""))
+        assert(offered.contains("""id="live-alert" class="live-sr" role="status" aria-live="polite""""))
         assert(
           get(routes = live, path = "/matches/m-9/board").body.contains("""const liveUrl = "ws://engine.test/live";""")
         )
