@@ -195,6 +195,10 @@ resource "aws_lambda_function" "engine" {
   function_name = local.name
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  # Graviton: about 20% less per GB-second than x86_64, for a jar with no native code that runs on
+  # either unchanged. A jar that gains a native library (a CRT client, a native Netty transport)
+  # must carry its arm64 build.
+  architectures = ["arm64"]
   handler       = var.handler
 
   filename         = var.lambda_jar_path

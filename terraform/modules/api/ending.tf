@@ -92,6 +92,7 @@ resource "aws_lambda_function" "ending" {
   function_name = local.ending_name
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.ending.Handler::handleRequest"
 
   # The same jar as the api function, for the reason the bounce function gives.

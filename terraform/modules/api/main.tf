@@ -102,6 +102,7 @@ resource "aws_lambda_function" "api" {
   function_name = "${local.name}-api"
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.api.Handler::handleRequest"
 
   filename         = var.lambda_jar_path
@@ -566,6 +567,7 @@ resource "aws_lambda_function" "bounce" {
   function_name = "${local.name}-bounce"
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.bounce.Handler::handleRequest"
 
   # The same jar as the api function, and so the same source_code_hash: one build, two handlers.

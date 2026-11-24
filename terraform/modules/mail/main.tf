@@ -133,6 +133,7 @@ resource "aws_lambda_function" "mailer" {
   function_name = local.name
   role          = aws_iam_role.mailer.arn
   runtime       = "java21"
+  architectures = ["arm64"] # Graviton, as on the engine function: about 20% cheaper.
   handler       = "com.vivi.matchmaker.mailer.Handler::handleRequest"
 
   filename         = var.lambda_jar_path
