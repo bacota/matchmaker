@@ -135,7 +135,7 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
     /** The match with its clock replaced: set on a live match when it is created, and again when a turn runs out.
       *
       * Storing the clock is the whole of what a game does for it. What it must also do is honour it: a match whose
-      * clock has [[TurnClock.ranOut run out]] is over, with nobody pending, and comes out as [[TurnClock.outcomeOf]]
+      * clock has [[TurnClock.hasRunOut run out]] is over, with nobody pending, and comes out as [[TurnClock.outcomeOf]]
       * says, whatever the game's own rules would make of the position.
       */
     def withClock(m: M, clock: TurnClock): M
