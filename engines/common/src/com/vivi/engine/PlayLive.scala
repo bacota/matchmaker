@@ -2,7 +2,8 @@ package com.vivi.engine
 
 import HtmlText.escapeJs
 
-/** The play page's half of Play Live: the switch a player turns it on with, and what keeps the page current either way.
+/** The play page's half of Play Live: the switch a player turns it off or on with, and what keeps the page current
+  * either way.
   *
   * A page puts [[PlayLive.markup]] where the switch belongs and [[PlayLive.css]] among its styles, includes [[script]]
   * after the sign-in's, and hands its own refresh to `keepCurrent` in place of the poll it would otherwise run:
@@ -11,11 +12,11 @@ import HtmlText.escapeJs
   * keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
   * }}}
   *
-  * With Play Live off — the default, and the only thing on offer when the engine has no live url — that is the
-  * two-second poll every page has always run. With it on, the page opens a connection and refreshes when told the match
-  * has changed, checking once a minute besides in case a push was lost. While the connection is down the page polls as
-  * before and reconnects with a growing pause, so turning Play Live on can make a page slower to hear of a move only
-  * for as long as a connection is failing, and never stops it hearing at all.
+  * With Play Live off — the only thing on offer when the engine has no live url, and the player's to choose otherwise —
+  * that is the two-second poll every page has always run. With it on — the default wherever it is offered — the page
+  * opens a connection and refreshes when told the match has changed, checking once a minute besides in case a push was
+  * lost. While the connection is down the page polls as before and reconnects with a growing pause, so Play Live can
+  * make a page slower to hear of a move only for as long as a connection is failing, and never stops it hearing at all.
   *
   * Every answer a page shows — a refresh, a move's answer, the first fetch — is asked for with a ticket from `ask()`
   * and shown only if `latest(ticket)`:
@@ -109,9 +110,11 @@ class PlayLive(storagePrefix: String) {
     toggle.addEventListener("blur", hideTip);
     document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
 
-    // Storage can be refused outright — a private window, a browser set to block site data — and
-    // the switch must still work for the visit, just without being remembered.
-    function chosen() { try { return localStorage.getItem(LiveChoiceKey) === "on"; } catch (e) { return false; } }
+    // On unless the player turned it off: a page told of changes makes about a thirtieth of the
+    // requests of one that polls every two seconds. Storage can be refused outright — a private
+    // window, a browser set to block site data — and the switch must still work for the visit, just
+    // without being remembered.
+    function chosen() { try { return localStorage.getItem(LiveChoiceKey) !== "off"; } catch (e) { return true; } }
     function choose(on) { try { localStorage.setItem(LiveChoiceKey, on ? "on" : "off"); } catch (e) {} }
     // Only when it changes: the note is a live region, and repeating it would repeat the announcement.
     function say(text) { if (note.textContent !== text) note.textContent = text; }
