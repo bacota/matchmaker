@@ -203,6 +203,16 @@ resource "aws_lambda_function" "engine" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  /* Lambda's own START, END and REPORT lines only at WARN, which drops them: three lines on every
+   * invocation, a play page's poll included, that nobody reads. Errors and timeouts still show.
+   * The function's metrics carry duration and errors; to see a REPORT line's memory or restore
+   * time again, set system_log_level to INFO. JSON is what makes the levels apply. */
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
+
   /* SnapStart, as on matchmaker's api function and with the same two conditions.
    *
    * - It applies to published versions only, so `publish` is on and both gateways invoke the

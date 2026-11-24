@@ -110,6 +110,13 @@ resource "aws_lambda_function" "api" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
+
   /* SnapStart: the JVM is initialized once at publish time and every cold start resumes that
    * snapshot instead of booting a JVM and loading classes again.
    *
@@ -569,6 +576,13 @@ resource "aws_lambda_function" "bounce" {
 
   memory_size = var.lambda_memory_mb
   timeout     = var.bounce_timeout_s
+
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
 
   /* The same execution role as the api function.
    *

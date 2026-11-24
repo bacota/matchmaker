@@ -101,6 +101,13 @@ resource "aws_lambda_function" "ending" {
   memory_size = var.ending_memory_mb
   timeout     = local.ending_timeout_s
 
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
+
   /* SnapStart, as the api function has it and on the same terms (see main.tf): nobody waits on this
    * function, but a cold JVM is most of what a small batch costs, and the leaderboard a player is
    * waiting to see is placed here. Safe for the same reason -- `ending.Handler` reaches the api's

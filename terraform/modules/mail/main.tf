@@ -141,6 +141,13 @@ resource "aws_lambda_function" "mailer" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  # As on the engine function: drops Lambda's START, END and REPORT lines.
+  logging_config {
+    log_format            = "JSON"
+    system_log_level      = "WARN"
+    application_log_level = "INFO"
+  }
+
   /* No `publish` and no alias, unlike the API function.
    *
    * The API has both because API Gateway must name a stable target and because SnapStart resumes

@@ -43,7 +43,8 @@ class Handler extends RequestStreamHandler {
                         Errors.toResponse(error, where)
                     }
                     .unsafeRunSync()
-                log(s"handled $where -> ${result.statusCode}")
+                // Only a failure: the stage's access log already has a line for every request.
+                if (result.statusCode >= 500) log(s"handled $where -> ${result.statusCode}")
                 result
             } catch {
                 // Anything that escaped the IO: a decode failure, a fatal error, a container whose
