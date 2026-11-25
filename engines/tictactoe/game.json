@@ -1,0 +1,15 @@
+{
+  "gameId": 0,
+  "gameType": "P",
+  "name": "Tic-tac-toe",
+  "displayName": "Tic-tac-toe",
+  "description": "Two players, three in a row. A test engine for matchmaker's game interaction.",
+  "isActive": true,
+  "isTrusted": true,
+  "moveType": "seq",
+  "roles": [
+    {"gameRoleId": 0, "gameId": 0, "name": "X", "roleType": "required", "displayName": "X"},
+    {"gameRoleId": 0, "gameId": 0, "name": "O", "roleType": "required", "displayName": "O"}
+  ],
+  "parameters": []
+}

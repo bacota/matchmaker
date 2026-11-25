@@ -1,0 +1,15 @@
+{
+  "gameId": 0,
+  "gameType": "P",
+  "name": "Stratego",
+  "displayName": "Capture the Flag",
+  "description": "Two armies of forty, ranks hidden from the other side. Deploy, then capture the enemy flag.",
+  "isActive": true,
+  "isTrusted": true,
+  "moveType": "seq",
+  "roles": [
+    {"gameRoleId": 0, "gameId": 0, "name": "Red", "roleType": "required", "displayName": "Red"},
+    {"gameRoleId": 0, "gameId": 0, "name": "Blue", "roleType": "required", "displayName": "Blue"}
+  ],
+  "parameters": []
+}

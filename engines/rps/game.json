@@ -1,0 +1,15 @@
+{
+  "gameId": 0,
+  "gameType": "P",
+  "name": "Rock-paper-scissors",
+  "displayName": "Rock-paper-scissors",
+  "description": "Two players throw at once. A test engine for matchmaker's simultaneous-turn handling.",
+  "isActive": true,
+  "isTrusted": true,
+  "moveType": "sim",
+  "roles": [
+    {"gameRoleId": 0, "gameId": 0, "name": "One", "roleType": "required", "displayName": "One"},
+    {"gameRoleId": 0, "gameId": 0, "name": "Two", "roleType": "required", "displayName": "Two"}
+  ],
+  "parameters": []
+}

@@ -1,0 +1,48 @@
+{
+  "gameId": 0,
+  "gameType": "C",
+  "name": "Boxing",
+  "displayName": "Boxing",
+  "description": "Two fighters trade punches over 3 to 25 rounds. Build a fighter from strength, speed, agility, workrate and chin, then plan each round's offense, defense and power.",
+  "isActive": true,
+  "moveType": "sim",
+  "isTrusted": true,
+  "roles": [
+    {"gameRoleId": 0, "gameId": 0, "name": "Red", "roleType": "required", "displayName": "Red"},
+    {"gameRoleId": 0, "gameId": 0, "name": "Blue", "roleType": "required", "displayName": "Blue"}
+  ],
+  "parameters": [
+    {
+      "gameId": 0,
+      "gameParameterId": 0,
+      "name": "rounds",
+      "displayName": "Rounds",
+      "defaultValue": "10",
+      "values": [
+        {"gameId": 0, "gameParameterId": 0, "value": "3"},
+        {"gameId": 0, "gameParameterId": 0, "value": "4"},
+        {"gameId": 0, "gameParameterId": 0, "value": "5"},
+        {"gameId": 0, "gameParameterId": 0, "value": "6"},
+        {"gameId": 0, "gameParameterId": 0, "value": "7"},
+        {"gameId": 0, "gameParameterId": 0, "value": "8"},
+        {"gameId": 0, "gameParameterId": 0, "value": "9"},
+        {"gameId": 0, "gameParameterId": 0, "value": "10"},
+        {"gameId": 0, "gameParameterId": 0, "value": "11"},
+        {"gameId": 0, "gameParameterId": 0, "value": "12"},
+        {"gameId": 0, "gameParameterId": 0, "value": "13"},
+        {"gameId": 0, "gameParameterId": 0, "value": "14"},
+        {"gameId": 0, "gameParameterId": 0, "value": "15"},
+        {"gameId": 0, "gameParameterId": 0, "value": "16"},
+        {"gameId": 0, "gameParameterId": 0, "value": "17"},
+        {"gameId": 0, "gameParameterId": 0, "value": "18"},
+        {"gameId": 0, "gameParameterId": 0, "value": "19"},
+        {"gameId": 0, "gameParameterId": 0, "value": "20"},
+        {"gameId": 0, "gameParameterId": 0, "value": "21"},
+        {"gameId": 0, "gameParameterId": 0, "value": "22"},
+        {"gameId": 0, "gameParameterId": 0, "value": "23"},
+        {"gameId": 0, "gameParameterId": 0, "value": "24"},
+        {"gameId": 0, "gameParameterId": 0, "value": "25"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "gameId": 0,
+  "gameType": "P",
+  "name": "Hilo",
+  "displayName": "Hilo",
+  "description": "Everyone picks a number at once; the highest number nobody else picked wins.",
+  "isActive": true,
+  "isTrusted": true,
+  "moveType": "sim",
+  "maxTurns": 3,
+  "minPlayers": 2,
+  "roles": [],
+  "parameters": []
+}

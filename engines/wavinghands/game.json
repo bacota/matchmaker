@@ -1,0 +1,15 @@
+{
+  "gameId": 0,
+  "gameType": "P",
+  "name": "Waving Hands",
+  "displayName": "Waving Hands",
+  "description": "A duel of wizards: spells made of hand gestures, every order given in secret and carried out at once.",
+  "isActive": true,
+  "isTrusted": true,
+  "moveType": "sim",
+  "maxTurns": 20,
+  "minPlayers": 2,
+  "maxPlayers": 8,
+  "roles": [],
+  "parameters": []
+}
