@@ -37,10 +37,20 @@ class MatchMailSpec extends FunSuite {
           ending = ending
         )
 
-    private def compose(kind: NotificationType, news: MatchNews, recipient: Player = player("alice")) =
+    private val main = MailSite(name = "matchmaker", url = "https://matchmaker.example.com")
+
+    // A game site, which a mail about a tournament made on one sends its reader to: see design/game-sites-plan.md.
+    private val gameSite = MailSite(name = "Capture the Flag", url = "https://capture-the-flag.example")
+
+    private def compose(
+        kind: NotificationType,
+        news: MatchNews,
+        recipient: Player = player("alice"),
+        site: MailSite = main
+    ) =
         MatchMail.compose(
           sender = "matchmaker@example.com",
-          uiBaseUrl = "https://matchmaker.example.com",
+          site = site,
           recipient = recipient,
           kind = kind,
           news = news
@@ -108,6 +118,21 @@ class MatchMailSpec extends FunSuite {
 
         assert(body.contains("Play: https://engine/play/1"))
         assert(body.contains("Open matchmaker: https://matchmaker.example.com"))
+    }
+
+    test("a match on a game site names that site in both links") {
+        val body = compose(kind = NotificationType.MatchStarted, news = news(), site = gameSite).get.body
+
+        assert(body.contains("Play: https://engine/play/1"))
+        assert(body.contains("Open Capture the Flag: https://capture-the-flag.example"), body)
+        assert(!body.contains("matchmaker"), body)
+    }
+
+    test("a match on a game site with no play url links to that site") {
+        val body = compose(kind = NotificationType.MatchStarted, news = news(playUrl = None), site = gameSite).get.body
+
+        assert(body.contains("Open Capture the Flag: https://capture-the-flag.example"), body)
+        assert(!body.contains("matchmaker"), body)
     }
 
     test("a match with no play url still links to matchmaker") {

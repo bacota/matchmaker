@@ -8,6 +8,16 @@ output "origin" {
   value       = "https://${local.host}"
 }
 
+output "site_urls" {
+  description = "Where each game site is served, as callback URLs on the user pool: trailing slash included."
+  value       = [for d in keys(var.sites) : "https://${d}/"]
+}
+
+output "site_origins" {
+  description = "Each game site as an origin, for cors_allowed_origins."
+  value       = [for d in keys(var.sites) : "https://${d}"]
+}
+
 output "bucket" {
   description = "Bucket holding the built UI."
   value       = aws_s3_bucket.ui.id

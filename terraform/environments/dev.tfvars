@@ -34,6 +34,11 @@ ui_bucket_name = "matchmaker-vivi-com"
 ui_domain_name     = "matchmaker-dev.vivi.com"
 hosted_zone_id     = "Z3QWMCZNYC6R5N"
 ui_certificate_arn = "arn:aws:acm:us-east-1:181246307823:certificate/1c7403a4-0f2e-4a1a-a573-be110c9642b8"
+// Game sites: the UI on further domains, each showing only some games (design/game-sites-plan.md).
+// Each domain must be covered by ui_certificate_arn and sit in hosted_zone_id.
+// ui_sites = {
+//   "boxing-dev.vivi.com" = { heading = "Boxing", games = ["boxing"] }
+// }
 // The verified SES identity is the domain, not this address — `aws ses list-identities` lists
 // vivi.com but no matchmaker@vivi.com — so the identity ARN has to be given rather than derived.
 cognito_sender_email        = "matchmaker@vivi.com"

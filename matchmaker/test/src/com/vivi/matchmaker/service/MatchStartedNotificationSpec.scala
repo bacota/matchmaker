@@ -355,7 +355,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 )
                 // And the level they changed did take the change: this is the match not hearing it,
                 // not the write going nowhere.
-                settings <- services.notifications.mine(accepterId)
+                settings <- services.notifications.mine(accepterId, GameScope.All)
             } yield seat == SeatNotifications.all(true) &&
                 settings.games.exists(g =>
                     g.gameId == started.gameId && g.preferences.isNotifiedOfTurnTaken.contains(false)
@@ -449,7 +449,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   gameId = started.gameId,
                   matchId = started.matchId
                 )
-                settings <- services.notifications.mine(accepterId)
+                settings <- services.notifications.mine(accepterId, GameScope.All)
             } yield seat == SeatNotifications.all(true).copy(isNotifiedOfTurnTaken = false) &&
                 settings.games.exists(g =>
                     g.gameId == started.gameId && g.preferences.isNotifiedOfTurnTaken.contains(false)
@@ -544,7 +544,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   gameId = started.gameId,
                   matchId = started.matchId
                 )
-                settings <- services.notifications.mine(accepterId)
+                settings <- services.notifications.mine(accepterId, GameScope.All)
             } yield
             // match-ended was never part of this save, so the game still says no to it and the seat,
             // stamped with that same no before the start, still holds it.

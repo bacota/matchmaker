@@ -6,6 +6,7 @@ import cats.syntax.all._
 import skunk.SqlState
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.auth.ApiKeys
+import com.vivi.matchmaker.util.Site
 import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo, Repos, TextCodec, TournamentRepo}
 
 /** Creates or updates a Game, together with all of its roles, parameters, and parameter values. Only an admin may do
@@ -94,10 +95,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** Lists games for any registered caller. Unlike `createOrUpdate` this needs no admin rights — the game catalogue
       * is what every player browses — but the caller must still be a known player.
       *
+      * @param games
+      *   the games a game site shows, or every game
       * @param activeOnly
       *   hide games flagged inactive
       */
-    def list(callerExternalId: String, activeOnly: Boolean = false): IO[List[Game]] =
+    def list(callerExternalId: String, games: GameScope, activeOnly: Boolean = false): IO[List[Game]] =
         sessionPool.use { session =>
             val repos = Repos(session)
             for {
@@ -105,9 +108,15 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     case Some(player) => IO.pure(player)
                     case None         => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 }
-                games <- repos.games[T].list(activeOnly)
-            } yield games
+                listed <- repos.games[T].list(activeOnly = activeOnly, games = games)
+            } yield listed
         }
+
+    /** The games a game site shows, by its games' names: a name that matches no game is skipped, and a site none of
+      * whose games are registered shows nothing. See design/game-sites-plan.md.
+      */
+    def scopeFor(site: Site): IO[GameScope] =
+        sessionPool.use(session => Repos(session).games[T].idsNamed(site.games).map(ids => GameScope.Only(ids.toSet)))
 
     /** What an update may do to a game's roles: rename them, make them optional or not, and add new ones. Not remove
       * one — except by doing without roles altogether.

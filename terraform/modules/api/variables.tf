@@ -329,6 +329,16 @@ variable "ui_base_url" {
   default     = ""
 }
 
+variable "ui_sites_json" {
+  description = <<-EOT
+    The game sites, as JSON keyed by origin, each value { heading, games }: UI_SITES, which the API
+    reads to narrow its lists to a site's games and the mail to name and link the site a tournament
+    was made on. "{}" is none. See design/game-sites-plan.md.
+  EOT
+  type        = string
+  default     = "{}"
+}
+
 variable "bounce_queue_arn" {
   description = <<-EOT
     The mail module's bounce queue: where SES's bounce, complaint and delivery-delay events wait.

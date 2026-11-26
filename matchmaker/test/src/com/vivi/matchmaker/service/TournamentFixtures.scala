@@ -79,7 +79,7 @@ object TournamentFixtures {
         for {
             m <- found(session = session, game = game, key = key)
             t <- new TournamentRepo(session).create(
-              Tournament(
+              t = Tournament(
                 gameId = game.gameId,
                 tournamentId = TournamentId.unassigned,
                 name = "tournament",
@@ -88,7 +88,8 @@ object TournamentFixtures {
                 tournamentModelId = m.tournamentModelId,
                 defaultPoolSize = m.poolSize.orElse(Some(game.poolSeats)),
                 settings = TournamentSettings()
-              )
+              ),
+              siteOrigin = None
             )
             _ <- new StageRepo(session).copy(game = game.gameId, tournament = t.tournamentId, design = m.design)
             _ <- new PoolRepo(session).createRoot(game.gameId, t.tournamentId)

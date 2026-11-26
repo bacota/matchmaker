@@ -25,7 +25,10 @@ case class Seat(participantId: ParticipantId, player: Player, preferences: SeatN
   * Not a `Game`, which cannot be read without naming the type of its parameter values — and the services that send mail
   * have no business naming that. Its name is the one fact about a game that writing to its players actually uses.
   */
-case class GameNotice(gameId: GameId, name: String)
+/** What writing to a game's players needs to know about the game: `name` is what players call it (`display_name`), and
+  * `handle` its fixed short name (`Game.name`), by which a game site lists it.
+  */
+case class GameNotice(gameId: GameId, name: String, handle: String)
 
 /** The `notify_*` columns of `player`, `participant` and `player_game`.
   *
@@ -97,12 +100,12 @@ class NotificationRepo(session: Session[IO]) {
                 )
             }
 
-    private val selectPlayerGames: Query[PlayerId, (GameId, NotificationPreferences)] =
+    private val selectPlayerGames: Query[(PlayerId, GameScope), (GameId, NotificationPreferences)] =
         sql"""SELECT game_id,
                  is_notified_of_competition_entered, is_notified_of_invitation_received, is_notified_of_invitation_accepted, is_notified_of_invitation_rejected, is_notified_of_match_started, is_notified_of_turn_taken,
                  is_notified_of_your_turn, is_notified_of_match_ended, is_notified_of_tournament_round_done
           FROM player_game
-          WHERE player_id = $playerId
+          WHERE player_id = $playerId AND ${SkunkCodecs.inGameScope("game_id")}
           ORDER BY game_id""".query(gameId *: preferences)
 
     private val selectPlayerGame: Query[(PlayerId, GameId), NotificationPreferences] =
@@ -304,11 +307,11 @@ class NotificationRepo(session: Session[IO]) {
     /* A game's name as players see it, for the same reason as above: the notification path needs
      * a game, and `GameRepo` cannot be built without naming the type of its parameter values. */
     private val selectGameNotice: Query[GameId, GameNotice] =
-        sql"""SELECT game_id, display_name
+        sql"""SELECT game_id, display_name, name
           FROM game
           WHERE game_id = $gameId"""
-            .query(gameId *: text)
-            .map { case (id, name) => GameNotice(id, name) }
+            .query(gameId *: text *: text)
+            .map { case (id, name, handle) => GameNotice(gameId = id, name = name, handle = handle) }
 
     /** What writing to a game's players needs to know about the game. */
     def gameNotice(id: GameId): IO[Option[GameNotice]] = session.option(selectGameNotice)(id)
@@ -344,10 +347,10 @@ class NotificationRepo(session: Session[IO]) {
     def updateForPlayer(id: PlayerId, preferences: NotificationPreferences): IO[Unit] =
         session.execute(updatePlayerPreferences)((preferences, id)).void
 
-    /** Every game this player has said something specific about, by game id. */
-    def listForPlayer(id: PlayerId): IO[List[GameNotificationPreferences]] =
+    /** Every game this player has said something specific about, of those `games` allows, by game id. */
+    def listForPlayer(id: PlayerId, games: GameScope): IO[List[GameNotificationPreferences]] =
         session
-            .execute(selectPlayerGames)(id)
+            .execute(selectPlayerGames)((id, games))
             .map(_.map { case (game, prefs) => GameNotificationPreferences(game, prefs) })
 
     /** What this player has said about this one game. `unset` where they have no row, which reads the same as a row of

@@ -12,16 +12,21 @@ case class TournamentNews(gameName: String, tournamentName: String, round: Int)
   */
 object TournamentMail extends NotificationMail[TournamentNews] {
 
-    protected def lines(kind: NotificationType, news: TournamentNews): Option[(String, String)] = kind match {
-        case NotificationType.TournamentRoundDone =>
-            val values =
-                Seq("game" -> news.gameName, "tournament" -> news.tournamentName, "round" -> news.round.toString)
-            Some(
-              (
-                MailTemplates.render("mail.tournament.roundDone.subject", values*),
-                MailTemplates.render("mail.tournament.roundDone.body", values*)
-              )
-            )
-        case _ => None
-    }
+    override protected def lines(
+        kind: NotificationType,
+        news: TournamentNews,
+        site: MailSite
+    ): Option[(String, String)] =
+        kind match {
+            case NotificationType.TournamentRoundDone =>
+                val values =
+                    Seq("game" -> news.gameName, "tournament" -> news.tournamentName, "round" -> news.round.toString)
+                Some(
+                  (
+                    MailTemplates.render("mail.tournament.roundDone.subject", values*),
+                    MailTemplates.render("mail.tournament.roundDone.body", (values ++ MailText.siteValues(site))*)
+                  )
+                )
+            case _ => None
+        }
 }

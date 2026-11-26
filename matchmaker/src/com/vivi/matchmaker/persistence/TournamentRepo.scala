@@ -186,22 +186,36 @@ class TournamentRepo(session: Session[IO]) {
 
     // first_stage_id is written as a placeholder, and set by StageRepo.copy before the transaction commits: the two
     // reference each other, and the key between them is deferred.
-    private val insert: Query[GameId *: Written, TournamentId] =
-        sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
+    private val insert: Query[GameId *: Option[String] *: Written, TournamentId] =
+        sql"""INSERT INTO tournament (game_id, site_origin, name, description, owner, status, tournament_model_id, default_pool_size,
                                       is_friendly, is_invitational, has_late_entries, min_rating, max_rating,
                                       is_public, entries_per_player, round_duration, turn_duration,
                                       has_concurrent_rounds, started_at, ended_at, checked_at, settings, is_live,
                                       start, has_role_choice,
                                       max_entrants, is_auto_started, players_per_match, first_stage_id)
-          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, ${int4.opt}, $bool, $bool, $bool, ${int4.opt},
+          VALUES ($gameId, ${text.opt}, $text, $text, $playerId, $status, $modelId, ${int4.opt}, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second',
                   ${float8.opt} * INTERVAL '1 second', $bool, ${instant.opt},
                   ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, ${int4.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
 
-    /** Writes a new tournament. Its stages are written next, by [[StageRepo.copy]], in the same transaction. */
-    def create(t: Tournament): IO[Tournament] =
-        session.unique(insert)(t.gameId *: writtenOf(t)).map(id => t.copy(tournamentId = id))
+    /** Writes a new tournament. Its stages are written next, by [[StageRepo.copy]], in the same transaction.
+      *
+      * `siteOrigin` is the game site it was made on, when it was made on one: see [[siteOrigin]].
+      */
+    def create(t: Tournament, siteOrigin: Option[String]): IO[Tournament] =
+        session.unique(insert)(t.gameId *: siteOrigin *: writtenOf(t)).map(id => t.copy(tournamentId = id))
+
+    private val selectSiteOrigin: Query[(GameId, TournamentId), Option[String]] =
+        sql"SELECT site_origin FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId"
+            .query(text.opt)
+
+    /** The origin of the game site a tournament was made on, or `None` for one made on the main domain, made before
+      * sites were recorded, or not there. Read only to choose the site its mail sends people to; it is not part of
+      * [[Tournament]]. See design/game-sites-plan.md.
+      */
+    def siteOrigin(gameId: GameId, tournamentId: TournamentId): IO[Option[String]] =
+        session.option(selectSiteOrigin)((gameId, tournamentId)).map(_.flatten)
 
     private val select: Query[(GameId, TournamentId), Row] =
         sql"SELECT $columns FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId".query(row)
@@ -436,20 +450,22 @@ class TournamentRepo(session: Session[IO]) {
     private val selectOthersEnterableForGame = selectForGame(sql"t.owner <> $playerId AND $canEnter")
 
     private val selectNotOverForPlayer
-        : Query[((PlayerId, PlayerId), (PlayerId, PlayerId, PlayerId, PlayerId)), SummaryRow] =
+        : Query[((PlayerId, PlayerId), (PlayerId, PlayerId, PlayerId, PlayerId), GameScope), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM ($playersLiveTournaments) mine
           JOIN tournament t ON t.game_id = mine.game_id AND t.tournament_id = mine.tournament_id
           JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
+          WHERE ${SkunkCodecs.inGameScope("t.game_id")}
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
     // When a tournament that is over ended: `ended_at` as it finished, and its last change for one that has none.
     private val endedAt = sql"coalesce(t.ended_at, t.update_date)"
 
-    private val selectEndedOwnedSince: Query[((PlayerId, PlayerId), PlayerId, Instant), SummaryRow] =
+    private val selectEndedOwnedSince: Query[((PlayerId, PlayerId), PlayerId, Instant, GameScope), SummaryRow] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.owner = $playerId AND t.status IN ('finished', 'cancelled') AND $endedAt >= $instant
+            AND ${SkunkCodecs.inGameScope("t.game_id")}
           ORDER BY $endedAt DESC, t.tournament_id DESC""".query(summaryCodec)
 
     private val selectSummary: Query[((PlayerId, PlayerId), GameId, TournamentId), SummaryRow] =
@@ -474,15 +490,19 @@ class TournamentRepo(session: Session[IO]) {
                 } yield (own ++ enterable).map(summaryOf(viewer))
             )
 
-    /** The tournaments `viewer` owns, has entered or is invited to, in every game, that are not over, newest first. */
-    def summariesForPlayer(viewer: PlayerId): IO[List[TournamentSummary]] =
+    /** The tournaments `viewer` owns, has entered or is invited to, in the games `games` allows, that are not over,
+      * newest first.
+      */
+    def summariesForPlayer(viewer: PlayerId, games: GameScope): IO[List[TournamentSummary]] =
         session
-            .execute(selectNotOverForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer)))
+            .execute(selectNotOverForPlayer)(((viewer, viewer), (viewer, viewer, viewer, viewer), games))
             .map(_.map(summaryOf(viewer)))
 
     /** The tournaments `viewer` owns that finished or were cancelled since `since`, the most recently ended first. */
-    def endedOwnedSince(viewer: PlayerId, since: Instant): IO[List[TournamentSummary]] =
-        session.execute(selectEndedOwnedSince)(((viewer, viewer), viewer, since)).map(_.map(summaryOf(viewer)))
+    def endedOwnedSince(viewer: PlayerId, since: Instant, games: GameScope): IO[List[TournamentSummary]] =
+        session
+            .execute(selectEndedOwnedSince)(((viewer, viewer), viewer, since, games))
+            .map(_.map(summaryOf(viewer)))
 
     /** One tournament as `viewer` sees it in a list. */
     def summary(game: GameId, id: TournamentId, viewer: PlayerId): IO[Option[TournamentSummary]] =
@@ -490,7 +510,7 @@ class TournamentRepo(session: Session[IO]) {
 
     // Every entry a player plays now -- theirs, or a character's they own -- with its seed and stratum as its latest
     // SEED row in the tournament's root pool says, and how many are still in.
-    private val selectStandings: Query[PlayerId, TournamentStandingRow] =
+    private val selectStandings: Query[(PlayerId, GameScope), TournamentStandingRow] =
         sql"""SELECT t.game_id, t.tournament_id, t.name, g.display_name, t.status, e.entrant_id, ch.name,
                  s.seed, s.stratum, s.eliminated IS NOT NULL,
                  (SELECT count(*) FROM entrant o
@@ -511,7 +531,7 @@ class TournamentRepo(session: Session[IO]) {
                 AND p.kind = 'R'
               ORDER BY sd.round DESC LIMIT 1
           ) s ON true
-          WHERE ep.player_id = $playerId AND $isListed
+          WHERE ep.player_id = $playerId AND $isListed AND ${SkunkCodecs.inGameScope("t.game_id")}
           ORDER BY t.status = 'running' DESC, t.create_date DESC, e.entrant_id"""
             .query(
               gameId *: tournamentId *: text *: text *: status *: int8 *: text.opt *: int4.opt *: int4.opt *: bool *:
@@ -537,9 +557,9 @@ class TournamentRepo(session: Session[IO]) {
     /** Where a player stands in every tournament they have entered, bar the challenges that are over: those under way
       * first and then the newest.
       */
-    def standingsForPlayer(player: PlayerId): IO[List[TournamentStanding]] =
+    def standingsForPlayer(player: PlayerId, games: GameScope): IO[List[TournamentStanding]] =
         session
-            .execute(selectStandings)(player)
+            .execute(selectStandings)((player, games))
             .map(_.map { case (g, t, name, gameName, st, entrant, character, seed, stratum, out, entrants, rank) =>
                 TournamentStanding(
                   gameId = g,

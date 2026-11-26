@@ -240,7 +240,8 @@ object Views {
     private def header: HtmlElement =
         headerTag(
           cls := "header",
-          h1(Headings.app.title),
+          // A game site is headed by its own name: see design/game-sites-plan.md.
+          h1(Config.current.siteHeading.getOrElse(Headings.app.title)),
           // Unmissable, because a page that looks like the real thing but authenticates nobody is
           // exactly the page you do not want to be confused about.
           if (Config.current.isHeaderAuth)
@@ -431,9 +432,11 @@ object Views {
           ),
           // Only for admins, because only an admin can create a game: the server answers anyone else
           // with a 403, and a menu entry that always fails is worse than no entry.
+          // Not on a game site, which shows only the games it was made for.
           child <-- currentPlayer.map {
-              case Some(player) if player.isAdmin => menuItem(Buttons.menu.addGame, Store.Page.NewGame)
-              case _                              => emptyNode
+              case Some(player) if player.isAdmin && Config.current.siteHeading.isEmpty =>
+                  menuItem(Buttons.menu.addGame, Store.Page.NewGame)
+              case _ => emptyNode
           }
         )
 

@@ -57,7 +57,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
       */
     private def made(session: Session[IO], f: Fixture): IO[Tournament] =
         for {
-            t <- new TournamentRepo(session).create(tournamentIn(f))
+            t <- new TournamentRepo(session).create(t = tournamentIn(f), siteOrigin = None)
             _ <- new StageRepo(session).copy(game = f.game.gameId, tournament = t.tournamentId, design = f.model.design)
             _ <- new PoolRepo(session).createRoot(f.game.gameId, t.tournamentId)
         } yield t
@@ -67,6 +67,34 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
       */
     private def run[A](body: Session[IO] => IO[A]): A =
         TestSession.resource.use(session => session.transaction.use(_ => body(session))).unsafeRunSync()
+
+    // The game site a tournament was made on, which its mail sends people to: see design/game-sites-plan.md.
+    test("a tournament's site origin is what it was made with") {
+        val (onSite, onMain, missing) = run { session =>
+            val repo = new TournamentRepo(session)
+            for {
+                f <- fixture(session)
+                site <- repo.create(t = tournamentIn(f), siteOrigin = Some("https://ctf.example"))
+                main <- repo.create(t = tournamentIn(f), siteOrigin = None)
+                onSite <- repo.siteOrigin(gameId = f.game.gameId, tournamentId = site.tournamentId)
+                onMain <- repo.siteOrigin(gameId = f.game.gameId, tournamentId = main.tournamentId)
+                missing <- repo.siteOrigin(gameId = f.game.gameId, tournamentId = TournamentId(Long.MaxValue))
+                _ <- new StageRepo(session).copy(
+                  game = f.game.gameId,
+                  tournament = site.tournamentId,
+                  design = f.model.design
+                )
+                _ <- new StageRepo(session).copy(
+                  game = f.game.gameId,
+                  tournament = main.tournamentId,
+                  design = f.model.design
+                )
+            } yield (onSite, onMain, missing)
+        }
+        assertEquals(onSite, Some("https://ctf.example"))
+        assertEquals(onMain, None)
+        assertEquals(missing, None)
+    }
 
     test("a game offers the models its admins chose, never an inner design, and stops when one is withdrawn") {
         val (offered, withdrawn, inner) = TestSession.resource
@@ -326,9 +354,9 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                   player = f.other.playerId
                 )
                 nobody <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
-                mine <- new TournamentRepo(session).summariesForPlayer(f.owner.playerId)
-                theirs <- new TournamentRepo(session).summariesForPlayer(f.other.playerId)
-                stranger <- new TournamentRepo(session).summariesForPlayer(nobody.playerId)
+                mine <- new TournamentRepo(session).summariesForPlayer(f.owner.playerId, GameScope.All)
+                theirs <- new TournamentRepo(session).summariesForPlayer(f.other.playerId, GameScope.All)
+                stranger <- new TournamentRepo(session).summariesForPlayer(nobody.playerId, GameScope.All)
                 game <- new TournamentRepo(session).listForGame(f.game.gameId)
             } yield (
               mine.map(_.tournament.tournamentId),

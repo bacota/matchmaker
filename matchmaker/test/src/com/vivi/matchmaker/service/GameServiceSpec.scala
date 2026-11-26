@@ -62,7 +62,7 @@ class GameServiceSpec extends PropertySuite {
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
             // Read back through list rather than trusting what create returned: the ids are assigned by
             // the inserts, and the values are what a client actually sees.
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield {
             val parameter = listed.get.parameters.head.asInstanceOf[GameParameter[String]]
             parameter.name == "board size" &&
@@ -95,7 +95,7 @@ class GameServiceSpec extends PropertySuite {
                 )
             )
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield {
             val parameter = listed.get.parameters.head.asInstanceOf[GameParameter[String]]
             parameter.values.map(_.value).toSet == Set("3x3", "4x4") && parameter.defaultValue.contains("3x3")
@@ -130,7 +130,7 @@ class GameServiceSpec extends PropertySuite {
               )
             )
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield listed.exists(g =>
             g.roles.map(_.name) == Seq("attacker") && g.parameters.map(_.name) == Seq("board size")
         )
@@ -194,7 +194,7 @@ class GameServiceSpec extends PropertySuite {
               externalUserId = admin.externalId,
               game = Generators.genGameWithRole.sample.get.copy(displayName = "   ")
             )
-            listed <- gameService.list(admin.externalId)
+            listed <- gameService.list(admin.externalId, GameScope.All)
         } yield (
           listed.find(_.gameId == shown.gameId).map(g => g.name -> g.displayName),
           listed.find(_.gameId == unshown.gameId).map(g => g.name -> g.displayName)
@@ -216,7 +216,7 @@ class GameServiceSpec extends PropertySuite {
               externalUserId = admin.externalId,
               game = created.copy(displayName = "Renamed")
             )
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield (created.name, listed.map(g => g.name -> g.displayName))
 
         val (name, after) = result.unsafeRunSync()
@@ -247,7 +247,7 @@ class GameServiceSpec extends PropertySuite {
               game = base,
               apiKey = Some(s"  $key ")
             )
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
             keys <- gameService.engineKeys
         } yield (created.hasApiKey, listed.map(_.hasApiKey), keys.nameOf(key), created.externalId)
 
@@ -288,7 +288,7 @@ class GameServiceSpec extends PropertySuite {
             attempt <- gameService
                 .createOrUpdate(externalUserId = admin.externalId, game = game, apiKey = Some("x" * 23))
                 .attempt
-            listed <- gameService.list(admin.externalId).map(_.exists(_.name == game.name))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.exists(_.name == game.name))
         } yield (attempt.left.exists(_.isInstanceOf[ValidationError]), listed)
 
         assertEquals(result.unsafeRunSync(), (true, false))
@@ -309,7 +309,7 @@ class GameServiceSpec extends PropertySuite {
             attempt <- gameService
                 .createOrUpdate(externalUserId = admin.externalId, game = second, apiKey = Some(key))
                 .attempt
-            listed <- gameService.list(admin.externalId).map(_.exists(_.name == second.name))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.exists(_.name == second.name))
         } yield (attempt.left.exists(_.isInstanceOf[ConflictError]), listed)
 
         assertEquals(result.unsafeRunSync(), (true, false))
@@ -340,7 +340,7 @@ class GameServiceSpec extends PropertySuite {
               externalUserId = admin.externalId,
               game = Generators.genGameWithRole.sample.get
             )
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield (created.hasApiKey, listed.map(_.hasApiKey))
 
         assertEquals(result.unsafeRunSync(), (false, Some(false)))
@@ -356,10 +356,10 @@ class GameServiceSpec extends PropertySuite {
               game = Generators.genGameWithRole.sample.get.copy(isActive = true)
             )
             _ <- gameService.createOrUpdate(externalUserId = admin.externalId, game = created.copy(isActive = false))
-            whileDisabled <- gameService.list(admin.externalId, activeOnly = true)
-            everything <- gameService.list(admin.externalId)
+            whileDisabled <- gameService.list(admin.externalId, GameScope.All, activeOnly = true)
+            everything <- gameService.list(admin.externalId, GameScope.All)
             _ <- gameService.createOrUpdate(externalUserId = admin.externalId, game = created.copy(isActive = true))
-            afterEnabling <- gameService.list(admin.externalId, activeOnly = true)
+            afterEnabling <- gameService.list(admin.externalId, GameScope.All, activeOnly = true)
         } yield (
           whileDisabled.exists(_.gameId == created.gameId),
           everything.find(_.gameId == created.gameId).map(_.isActive),
@@ -423,7 +423,7 @@ class GameServiceSpec extends PropertySuite {
                 )
             )
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield listed.get.parameters.map(p => p.name -> p.displayName).toMap
 
         assertEquals(result.unsafeRunSync(), Map("board_size" -> "Board size", "rounds" -> "rounds"))
@@ -452,7 +452,7 @@ class GameServiceSpec extends PropertySuite {
                 )
             )
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield listed.get.roles.map(r => r.name -> r.displayName).toMap
 
         assertEquals(result.unsafeRunSync(), Map("red" -> "Red corner", "blue" -> "blue"))
@@ -468,7 +468,7 @@ class GameServiceSpec extends PropertySuite {
               externalUserId = admin.externalId,
               game = created.copy(roles = Seq(role.copy(displayName = "Renamed seat")))
             )
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield (role, listed.get.roles)
 
         val (before, after) = result.unsafeRunSync()
@@ -615,7 +615,7 @@ class GameServiceSpec extends PropertySuite {
             edited = created.copy(roles = created.roles.take(1))
             attempt <- gameService.createOrUpdate(externalUserId = admin.externalId, game = edited).attempt
             // And the game still has both, rather than having been half-written before the refusal.
-            after <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            after <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield attempt.left.exists {
             case e: ValidationError => e.getMessage.contains("cannot be deleted")
             case _                  => false
@@ -642,7 +642,7 @@ class GameServiceSpec extends PropertySuite {
             admin <- makeAdmin()
             created <- optionalRolesGame(admin)
             updated <- gameService.createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
             // Retired, not deleted: played seats and role ratings still name them.
             kept <- TestSession.resource.use { session =>
                 import skunk.implicits._
@@ -671,7 +671,7 @@ class GameServiceSpec extends PropertySuite {
             attempt <- gameService
                 .createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
                 .attempt
-            after <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            after <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield attempt.left.exists {
             case e: ValidationError => e.getMessage.contains("once every role is optional")
             case _                  => false
@@ -698,7 +698,7 @@ class GameServiceSpec extends PropertySuite {
             attempt <- gameService
                 .createOrUpdate(externalUserId = admin.externalId, game = withoutRoles(created))
                 .attempt
-            after <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            after <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield attempt.left.exists {
             case e: ValidationError => e.getMessage.contains("open or under way")
             case _                  => false
@@ -756,7 +756,7 @@ class GameServiceSpec extends PropertySuite {
                 )
             )
             updated <- gameService.createOrUpdate(externalUserId = admin.externalId, game = edited)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield {
             val parameters = listed.get.parameters.map(_.asInstanceOf[GameParameter[String]])
             parameters.map(_.name).toSet == Set("kept-renamed", "added") &&
@@ -820,7 +820,7 @@ class GameServiceSpec extends PropertySuite {
             _ <- registrationService.register(nickname = nickname, externalId = externalId)
             game <- IO(Generators.genGameWithRole.sample.get.copy(isActive = true))
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            games <- gameService.list(externalId)
+            games <- gameService.list(externalId, GameScope.All)
         } yield games.find(_.gameId == created.gameId).exists(g => g.name == game.name && g.roles.size == 1)
 
         assert(result.unsafeRunSync())
@@ -831,8 +831,8 @@ class GameServiceSpec extends PropertySuite {
             admin <- makeAdmin()
             inactive <- IO(Generators.genGame().sample.get.copy(isActive = false))
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = inactive)
-            all <- gameService.list(admin.externalId)
-            activeOnly <- gameService.list(admin.externalId, activeOnly = true)
+            all <- gameService.list(admin.externalId, GameScope.All)
+            activeOnly <- gameService.list(admin.externalId, GameScope.All, activeOnly = true)
         } yield all.exists(_.gameId == created.gameId) && !activeOnly.exists(_.gameId == created.gameId)
 
         assert(result.unsafeRunSync())
@@ -841,7 +841,7 @@ class GameServiceSpec extends PropertySuite {
     test("list rejects an unregistered caller") {
         val result = for {
             externalId <- IO(genUniqueString.sample.get)
-            attempt <- gameService.list(externalId).attempt
+            attempt <- gameService.list(externalId, GameScope.All).attempt
         } yield attempt match {
             case Left(_: UnauthorizedError) => true
             case _                          => false
@@ -855,7 +855,7 @@ class GameServiceSpec extends PropertySuite {
             admin <- makeAdmin()
             game = Generators.genRolelessGame(least = 3, most = Some(12))
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield (created, listed)
         val (created, listed) = result.unsafeRunSync()
         assertEquals((created.roles, created.minPlayers, created.maxPlayers), (Seq.empty, Some(3), Some(12)))
@@ -889,7 +889,7 @@ class GameServiceSpec extends PropertySuite {
         val result = for {
             admin <- makeAdmin()
             created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
         } yield listed
         val listed = result.unsafeRunSync().getOrElse(fail("the game was not stored"))
         assert(listed.roles.isEmpty && listed.minPlayers.isEmpty && !listed.isRoleless, listed.toString)
@@ -902,7 +902,7 @@ class GameServiceSpec extends PropertySuite {
             admin <- makeAdmin()
             created <- optionalRolesGame(admin)
             _ <- gameService.createOrUpdate(externalUserId = admin.externalId, game = created.copy(roles = Nil))
-            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
             kept <- TestSession.resource.use { session =>
                 import skunk.implicits._
                 import skunk.codec.all.{bool, int4}

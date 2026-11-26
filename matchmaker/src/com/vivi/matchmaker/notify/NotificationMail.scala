@@ -28,13 +28,13 @@ trait NotificationMail[News] {
       */
     final def compose(
         sender: String,
-        uiBaseUrl: String,
+        site: MailSite,
         recipient: Player,
         kind: NotificationType,
         news: News
     ): Option[MailMessage] =
         recipient.email.flatMap { address =>
-            lines(kind, news).map { case (subject, body) =>
+            lines(kind, news, site).map { case (subject, body) =>
                 MailMessage(
                   sender = sender,
                   recipient = address,
@@ -42,7 +42,7 @@ trait NotificationMail[News] {
                   body = MailText.letter(
                     recipient = recipient,
                     body = body,
-                    uiBaseUrl = uiBaseUrl,
+                    site = site,
                     playUrl = playUrl(news)
                   )
                 )
@@ -50,11 +50,12 @@ trait NotificationMail[News] {
         }
 
     /** The subject and the body's own paragraphs for one kind, or `None` for a kind this template does not cover.
+      * `site` is where the mail sends its reader, for a body that names it.
       *
       * Pure, and the whole of what a template is: no database, no match, no tournament — which is what lets what the
       * mail says be tested directly.
       */
-    protected def lines(kind: NotificationType, news: News): Option[(String, String)]
+    protected def lines(kind: NotificationType, news: News, site: MailSite): Option[(String, String)]
 
     /** Where the game itself is played, when this news is about a game there is one for. Nothing by default: most
       * notifications are about entries that are not a match yet, or a match that is over.

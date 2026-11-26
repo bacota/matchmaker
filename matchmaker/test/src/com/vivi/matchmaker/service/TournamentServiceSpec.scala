@@ -9,6 +9,7 @@ import munit.FunSuite
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.standard.{RoundRobin, StandardModels}
+import com.vivi.matchmaker.util.Site
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     EloRatingRepo,
@@ -76,7 +77,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         val (f, t, detail) = run(for {
             f <- fixture(0)
             t <- tournaments
-                .create(gameId = f.game.gameId, request = request(f = f), callerExternalId = f.owner.externalId)
+                .create(
+                  gameId = f.game.gameId,
+                  request = request(f = f),
+                  callerExternalId = f.owner.externalId,
+                  site = None
+                )
             detail <- tournaments.detail(
               gameId = f.game.gameId,
               tournamentId = t.tournamentId,
@@ -92,12 +98,42 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(t.defaultPoolSize, Some(f.game.poolSeats))
     }
 
+    // The game site it was made on, which its mail sends everyone in it to: see design/game-sites-plan.md.
+    test("a tournament made on a game site records the site's origin, and one made elsewhere none") {
+        val site = Site(origin = "https://ctf.example", heading = "Capture the Flag", games = List("capture-the-flag"))
+        val (onSite, onMain) = run(for {
+            f <- fixture(0)
+            made <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = f.owner.externalId,
+              site = Some(site)
+            )
+            plain <- tournaments.create(
+              gameId = f.game.gameId,
+              request = request(f = f),
+              callerExternalId = f.owner.externalId,
+              site = None
+            )
+            origins <- TestSession.resource.use { session =>
+                val repo = new TournamentRepo(session)
+                (
+                  repo.siteOrigin(gameId = f.game.gameId, tournamentId = made.tournamentId),
+                  repo.siteOrigin(gameId = f.game.gameId, tournamentId = plain.tournamentId)
+                ).tupled
+            }
+        } yield origins)
+        assertEquals(onSite, Some("https://ctf.example"))
+        assertEquals(onMain, None)
+    }
+
     test("a model the game does not offer, or a pool size that cannot be played, is refused") {
         val unknown = refusal(fixture(0).flatMap { f =>
             tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f).copy(tournamentModelId = TournamentModelId("no-such-model")),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
         })
         assert(unknown.exists(_.isInstanceOf[NotFoundError]), unknown)
@@ -107,7 +143,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 tournaments.create(
                   gameId = f.game.gameId,
                   request = request(f = f, standard = "ladder"),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
         })
         assert(withdrawn.exists(_.isInstanceOf[NotFoundError]), withdrawn)
@@ -115,7 +152,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f).copy(defaultPoolSize = Some(0)),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
         })
         assert(empty.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("pool")), empty)
@@ -129,14 +167,16 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 .create(
                   gameId = f.game.gameId,
                   request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(1)),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
                 .attempt
             // More than the game has roles: a round robin rather than one match.
             larger <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(3)),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
         } yield (tooSmall, larger))
         assert(tooSmall.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("required roles")))
@@ -148,12 +188,13 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             f <- fixture(1)
             rated = request(f = f).copy(settings = request(f = f).settings.copy(isFriendly = false))
             asPlayer <- tournaments
-                .create(gameId = f.game.gameId, request = rated, callerExternalId = f.owner.externalId)
+                .create(gameId = f.game.gameId, request = rated, callerExternalId = f.owner.externalId, site = None)
                 .attempt
             friendly <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             editedAsPlayer <- tournaments
                 .update(
@@ -168,7 +209,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 new GameAdminRepo(session)
                     .grant(player = admin.playerId, game = f.game.gameId, grantedBy = admin.playerId)
             )
-            asAdmin <- tournaments.create(gameId = f.game.gameId, request = rated, callerExternalId = admin.externalId)
+            asAdmin <- tournaments.create(
+              gameId = f.game.gameId,
+              request = rated,
+              callerExternalId = admin.externalId,
+              site = None
+            )
         } yield (asPlayer, editedAsPlayer, asAdmin))
         assert(asPlayer.left.exists(_.isInstanceOf[UnauthorizedError]), asPlayer)
         assert(editedAsPlayer.left.exists(_.isInstanceOf[UnauthorizedError]), editedAsPlayer)
@@ -181,7 +227,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             stranger = f.players.head.externalId
             edit <- tournaments
@@ -208,7 +255,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             p = f.players.head.externalId
             entered <- tournaments.enter(
@@ -231,7 +279,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             made <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f).copy(entry = Some(TournamentEntry())),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             detail <- tournaments.detail(
               gameId = f.game.gameId,
@@ -257,7 +306,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                       minRating = Some(EloRating.initial + 100)
                     )
                   ).copy(entry = Some(TournamentEntry())),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
                 .attempt
             listed <- tournaments.listForGame(f.game.gameId, f.owner.externalId)
@@ -273,7 +323,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             made <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f).copy(entry = Some(TournamentEntry(Some(character.characterId)))),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             detail <- tournaments.detail(
               gameId = f.game.gameId,
@@ -290,7 +341,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f, settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             uninvited <- tournaments
                 .enter(
@@ -336,7 +388,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 f = f,
                 settings = TournamentSettings(isPublic = false, roundDuration = Some(Duration.ofDays(1)))
               ),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- tournaments.invite(
               gameId = f.game.gameId,
@@ -363,7 +416,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 tournaments.create(
                   gameId = f.game.gameId,
                   request = request(f = f, settings = settings),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
             look = (t: Tournament) =>
                 tournaments
@@ -394,7 +448,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f, settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
         } yield t
 
@@ -528,7 +583,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   roundDuration = Some(Duration.ofDays(1))
                 )
               ),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- tournaments.enter(
               gameId = f.game.gameId,
@@ -546,7 +602,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             other <- TestSession.resource.use(
               new CharacterRepo[String](_)
@@ -607,7 +664,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                         standard = standard,
                         settings = TournamentSettings(isInvitational = false, playersPerMatch = playersPerMatch)
                       ).copy(defaultPoolSize = poolSize),
-                      callerExternalId = f.owner.externalId
+                      callerExternalId = f.owner.externalId,
+                      site = None
                     )
                     .attempt
             })
@@ -635,7 +693,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               t <- tournaments.create(
                 gameId = f.game.gameId,
                 request = request(f = f, standard = RoundRobin.id).copy(defaultPoolSize = Some(2)),
-                callerExternalId = f.owner.externalId
+                callerExternalId = f.owner.externalId,
+                site = None
               )
               _ <- f.players.traverse(p =>
                   tournaments.enter(
@@ -675,7 +734,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- tournaments.enter(
               gameId = f.game.gameId,
@@ -726,7 +786,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             entries <- f.players.traverse(p =>
                 tournaments.enter(
@@ -781,7 +842,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- f.players
                 .take(2)
@@ -837,7 +899,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- f.players.traverse(p =>
                 tournaments.enter(
@@ -886,13 +949,15 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   gameId = f.game.gameId,
                   // Past `request`, which would give it the round's.
                   request = request(f = f).copy(settings = round),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
                 .attempt
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f, settings = round.copy(turnDuration = Some(Duration.ofMinutes(5)))),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- f.players.traverse(p =>
                 tournaments.enter(
@@ -927,15 +992,20 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
           for {
               f <- fixture(2)
               t <- tournaments
-                  .create(gameId = f.game.gameId, request = request(f = f), callerExternalId = f.owner.externalId)
+                  .create(
+                    gameId = f.game.gameId,
+                    request = request(f = f),
+                    callerExternalId = f.owner.externalId,
+                    site = None
+                  )
               _ <- tournaments.invite(
                 gameId = f.game.gameId,
                 tournamentId = t.tournamentId,
                 playerId = f.players.head.playerId,
                 callerExternalId = f.owner.externalId
               )
-              mine <- tournaments.mine(f.owner.externalId)
-              theirs <- tournaments.mine(f.players.head.externalId)
+              mine <- tournaments.mine(f.owner.externalId, GameScope.All)
+              theirs <- tournaments.mine(f.players.head.externalId, GameScope.All)
           } yield (
             mine.find(_.tournament.tournamentId == t.tournamentId),
             theirs.find(_.tournament.tournamentId == t.tournamentId)
@@ -960,10 +1030,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         )
         def listed(f: Fixture, p: Player): IO[Listed] =
             (
-              tournaments.mine(p.externalId).map(_.map(_.tournament.tournamentId)),
-              tournaments.standings(p.externalId).map(_.map(_.tournamentId)),
+              tournaments.mine(p.externalId, GameScope.All).map(_.map(_.tournament.tournamentId)),
+              tournaments.standings(p.externalId, GameScope.All).map(_.map(_.tournamentId)),
               tournaments.listForGame(f.game.gameId, p.externalId).map(_.map(_.tournament.tournamentId)),
-              tournaments.endedOwned(p.externalId, CompletedFrame.Day).map(_.map(_.tournament.tournamentId))
+              tournaments
+                  .endedOwned(p.externalId, CompletedFrame.Day, GameScope.All)
+                  .map(_.map(_.tournament.tournamentId))
             ).mapN((a, b, c, d) => Listed(mine = a.toSet, standings = b.toSet, game = c.toSet, ended = d.toSet))
         val (ids, open, over) = run(for {
             f <- fixture(2)
@@ -987,7 +1059,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             tournament <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = entrant.externalId
+              callerExternalId = entrant.externalId,
+              site = None
             )
             open <- listed(f, entrant)
             _ <- ended(entered, TournamentStatus.Finished)
@@ -1025,12 +1098,14 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             others <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             own <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = viewer.externalId
+              callerExternalId = viewer.externalId,
+              site = None
             )
             listed <- tournaments.listForGame(f.game.gameId, viewer.externalId)
         } yield (listed.map(_.tournament.tournamentId), List(own, others, anyone).map(_.tournamentId)))
@@ -1074,7 +1149,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 tournaments.create(
                   gameId = f.game.gameId,
                   request = request(f = f, settings = settings),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
             full <- made(
               TournamentSettings(
@@ -1127,7 +1203,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   entriesPerPlayer = 2
                 )
               ),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             closed <- invitational(f)
             listedTo = () =>
@@ -1194,7 +1271,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 tournaments.create(
                   gameId = f.game.gameId,
                   request = roundRobin(f, maxEntrants = maxEntrants),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
             )
             List(automatic, manual) = made: @unchecked
@@ -1248,7 +1326,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                       maxEntrants = maxEntrants
                     )
                   ),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
                 _ <- f.players
                     .take(2)
@@ -1279,7 +1358,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f, settings = settings),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- f.players.traverse_(p =>
                 tournaments.enter(
@@ -1319,7 +1399,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 t <- tournaments.create(
                   gameId = f.game.gameId,
                   request = request(f = f, settings = from),
-                  callerExternalId = f.owner.externalId
+                  callerExternalId = f.owner.externalId,
+                  site = None
                 )
                 _ <- f.players.traverse_(p =>
                     tournaments.enter(
@@ -1360,7 +1441,8 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             t <- tournaments.create(
               gameId = f.game.gameId,
               request = request(f = f),
-              callerExternalId = f.owner.externalId
+              callerExternalId = f.owner.externalId,
+              site = None
             )
             _ <- f.players.traverse(p =>
                 tournaments.enter(
@@ -1370,13 +1452,13 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   callerExternalId = p.externalId
                 )
             )
-            before <- tournaments.standings(f.players.head.externalId)
+            before <- tournaments.standings(f.players.head.externalId, GameScope.All)
             _ <- tournaments.start(
               gameId = f.game.gameId,
               tournamentId = t.tournamentId,
               callerExternalId = f.owner.externalId
             )
-            after <- tournaments.standings(f.players.head.externalId)
+            after <- tournaments.standings(f.players.head.externalId, GameScope.All)
         } yield (before, after, f.players.size))
         assertEquals(before.map(_.status), List(TournamentStatus.Open))
         assertEquals(before.flatMap(_.seed), Nil)

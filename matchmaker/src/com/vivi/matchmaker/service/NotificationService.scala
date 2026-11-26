@@ -24,15 +24,16 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, Repos}
 class NotificationService(sessionPool: SessionPool) {
 
     /** Everything the caller's own settings screen shows: what they have said in general, and the games they have said
-      * something particular about.
+      * something particular about, of the games `games` allows. What they have said in general is not per game, and is
+      * read whatever the scope.
       */
-    def mine(callerExternalId: String): IO[NotificationSettings] =
+    def mine(callerExternalId: String, games: GameScope): IO[NotificationSettings] =
         sessionPool.use { session =>
             val repos = Repos(session)
             for {
                 player <- callerPlayer(repos, callerExternalId)
                 overall <- repos.notifications.readForPlayer(player.playerId)
-                games <- repos.notifications.listForPlayer(player.playerId)
+                perGame <- repos.notifications.listForPlayer(id = player.playerId, games = games)
                 /* And whether any of it is reaching them.
                  *
                  * Read here rather than from a route of its own because a screen that showed the
@@ -51,7 +52,7 @@ class NotificationService(sessionPool: SessionPool) {
                             .read(address)
                             .map(_.filter(_.isActive(Instant.now())).map(EmailSuppression.Notice.of))
                 }
-            } yield NotificationSettings(player = overall, games = games, suppressed = suppressed)
+            } yield NotificationSettings(player = overall, games = perGame, suppressed = suppressed)
         }
 
     /** Records the caller's defaults, and optionally carries them downwards.

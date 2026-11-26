@@ -92,7 +92,8 @@ object TestMatches {
                 if (m.completedAt.isDefined || m.isCancelled) MatchStatus.Finished else m.status
             for {
                 t <- new TournamentRepo(session).create(
-                  Tournament(
+                  siteOrigin = None,
+                  t = Tournament(
                     gameId = m.gameId,
                     tournamentId = TournamentId.unassigned,
                     name = "match",

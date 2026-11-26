@@ -2,9 +2,11 @@ package com.vivi.matchmaker.persistence
 
 import skunk._
 import skunk.codec.all._
+import skunk.implicits._
 import skunk.data.{Arr, Type}
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import com.vivi.matchmaker.model.{
+    GameScope,
     GameType,
     MatchStatus,
     MoveType,
@@ -18,6 +20,16 @@ import com.vivi.matchmaker.model.{
 import com.vivi.matchmaker.util.JsonValues
 
 object SkunkCodecs {
+
+    /** `column` is in `scope`: `(TRUE OR …)` for every game, `(FALSE OR column = ANY(ids))` for some. Interpolate it
+      * into a query as `AND ${inGameScope("p.game_id")}`. `column` is SQL text, never user input — always a literal at
+      * the call site. See design/game-sites-plan.md.
+      */
+    def inGameScope(column: String): Fragment[GameScope] =
+        sql"(${bool} OR #$column = ANY(${_int4}))".contramap[GameScope] {
+            case GameScope.All         => (true, Arr.empty[Int])
+            case GameScope.Only(games) => (false, Arr.fromFoldable(games.toList.map(_.value)))
+        }
 
     val instant: Codec[Instant] =
         timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))

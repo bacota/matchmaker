@@ -11,5 +11,8 @@
 window.matchmakerConfig = {
   authMode: "header",
   localExternalId: "local-dev-1",
-  apiEndpoint: "http://localhost:8080"
+  apiEndpoint: "http://localhost:8080",
+  // To try a game site locally: open http://127.0.0.1:5173 (not localhost) and start LocalServer
+  // with UI_SITES='{"http://127.0.0.1:5173":{"heading":"Boxing","games":["boxing"]}}'.
+  // sites: { "http://127.0.0.1:5173": { heading: "Boxing" } },
 };

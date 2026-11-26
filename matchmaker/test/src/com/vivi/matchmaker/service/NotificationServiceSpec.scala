@@ -59,7 +59,7 @@ class NotificationServiceSpec extends PropertySuite {
             val caller = s"quiet-$seed"
             val result = for {
                 _ <- services.registration.register(nickname = s"quiet-$seed", externalId = caller, email = None)
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
             } yield settings.player == NotificationPreferences.unset &&
                 settings.player.unsaid.length == NotificationType.values.length &&
                 settings.games.isEmpty
@@ -77,7 +77,7 @@ class NotificationServiceSpec extends PropertySuite {
             val result = for {
                 _ <- services.registration.register(nickname = s"overall-$seed", externalId = caller, email = None)
                 _ <- services.notifications.updateMine(callerExternalId = caller, preferences = said)
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
                 // And a second save replaces the first rather than merging into it: clearing an answer
                 // back to "Use Default" is a thing the form can do, and a write that only ever set
                 // values could not express it.
@@ -85,7 +85,7 @@ class NotificationServiceSpec extends PropertySuite {
                   callerExternalId = caller,
                   preferences = NotificationPreferences.unset
                 )
-                cleared <- services.notifications.mine(caller)
+                cleared <- services.notifications.mine(caller, GameScope.All)
             } yield settings.player == said && cleared.player == NotificationPreferences.unset
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -109,13 +109,13 @@ class NotificationServiceSpec extends PropertySuite {
                   gameId = game.gameId,
                   preferences = first
                 )
-                afterFirst <- services.notifications.mine(caller)
+                afterFirst <- services.notifications.mine(caller, GameScope.All)
                 _ <- services.notifications.updateForGame(
                   callerExternalId = caller,
                   gameId = game.gameId,
                   preferences = second
                 )
-                afterSecond <- services.notifications.mine(caller)
+                afterSecond <- services.notifications.mine(caller, GameScope.All)
                 // A second game the player has said nothing about stays absent: the table holds
                 // answers, not a row per game in existence.
                 _ <- services.notifications.updateForGame(
@@ -123,7 +123,7 @@ class NotificationServiceSpec extends PropertySuite {
                   gameId = other.gameId,
                   preferences = NotificationPreferences.unset
                 )
-                withOther <- services.notifications.mine(caller)
+                withOther <- services.notifications.mine(caller, GameScope.All)
             } yield afterFirst.games == Seq(GameNotificationPreferences(game.gameId, first)) &&
                 afterSecond.games == Seq(GameNotificationPreferences(game.gameId, second)) &&
                 withOther.games.map(_.gameId).toSet == Set(game.gameId, other.gameId)
@@ -157,7 +157,7 @@ class NotificationServiceSpec extends PropertySuite {
                   preferences = defaults,
                   applyToGames = true
                 )
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
             } yield settings.player == defaults &&
                 // match-started was the question that changed, so the game now agrees about it;
                 // turn-taken was not, so the game still says what it said.
@@ -190,7 +190,7 @@ class NotificationServiceSpec extends PropertySuite {
                   preferences = NotificationPreferences.unset,
                   applyToGames = true
                 )
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
             } yield settings.player == NotificationPreferences.unset &&
                 settings.games.map(_.preferences) == Seq(NotificationPreferences.unset)
             result.timeout(caseTimeout).unsafeRunSync()
@@ -231,7 +231,7 @@ class NotificationServiceSpec extends PropertySuite {
                   services.notifications
                       .updateMine(callerExternalId = caller, preferences = second, applyToGames = true)
                 )
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
             } yield settings.games.map(_.preferences) == Seq(settings.player)
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -255,7 +255,7 @@ class NotificationServiceSpec extends PropertySuite {
                   callerExternalId = caller,
                   preferences = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
                 )
-                settings <- services.notifications.mine(caller)
+                settings <- services.notifications.mine(caller, GameScope.All)
             } yield settings.games.map(_.preferences) == Seq(forGame)
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -277,8 +277,8 @@ class NotificationServiceSpec extends PropertySuite {
                   gameId = game.gameId,
                   preferences = said
                 )
-                ours <- services.notifications.mine(mine)
-                other <- services.notifications.mine(theirs)
+                ours <- services.notifications.mine(mine, GameScope.All)
+                other <- services.notifications.mine(theirs, GameScope.All)
             } yield ours.player == said && other.player == NotificationPreferences.unset && other.games.isEmpty
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -338,7 +338,7 @@ class NotificationServiceSpec extends PropertySuite {
     // player yet -- the same distinction `AcceptanceService.mine` makes.
     property("a caller with no player is refused") {
         forAll(genUniqueString) { seed =>
-            val result = services.notifications.mine(s"stranger-$seed").attempt.map {
+            val result = services.notifications.mine(s"stranger-$seed", GameScope.All).attempt.map {
                 _.left.exists(_.isInstanceOf[UnauthorizedError])
             }
             result.timeout(caseTimeout).unsafeRunSync()

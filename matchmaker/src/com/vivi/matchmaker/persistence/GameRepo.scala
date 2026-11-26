@@ -3,6 +3,7 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import skunk._
+import skunk.data.Arr
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
@@ -435,7 +436,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           LEFT JOIN game_parameter p ON p.game_id = g.game_id
           LEFT JOIN game_parameter_value v
                  ON v.game_id = p.game_id AND v.game_parameter_id = p.game_parameter_id
-          WHERE (NOT $bool OR g.is_active)
+          WHERE (NOT $bool OR g.is_active) AND ${SkunkCodecs.inGameScope("g.game_id")}
           ORDER BY g.game_id"""
             .query(
               gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
@@ -443,8 +444,17 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                   int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
 
-    /** All games with their roles and parameters, sorted by the name players see, in a single query regardless of how
-      * many games there are.
+    private val selectIdsNamed: Query[Arr[String], GameId] =
+        sql"SELECT game_id FROM game WHERE name = ANY(${_text})".query(gameId)
+
+    /** The ids of the games with these names (`Game.name`), active or not; a name that matches no game is skipped. For
+      * a game site, which lists its games by name. See design/game-sites-plan.md.
+      */
+    def idsNamed(names: List[String]): IO[List[GameId]] =
+        session.execute(selectIdsNamed)(Arr.fromFoldable(names))
+
+    /** The games with their roles and parameters, of those `games` allows, sorted by the name players see, in a single
+      * query regardless of how many games there are.
       *
       * The sort is applied here rather than in the query for two reasons. The database would be sorting the join's
       * cross product, where this sorts one entry per game, after the rows have been collapsed. And `ORDER BY name`
@@ -454,9 +464,11 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       *
       * @param activeOnly
       *   restrict to games flagged active
+      * @param games
+      *   the games a game site shows, or every game
       */
-    def list(activeOnly: Boolean): IO[List[Game]] =
-        session.execute(selectGameAggregate)(activeOnly).map { rows =>
+    def list(activeOnly: Boolean, games: GameScope): IO[List[Game]] =
+        session.execute(selectGameAggregate)((activeOnly, games)).map { rows =>
             // By its mirror rather than `GameListRow.apply.tupled`: the row has more than 22 columns, which is past the
             // last arity a function value has `tupled` for.
             val listRows = rows.map(summon[scala.deriving.Mirror.ProductOf[GameListRow]].fromTuple(_))

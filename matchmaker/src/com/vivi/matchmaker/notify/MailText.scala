@@ -19,13 +19,16 @@ object MailText {
       * — a greeting, a blank line, whatever the template wrote, and the links — because these are plain-text mails
       * whose every line is a fact, so the layout is not where the thinking is.
       */
-    def letter(recipient: Player, body: String, uiBaseUrl: String, playUrl: Option[String] = None): String =
+    def letter(recipient: Player, body: String, site: MailSite, playUrl: Option[String] = None): String =
         MailTemplates.render(
           "mail.letter",
           "nickname" -> recipient.nickname,
           "body" -> body,
-          "links" -> links(uiBaseUrl, playUrl)
+          "links" -> links(site, playUrl)
         )
+
+    /** What a mail calls the main site: see [[MailSite]]. */
+    def mainSiteName: String = MailTemplates.render("mail.site.main")
 
     /** To the minute and stamped UTC, matching how the UI shows every other time: a deadline quoted to the second
       * invites a precision the engine's clock does not promise, and one quoted with no zone at all is read in whichever
@@ -36,11 +39,14 @@ object MailText {
     def at(instant: Instant): String =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneOffset.UTC).format(instant) + " UTC"
 
-    /** Where to go: both links when the engine gave one, and matchmaker's alone when it did not. */
-    def links(uiBaseUrl: String, playUrl: Option[String]): String =
-        playUrl.fold(MailTemplates.render("mail.links", "uiBaseUrl" -> uiBaseUrl))(url =>
-            MailTemplates.render("mail.links.play", "playUrl" -> url, "uiBaseUrl" -> uiBaseUrl)
+    /** Where to go: both links when the engine gave one, and the site's alone when it did not. */
+    def links(site: MailSite, playUrl: Option[String]): String =
+        playUrl.fold(MailTemplates.render("mail.links", siteValues(site)*))(url =>
+            MailTemplates.render("mail.links.play", (("playUrl" -> url) +: siteValues(site))*)
         )
+
+    /** The site's name and URL, as every template that names the site takes them. */
+    def siteValues(site: MailSite): Seq[(String, String)] = Seq("siteName" -> site.name, "siteUrl" -> site.url)
 
     /** A tournament's name or a match's description, when there is one: that is what a player recognises it by.
       *

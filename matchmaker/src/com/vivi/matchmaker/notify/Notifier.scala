@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.notify
 
 import cats.effect.IO
+import com.vivi.matchmaker.util.Sites
 
 /** Somewhere to put a mail that something else will send.
   *
@@ -33,15 +34,22 @@ object Notifier {
   * nothing at all rather than sending something wrong: a mail with no `From` is not a mail SES will accept, and one
   * with no link is worse than no mail, since a notification whose whole purpose is to bring someone back to the game
   * would arrive with nowhere to go.
+  *
+  * `sites` are the game sites, which a mail about a tournament made on one sends its reader to instead of `uiBaseUrl`.
   */
-case class MailSettings(sender: Option[String], uiBaseUrl: Option[String])
+case class MailSettings(sender: Option[String], uiBaseUrl: Option[String], sites: Sites = Sites.none) {
+
+    /** The main site, which every mail sends its reader to unless its tournament was made on a game site. */
+    def mainSite: Option[MailSite] = uiBaseUrl.map(url => MailSite(name = MailText.mainSiteName, url = url))
+}
 
 object MailSettings {
-    val none: MailSettings = MailSettings(None, None)
+    val none: MailSettings = MailSettings(sender = None, uiBaseUrl = None, sites = Sites.none)
 
     def fromEnvironment(env: String => Option[String] = key => Option(System.getenv(key))): MailSettings =
         MailSettings(
           sender = env("MAIL_SENDER").map(_.trim).filter(_.nonEmpty),
-          uiBaseUrl = env("UI_BASE_URL").map(_.trim.stripSuffix("/")).filter(_.nonEmpty)
+          uiBaseUrl = env("UI_BASE_URL").map(_.trim.stripSuffix("/")).filter(_.nonEmpty),
+          sites = Sites.fromEnvironment(env)
         )
 }

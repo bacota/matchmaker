@@ -134,6 +134,19 @@ variable "hosted_zone_id" {
   }
 }
 
+variable "sites" {
+  description = <<-EOT
+    Game sites: this UI on further domains, each showing only some games. Keyed by domain name (no
+    scheme, no slash). Each is an alias of the same distribution, so each must be covered by
+    certificate_arn and sit in hosted_zone_id. See design/game-sites-plan.md.
+  EOT
+  type = map(object({
+    heading = string
+    games   = list(string)
+  }))
+  default = {}
+}
+
 variable "certificate_arn" {
   description = <<-EOT
     ARN of an existing ACM certificate covering `domain_name`. Required when domain_name is set.

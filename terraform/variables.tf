@@ -268,6 +268,20 @@ variable "hosted_zone_id" {
   default     = ""
 }
 
+variable "ui_sites" {
+  description = <<-EOT
+    Game sites: the UI on a domain of its own, showing only some games. Keyed by domain name
+    (no scheme, no slash), e.g. "capture-the-flag.vivi.com". `games` are game names (Game.name),
+    the same in every environment. Each domain must be covered by ui_certificate_arn and sit in
+    hosted_zone_id. See design/game-sites-plan.md.
+  EOT
+  type = map(object({
+    heading = string
+    games   = list(string)
+  }))
+  default = {}
+}
+
 variable "ui_price_class" {
   description = <<-EOT
     CloudFront price class for the UI distribution. PriceClass_All serves from every edge region;

@@ -181,6 +181,9 @@ resource "aws_lambda_function" "api" {
       MAIL_QUEUE_URL = var.mail_queue_url
       MAIL_SENDER    = var.mail_sender
       UI_BASE_URL    = var.ui_base_url
+      # The game sites: which games a request from one may list, and where a tournament's mail sends
+      # its readers. See design/game-sites-plan.md.
+      UI_SITES = var.ui_sites_json
 
       # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
       # in the request context are trusted, which is only sound because the route above cannot be

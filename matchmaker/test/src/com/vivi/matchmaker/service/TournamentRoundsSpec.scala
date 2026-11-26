@@ -147,7 +147,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 settings = TournamentFixtures.timedByTurn(game = game, settings = settings),
                 defaultPoolSize = poolSize
               ),
-              callerExternalId = owner.externalId
+              callerExternalId = owner.externalId,
+              site = None
             )
             _ <- players.traverse(p =>
                 s.tournaments.enter(
@@ -665,7 +666,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                       turnDuration = Some(Duration.ofDays(2))
                     )
                   ),
-                  callerExternalId = owner.externalId
+                  callerExternalId = owner.externalId,
+                  site = None
                 )
                 _ <- s.tournaments.enter(
                   gameId = game.gameId,
@@ -1061,7 +1063,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 )
               )
             )
-            listed <- f.w.services.matches.active(f.players.head.externalId)
+            listed <- f.w.services.matches.active(f.players.head.externalId, GameScope.All)
             unfinished <- round(f)
             d <- detail(f)
         } yield (listed, unfinished, d.summary.tournament.status))

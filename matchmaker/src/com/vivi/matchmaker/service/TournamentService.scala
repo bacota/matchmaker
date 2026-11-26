@@ -17,7 +17,7 @@ import com.vivi.matchmaker.model.tournament.{
 import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence._
-import com.vivi.matchmaker.util.ChallengeSettings
+import com.vivi.matchmaker.util.{ChallengeSettings, Site}
 
 /** Tournaments, from their creation to their start (`tournament-design.md`, new-design.md Phase 4): designing one,
   * inviting and entering players, and starting it. Playing its rounds is [[TournamentRounds]]'.
@@ -51,29 +51,34 @@ class TournamentService[T](
 
     /** Where the caller stands in every tournament they have entered, bar the challenges that are over, those under way
       * first: their seed and stratum as they stand, and their final place once one is over. A ladder that runs for ever
-      * is one of these, always under way.
+      * is one of these, always under way. In the games `games` allows.
       */
-    def standings(callerExternalId: String): IO[List[TournamentStanding]] =
-        sessionPool.use { session =>
-            val repos = Repos(session)
-            requireCaller(repos, callerExternalId).flatMap(p => repos.tournaments.standingsForPlayer(p.playerId))
-        }
-
-    /** The tournaments the caller owns, has entered, or is invited to that are not over. */
-    def mine(callerExternalId: String): IO[List[TournamentSummary]] =
-        sessionPool.use { session =>
-            val repos = Repos(session)
-            requireCaller(repos, callerExternalId).flatMap(p => repos.tournaments.summariesForPlayer(p.playerId))
-        }
-
-    /** The tournaments the caller owns that finished or were cancelled within the last `frame`, the most recently ended
-      * first: a window of time, as a player's completed matches are.
-      */
-    def endedOwned(callerExternalId: String, frame: CompletedFrame): IO[List[TournamentSummary]] =
+    def standings(callerExternalId: String, games: GameScope): IO[List[TournamentStanding]] =
         sessionPool.use { session =>
             val repos = Repos(session)
             requireCaller(repos, callerExternalId).flatMap(p =>
-                repos.tournaments.endedOwnedSince(p.playerId, now().minus(frame.span))
+                repos.tournaments.standingsForPlayer(player = p.playerId, games = games)
+            )
+        }
+
+    /** The tournaments the caller owns, has entered, or is invited to that are not over, in the games `games` allows.
+      */
+    def mine(callerExternalId: String, games: GameScope): IO[List[TournamentSummary]] =
+        sessionPool.use { session =>
+            val repos = Repos(session)
+            requireCaller(repos, callerExternalId).flatMap(p =>
+                repos.tournaments.summariesForPlayer(viewer = p.playerId, games = games)
+            )
+        }
+
+    /** The tournaments the caller owns that finished or were cancelled within the last `frame`, the most recently ended
+      * first: a window of time, as a player's completed matches are. In the games `games` allows.
+      */
+    def endedOwned(callerExternalId: String, frame: CompletedFrame, games: GameScope): IO[List[TournamentSummary]] =
+        sessionPool.use { session =>
+            val repos = Repos(session)
+            requireCaller(repos, callerExternalId).flatMap(p =>
+                repos.tournaments.endedOwnedSince(viewer = p.playerId, since = now().minus(frame.span), games = games)
             )
         }
 
@@ -156,8 +161,16 @@ class TournamentService[T](
       * With `request.entry` the caller enters it as it is made, held to every rule of [[enter]], so that an entry
       * refused makes no tournament either. Nobody is told of that entry: the owner is the only one who would be, and
       * they made it.
+      *
+      * `site` is the game site the request came from, if any: its origin is recorded on the tournament, and its mail
+      * sends everyone in it there. See design/game-sites-plan.md.
       */
-    def create(gameId: GameId, request: TournamentRequest, callerExternalId: String): IO[Tournament] =
+    def create(
+        gameId: GameId,
+        request: TournamentRequest,
+        callerExternalId: String,
+        site: Option[Site]
+    ): IO[Tournament] =
         sessionPool
             .use { session =>
                 val repos = Repos(session)
@@ -178,7 +191,8 @@ class TournamentService[T](
                           caller = caller,
                           game = game,
                           model = model,
-                          request = request
+                          request = request,
+                          siteOrigin = site.map(_.origin)
                         )
                         // No lock to take: nobody else can see the row until this transaction commits. Answered as the
                         // entry left it, which is started when it fills one that starts itself.
@@ -206,14 +220,15 @@ class TournamentService[T](
         caller: Player,
         game: Game,
         model: TournamentModel,
-        request: TournamentRequest
+        request: TournamentRequest,
+        siteOrigin: Option[String]
     ): IO[Tournament] = {
         val poolSize = defaultPoolSize(game = game, model = model, request = request)
         val settings = TournamentService.settingsFor(model, request.settings)
         for {
             _ <- checkSettings(game = game, model = model, request = request, settings = settings, poolSize = poolSize)
             made <- repos.tournaments.create(
-              Tournament(
+              t = Tournament(
                 gameId = game.gameId,
                 tournamentId = TournamentId.unassigned,
                 name = request.name.trim,
@@ -223,7 +238,8 @@ class TournamentService[T](
                 defaultPoolSize = poolSize,
                 settings = settings,
                 status = TournamentStatus.Open
-              )
+              ),
+              siteOrigin = siteOrigin
             )
             _ <- repos.stages.copy(game = game.gameId, tournament = made.tournamentId, design = model.design)
             _ <- repos.pools.createRoot(game.gameId, made.tournamentId)

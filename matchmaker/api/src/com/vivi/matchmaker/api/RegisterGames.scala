@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all._
 import upickle.default.{ReadWriter, macroRW, read}
 import com.vivi.matchmaker.archive.ArchiveStore
-import com.vivi.matchmaker.model.Game
+import com.vivi.matchmaker.model.{Game, GameScope}
 import com.vivi.matchmaker.notify.Notifier
 import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.service.{DbConfig, Services}
@@ -81,7 +81,7 @@ object RegisterGames {
                     services.tournamentModels
                         .sync(admin)
                         .flatMap(done => IO.println(s"    tournament models: none stored; synced ${done.added.size}"))
-            existing <- services.games.list(admin).map(_.map(g => g.externalId -> g.displayName).toMap)
+            existing <- services.games.list(admin, GameScope.All).map(_.map(g => g.externalId -> g.displayName).toMap)
             _ <- engines.traverse_(engine =>
                 existing.get(engine.externalId) match {
                     case Some(name) =>

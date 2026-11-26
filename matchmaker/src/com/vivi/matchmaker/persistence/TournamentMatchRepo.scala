@@ -281,7 +281,7 @@ class TournamentMatchRepo(session: Session[IO]) {
     // participant row names who plays it now. Led by the player's seats rather than the matches: `s`'s conditions are
     // the predicate of the partial index participant_player_choosing, so only their unchosen seats are read, not every
     // seat they have had.
-    private val selectChoosingFor: Query[PlayerId, MatchRow] =
+    private val selectChoosingFor: Query[(PlayerId, GameScope), MatchRow] =
         sql"""SELECT m.game_id, m.tournament_id, m.match_id, m.pool_id, m.round, m.status, m.can_tie,
                  m.create_failures, m.create_failed_at, m.create_error
           FROM participant s
@@ -290,6 +290,7 @@ class TournamentMatchRepo(session: Session[IO]) {
             AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
                                    WHERE o.game_id = s.game_id AND o.match_id = s.match_id
                                      AND o.game_role_id IS NULL AND NOT o.is_forfeit)
+            AND ${SkunkCodecs.inGameScope("s.game_id")}
           ORDER BY m.create_date""".query(matchRow)
 
     // The seats of the matches named, unnested as (game, match) pairs so that each is a lookup on
@@ -302,8 +303,8 @@ class TournamentMatchRepo(session: Session[IO]) {
     /** The tournament matches waiting on this player to choose a role, oldest first, with their seats: two queries,
       * however many there are.
       */
-    def choosingFor(player: PlayerId): IO[List[TournamentMatch]] =
-        session.execute(selectChoosingFor)(player).flatMap { matches =>
+    def choosingFor(player: PlayerId, games: GameScope): IO[List[TournamentMatch]] =
+        session.execute(selectChoosingFor)((player, games)).flatMap { matches =>
             if (matches.isEmpty) IO.pure(Nil)
             else
                 session

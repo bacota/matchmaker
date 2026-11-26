@@ -36,10 +36,20 @@ class ChallengeMailSpec extends FunSuite {
           isReady = isReady
         )
 
-    private def compose(kind: NotificationType, news: ChallengeNews, recipient: Player = player("alice")) =
+    private val main = MailSite(name = "matchmaker", url = "https://matchmaker.example.com")
+
+    // A game site, which a mail about a tournament made on one sends its reader to: see design/game-sites-plan.md.
+    private val gameSite = MailSite(name = "Capture the Flag", url = "https://capture-the-flag.example")
+
+    private def compose(
+        kind: NotificationType,
+        news: ChallengeNews,
+        recipient: Player = player("alice"),
+        site: MailSite = main
+    ) =
         ChallengeMail.compose(
           sender = "matchmaker@example.com",
-          uiBaseUrl = "https://matchmaker.example.com",
+          site = site,
           recipient = recipient,
           kind = kind,
           news = news
@@ -131,6 +141,14 @@ class ChallengeMailSpec extends FunSuite {
         assert(mail.body.contains("carol has invited you to a Tic-Tac-Toe challenge."))
         assert(mail.body.contains("Open matchmaker to enter it, or to turn it down."))
         assert(!mail.body.contains("bob"), mail.body)
+    }
+
+    test("an invitation made on a game site names that site and links to it") {
+        val mail = compose(kind = NotificationType.InvitationReceived, news = news(), site = gameSite).get
+
+        assert(mail.body.contains("Open Capture the Flag to enter it, or to turn it down."), mail.body)
+        assert(mail.body.contains("Open Capture the Flag: https://capture-the-flag.example"), mail.body)
+        assert(!mail.body.contains("matchmaker"), mail.body)
     }
 
     // How full it is is the owner's problem, not the invitee's.

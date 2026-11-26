@@ -10,6 +10,7 @@ import com.vivi.matchmaker.model.{
     CompletedQuery,
     EloRating,
     GameId,
+    GameScope,
     GameMatch,
     Match,
     MatchId,
@@ -50,9 +51,11 @@ class MatchService(
     recoverEndings: List[(GameId, MatchId, String)] => IO[Boolean] = _ => IO.pure(false)
 ) {
 
-    /** Matches in which it is the caller's turn. */
-    def due(callerExternalId: String): IO[List[MatchSummary]] =
-        forCaller(callerExternalId)((repo, playerId) => repo.listDueForPlayer(playerId).flatMap(summarised(repo, _)))
+    /** Matches in which it is the caller's turn, in the games `games` allows. */
+    def due(callerExternalId: String, games: GameScope): IO[List[MatchSummary]] =
+        forCaller(callerExternalId)((repo, playerId) =>
+            repo.listDueForPlayer(playerId = playerId, games = games).flatMap(summarised(repo, _))
+        )
 
     /** Matches the caller is in that are still being played, each with what every seat has left of a chess clock where
       * the match is played under one.
@@ -60,13 +63,15 @@ class MatchService(
       * A match that may have ended without matchmaker hearing -- see [[owedEndings]] -- is first checked with its
       * engine, and the list read again if any had: a match the engine says is over is completed, and its tournament
       * told, rather than left here with a Play button on it.
+      *
+      * Both reads are of the games `games` allows.
       */
-    def active(callerExternalId: String): IO[List[MatchSummary]] = {
+    def active(callerExternalId: String, games: GameScope): IO[List[MatchSummary]] = {
         // The rows as well as the summaries, for the matches among them that may have ended.
         val read: IO[(List[MatchRepo.MatchSeatRow], List[MatchSummary])] =
             forCaller(callerExternalId) { (repo, playerId) =>
                 for {
-                    rows <- repo.listActiveForPlayer(playerId)
+                    rows <- repo.listActiveForPlayer(playerId = playerId, games = games)
                     summaries <- summarised(repo, rows)
                     // Asked for at all only when one of these matches is played under a chess clock, which
                     // most are not.
@@ -112,14 +117,21 @@ class MatchService(
       *
       * No clocks: a finished match's budgets are not something anybody can spend, and what each player *did* spend is
       * on the result rows instead.
+      *
+      * In the games `games` allows, narrowed to the query's one game where it names one.
       */
-    def completed(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[CompletedPage] = {
+    def completed(
+        callerExternalId: String,
+        games: GameScope,
+        query: CompletedQuery = CompletedQuery()
+    ): IO[CompletedPage] = {
+        val scope = games.narrowedTo(query.gameId)
         // The rows as well as the page, for the matches in it that are missing their results.
         def read(query: CompletedQuery): IO[(CompletedPage, List[MatchRepo.MatchSeatRow])] =
             forCaller(callerExternalId) { (repo, playerId) =>
-                completedPage(repo, query)(
+                completedPage(repo = repo, query = query, games = scope)(
                   span => repo.listCompletedForPlayer(playerId, span),
-                  from => repo.hasCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
+                  from => repo.hasCompletedBefore(playerId = playerId, games = scope, before = from)
                 )
             }
         for {
@@ -166,19 +178,31 @@ class MatchService(
       *
       * No clocks. A chess clock is a thing its owner spends, `withClocks` reads the caller's own budgets, and a
       * stranger's remaining seconds are not what somebody reading their page came for.
+      *
+      * In the games `games` allows.
       */
-    def publicActive(callerExternalId: String, playerId: PlayerId): IO[List[MatchSummary]] =
-        forRegistered(callerExternalId)(repo => repo.listPublicActiveForPlayer(playerId).flatMap(summarised(repo, _)))
-            .flatMap(viewed)
+    def publicActive(callerExternalId: String, playerId: PlayerId, games: GameScope): IO[List[MatchSummary]] =
+        forRegistered(callerExternalId)(repo =>
+            repo.listPublicActiveForPlayer(playerId = playerId, games = games).flatMap(summarised(repo, _))
+        ).flatMap(viewed)
 
-    /** One window of the public matches another player has finished, as [[completed]] is of the caller's own. */
-    def publicCompleted(callerExternalId: String, playerId: PlayerId, query: CompletedQuery): IO[CompletedPage] =
+    /** One window of the public matches another player has finished, as [[completed]] is of the caller's own, and
+      * narrowed the same way.
+      */
+    def publicCompleted(
+        callerExternalId: String,
+        playerId: PlayerId,
+        games: GameScope,
+        query: CompletedQuery
+    ): IO[CompletedPage] = {
+        val scope = games.narrowedTo(query.gameId)
         forRegistered(callerExternalId) { repo =>
-            completedPage(repo, query)(
+            completedPage(repo = repo, query = query, games = scope)(
               span => repo.listPublicCompletedForPlayer(playerId, span),
-              from => repo.hasPublicCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
+              from => repo.hasPublicCompletedBefore(playerId = playerId, games = scope, before = from)
             )
         }.map(_._1).flatMap(viewedPage)
+    }
 
     /** The public matches a character is in that are still running, whoever owned it for each: a character's page, as
       * [[publicActive]] is a player's, and under the same rule -- only matches marked public.
@@ -196,7 +220,7 @@ class MatchService(
         query: CompletedQuery
     ): IO[CompletedPage] =
         forRegistered(callerExternalId) { repo =>
-            completedPage(repo, query.copy(gameId = Some(gameId)))(
+            completedPage(repo = repo, query = query, games = GameScope.only(gameId))(
               span => repo.listPublicCompletedForCharacter(game = gameId, character = characterId, span = span),
               from => repo.hasPublicCompletedBeforeForCharacter(game = gameId, character = characterId, before = from)
             )
@@ -210,8 +234,10 @@ class MatchService(
      * database's own clock, and which is then sent back for every later window of the same list.
      * Every window ends where the next newer one begins, the most recent included: a list paged
      * back and forth from one `asOf` shows the same windows each time. A match finished since then
-     * is shown by asking afresh -- a refresh, or a change of frame -- which takes a new `asOf`. */
-    private def completedPage(repo: MatchRepo, query: CompletedQuery)(
+     * is shown by asking afresh -- a refresh, or a change of frame -- which takes a new `asOf`.
+     *
+     * `games` is the scope already narrowed to the query's game: the query's own `gameId` is not read here. */
+    private def completedPage(repo: MatchRepo, query: CompletedQuery, games: GameScope)(
         rows: MatchRepo.CompletedSpan => IO[List[MatchRepo.MatchSeatRow]],
         olderThan: Instant => IO[Boolean]
     ): IO[(CompletedPage, List[MatchRepo.MatchSeatRow])] =
@@ -219,7 +245,7 @@ class MatchService(
             asOf <- query.asOf.fold(repo.now)(IO.pure)
             until = query.until(asOf)
             from = query.from(asOf)
-            found <- rows(MatchRepo.CompletedSpan(from = from, until = until, gameId = query.gameId))
+            found <- rows(MatchRepo.CompletedSpan(from = from, until = until, games = games))
             summaries <- summarised(repo, found)
             older <- olderThan(from)
         } yield (
@@ -371,7 +397,11 @@ class MatchService(
       * own — there is no parameter that could ask for anyone else's. Two queries for the whole window, not two per
       * match: the rows of the table, and what each seat spent getting there.
       */
-    def results(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[List[ParticipantResult]] =
+    def results(
+        callerExternalId: String,
+        games: GameScope,
+        query: CompletedQuery = CompletedQuery()
+    ): IO[List[ParticipantResult]] =
         sessionPool.use { session =>
             val repos = Repos(session)
             for {
@@ -380,7 +410,7 @@ class MatchService(
                 span = MatchRepo.CompletedSpan(
                   from = query.from(asOf),
                   until = query.until(asOf),
-                  gameId = query.gameId
+                  games = games.narrowedTo(query.gameId)
                 )
                 rows <- repos.results.listForPlayer(caller.playerId, span)
                 spent <- repos.results.timeTakenForPlayer(caller.playerId, span)

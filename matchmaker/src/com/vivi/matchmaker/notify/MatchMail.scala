@@ -70,7 +70,7 @@ object MatchMail extends NotificationMail[MatchNews] {
     /* `news.due` is the recipient's own deadline, which is why a mail is composed one recipient at a
      * time rather than for a roster: the same move produces a different sentence for the player who
      * now has to answer it. */
-    protected def lines(kind: NotificationType, news: MatchNews): Option[(String, String)] = {
+    override protected def lines(kind: NotificationType, news: MatchNews, site: MailSite): Option[(String, String)] = {
         val name = news.gameName
         // How every mail after the first refers back to the match: its description -- a tournament's
         // name and round -- when there is one, which is what a player recognises it by.

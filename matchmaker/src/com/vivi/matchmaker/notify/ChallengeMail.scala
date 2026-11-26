@@ -53,7 +53,11 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
 
     /* No play link on any of these: nothing is a match yet, so there is nothing to play at.
      * `NotificationMail.playUrl` defaults to none, which is why it is not overridden here. */
-    protected def lines(kind: NotificationType, news: ChallengeNews): Option[(String, String)] = {
+    override protected def lines(
+        kind: NotificationType,
+        news: ChallengeNews,
+        site: MailSite
+    ): Option[(String, String)] = {
         val name = news.gameName
         val what = news.what
         // Empty for a challenge, which is how the clause disappears from whichever sentence it sits inside.
@@ -114,7 +118,8 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                       "challenger" -> news.challenger,
                       "game" -> name,
                       "what" -> what,
-                      "quoted" -> quoted
+                      "quoted" -> quoted,
+                      "siteName" -> site.name
                     )
                   )
                 )

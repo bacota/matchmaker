@@ -14,6 +14,8 @@ object Main {
 
     @JSExportTopLevel("main")
     def main(): Unit = {
+        // A game site is titled by its own name: see design/game-sites-plan.md.
+        Config.current.siteHeading.foreach(heading => dom.document.title = heading)
         // Must run before anything reads the token: this may be the page load that carries an
         // authorization code back from the hosted sign-up or password-reset pages, and until it has
         // been redeemed there is no session. An ordinary load has no code and falls straight through.

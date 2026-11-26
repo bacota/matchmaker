@@ -273,19 +273,20 @@ class TournamentRounds[T](
         TournamentGame.of(game).seatingRoles.take(seats).map(r => GameRoleId(r.id))
 
     /** Every seat whose turn it is to choose a role, across the caller's tournaments, with when their time runs out.
-      * Its matches, their tournaments and their games are each read once for the whole list.
+      * Its matches, their tournaments and their games are each read once for the whole list. In the games `games`
+      * allows.
       */
-    def choicesFor(callerExternalId: String): IO[List[TournamentChoice]] =
+    def choicesFor(callerExternalId: String, games: GameScope): IO[List[TournamentChoice]] =
         sessionPool.use { session =>
             val repos = Repos(session)
             for {
                 caller <- requireCaller(repos, callerExternalId)
-                waiting <- repos.tournamentMatches.choosingFor(caller.playerId)
+                waiting <- repos.tournamentMatches.choosingFor(player = caller.playerId, games = games)
                 tournaments <- repos.tournaments.readFor(
                   waiting.map(tm => TournamentKey(tm.gameId, tm.tournamentId)).distinct
                 )
                 // The few games they are in, read plainly, as everywhere here: see requireGame.
-                games <- waiting
+                gamesById <- waiting
                     .map(_.gameId)
                     .distinct
                     .traverse(g => repos.games[T].read(g).map(_.map(g -> _)))
@@ -293,7 +294,7 @@ class TournamentRounds[T](
             } yield waiting.flatMap { tm =>
                 for {
                     t <- tournaments.get(TournamentKey(tm.gameId, tm.tournamentId))
-                    game <- games.get(tm.gameId)
+                    game <- gamesById.get(tm.gameId)
                 } yield TournamentChoice(
                   gameId = tm.gameId,
                   tournamentId = tm.tournamentId,

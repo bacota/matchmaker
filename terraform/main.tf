@@ -119,10 +119,11 @@ module "api" {
     var.deploy_stratego ? [module.stratego[0].auth_callback_url] : [],
     var.deploy_wavinghands ? [module.wavinghands[0].auth_callback_url] : [],
     var.deploy_hilo ? [module.hilo[0].auth_callback_url] : [],
+    module.ui.site_urls,
     var.callback_urls
   )
-  logout_urls          = concat([module.ui.url], var.logout_urls)
-  cors_allowed_origins = concat([module.ui.origin], var.cors_allowed_origins)
+  logout_urls          = concat([module.ui.url], module.ui.site_urls, var.logout_urls)
+  cors_allowed_origins = concat([module.ui.origin], module.ui.site_origins, var.cors_allowed_origins)
 
   # Where notifications are queued, and what they say they are from. Empty when deploy_mail is
   # false, which is what leaves the API with nothing to enqueue to — see modules/api's variables.
@@ -139,6 +140,8 @@ module "api" {
   bounce_queue_arn = var.deploy_mail ? module.mail[0].bounce_queue_arn : ""
   mail_sender      = var.deploy_mail ? local.mail_sender : ""
   ui_base_url      = module.ui.url
+  # The game sites, keyed by origin: see design/game-sites-plan.md.
+  ui_sites_json = jsonencode({ for domain, site in var.ui_sites : "https://${domain}" => site })
 
   # Policy, from environments/<env>.settings.tfvars.
   lambda_memory_mb            = var.lambda_memory_mb
@@ -210,6 +213,7 @@ module "ui" {
   domain_name     = var.ui_domain_name
   hosted_zone_id  = var.hosted_zone_id
   certificate_arn = var.ui_certificate_arn
+  sites           = var.ui_sites
 
   api_endpoint        = module.api.api_endpoint
   hosted_login_url    = module.api.hosted_login_url

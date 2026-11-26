@@ -256,7 +256,7 @@ class EloRatingServiceSpec extends PropertySuite {
     /** The match's result rows as `player` is shown them: each seat's Elo as it began, and the match's change to it. */
     private def resultElo(player: Player, matchId: MatchId): IO[Map[String, (Int, Option[Int])]] =
         services.matches
-            .results(player.externalId)
+            .results(player.externalId, GameScope.All)
             .map(_.filter(_.matchId == matchId).map(r => r.nickname -> (r.eloStart, r.eloDelta)).toMap)
 
     /** Each player's rating in the role they play in [[started]] — `first` the game's first role, `second` its second —

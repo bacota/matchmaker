@@ -592,10 +592,10 @@ class GameEngineServiceSpec extends PropertySuite {
                       settled = _ == TournamentMatchStatus.Due
                     )
                     stranded <- matchOf(fixture.game.gameId, matchId)
-                    before <- failing.matches.active(externalId)
+                    before <- failing.matches.active(externalId, GameScope.All)
                     _ <- working.rounds.createMatch(gameId = fixture.game.gameId, tournamentId = t, matchId = matchId)
                     created <- matchOf(fixture.game.gameId, matchId)
-                    after <- working.matches.active(externalId)
+                    after <- working.matches.active(externalId, GameScope.All)
                 } yield stranded.exists(m => m.status == MatchStatus.Due && m.playUrl.isEmpty) &&
                     before.isEmpty &&
                     created.exists(_.playUrl.contains("https://engine/play/1")) &&
@@ -1044,7 +1044,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       turns = Some(Nil),
                       summary = Some("<strong>me</strong> won<script>alert(1)</script>")
                     )
-                    completed <- services.matches.completed(externalId).map(_.matches.toList)
+                    completed <- services.matches.completed(externalId, GameScope.All).map(_.matches.toList)
                 } yield completed.filter(_.matchId == started.matchId).map(_.resultSummary)
                 assertEquals(
                   result.timeout(15.seconds).unsafeRunSync(),
@@ -1295,7 +1295,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 )
                 stored <- TestSession.resource.use(session => new ResultRepo(session).read(fixture.game.gameId, seat))
                 after <- participantsOf(started)
-                completed <- services.matches.completed(externalId).map(_.matches.toList)
+                completed <- services.matches.completed(externalId, GameScope.All).map(_.matches.toList)
                 // Not just that it is over, but when: the column is a timestamp, and a match completed
                 // by this callback is stamped as the callback runs.
                 reread <- services.engine.read(
@@ -1450,7 +1450,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       callerExternalId = externalId
                     )
                     results <- resultsOf(started)
-                    completed <- services.matches.completed(externalId).map(_.matches.toList)
+                    completed <- services.matches.completed(externalId, GameScope.All).map(_.matches.toList)
                 } yield refreshed.isCompleted &&
                     results.map(r => (r.participantId, r.rank, r.isWinner)).toSet == Set(
                       (mine.participantId, 1, true),
@@ -1542,7 +1542,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       callerExternalId = externalId
                     )
                     _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
-                    listed <- services.matches.completed(externalId).map(_.matches.toList)
+                    listed <- services.matches.completed(externalId, GameScope.All).map(_.matches.toList)
                     recovered <- resultsOf(started)
                 } yield recovered.map(r => (r.participantId, r.rank, r.isWinner)).toSet == Set(
                   (mine.participantId, 1, true),
@@ -1574,9 +1574,9 @@ class GameEngineServiceSpec extends PropertySuite {
                       callerExternalId = externalId
                     )
                     // Answered, with nothing: recorded as asked.
-                    _ <- services.matches.completed(externalId)
+                    _ <- services.matches.completed(externalId, GameScope.All)
                     _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
-                    _ <- services.matches.completed(externalId)
+                    _ <- services.matches.completed(externalId, GameScope.All)
                     within <- resultsOf(started)
                     // An hour on, it is asked again, and this time the engine has them.
                     _ <- TestSession.resource.use(
@@ -1585,7 +1585,7 @@ class GameEngineServiceSpec extends PropertySuite {
                               WHERE match_id = ${SkunkIdCodecs.matchId}""".command
                       )(started.matchId)
                     )
-                    _ <- services.matches.completed(externalId)
+                    _ <- services.matches.completed(externalId, GameScope.All)
                     later <- resultsOf(started)
                 } yield within.isEmpty && later.map(_.participantId).toSet == Set(
                   mine.participantId,
@@ -1621,10 +1621,10 @@ class GameEngineServiceSpec extends PropertySuite {
                       callerExternalId = externalId
                     )
                     _ <- IO { isDown = true }
-                    _ <- services.matches.completed(externalId)
+                    _ <- services.matches.completed(externalId, GameScope.All)
                     // Back, with the results; but the match was asked about within the hour.
                     _ <- IO { isDown = false; engine.status = statusWithResults(mine = mine, theirs = theirs) }
-                    _ <- services.matches.completed(externalId)
+                    _ <- services.matches.completed(externalId, GameScope.All)
                     after <- resultsOf(started)
                 } yield after.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1648,8 +1648,8 @@ class GameEngineServiceSpec extends PropertySuite {
                       otherExternalId = otherExternalId
                     )
                     (_, started, _, _) = seated
-                    _ <- services.matches.active(externalId)
-                    _ <- services.matches.active(externalId)
+                    _ <- services.matches.active(externalId, GameScope.All)
+                    _ <- services.matches.active(externalId, GameScope.All)
                     within = asked.get
                     _ <- TestSession.resource.use(
                       _.execute(
@@ -1657,7 +1657,7 @@ class GameEngineServiceSpec extends PropertySuite {
                               WHERE match_id = ${SkunkIdCodecs.matchId}""".command
                       )(started.matchId)
                     )
-                    listed <- services.matches.active(externalId)
+                    listed <- services.matches.active(externalId, GameScope.All)
                 } yield within == 1 && asked.get == 2 && listed.map(_.matchId) == List(started.matchId)
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1678,7 +1678,10 @@ class GameEngineServiceSpec extends PropertySuite {
                       gameExternalId = gameExternalId,
                       otherExternalId = otherExternalId
                     )
-                    _ <- (services.matches.active(externalId), services.matches.active(otherExternalId)).parTupled
+                    _ <- (
+                      services.matches.active(externalId, GameScope.All),
+                      services.matches.active(otherExternalId, GameScope.All)
+                    ).parTupled
                 } yield asked.get == 1
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1705,7 +1708,7 @@ class GameEngineServiceSpec extends PropertySuite {
                               WHERE participant_id = ${SkunkIdCodecs.participantId}""".command
                       )(theirs.participantId)
                     )
-                    listed <- services.matches.active(externalId)
+                    listed <- services.matches.active(externalId, GameScope.All)
                 } yield asked.get == 0 && listed.map(_.matchId) == List(started.matchId)
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1726,7 +1729,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     )
                     (fixture, started, mine, theirs) = seated
                     _ <- IO { engine.status = statusWithResults(mine = mine, theirs = theirs) }
-                    listed <- services.matches.active(externalId)
+                    listed <- services.matches.active(externalId, GameScope.All)
                     ended <- matchOf(fixture.game.gameId, started.matchId)
                     recorded <- resultsOf(started)
                 } yield !listed.exists(_.matchId == started.matchId) && ended.exists(_.isCompleted) &&
@@ -2448,11 +2451,11 @@ class GameEngineServiceSpec extends PropertySuite {
                     (fixture, started, mine, _) = prepared
                     // Asked by the opponent, who has just moved and is waiting: it is the challenger's
                     // turn, and their deadline is the six minutes left of their budget from `second`.
-                    theirs <- services.matches.active(otherExternalId)
+                    theirs <- services.matches.active(otherExternalId, GameScope.All)
                     row = theirs.find(_.matchId == started.matchId).get
                     // And by the challenger, whose own row says the same thing about the same turn — the
                     // seat it is read from differs, the answer does not.
-                    ours <- services.matches.active(externalId)
+                    ours <- services.matches.active(externalId, GameScope.All)
                     mineRow = ours.find(_.matchId == started.matchId).get
                     participants <- participantsOf(started)
                     challengerDue = participants.find(_.participantId == mine.participantId).get.due
@@ -2492,7 +2495,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       secondMoveAt = second
                     )
                     (_, started, mine, _) = prepared
-                    rows <- services.matches.active(otherExternalId)
+                    rows <- services.matches.active(otherExternalId, GameScope.All)
                     row = rows.find(_.matchId == started.matchId).get
                     byName = row.clocks.map(c => c.nickname -> c).toMap
                     participants <- participantsOf(started)
@@ -2538,7 +2541,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       secondMoveAt = second
                     )
                     (_, started, _, _) = prepared
-                    rows <- services.matches.active(otherExternalId)
+                    rows <- services.matches.active(otherExternalId, GameScope.All)
                 } yield rows.find(_.matchId == started.matchId).exists(_.clocks.isEmpty)
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -2590,7 +2593,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       ),
                       callerExternalId = gameExternalId
                     )
-                    rows <- services.matches.results(externalId)
+                    rows <- services.matches.results(externalId, GameScope.All)
                     mineRow = rows.find(_.participantId == mine.participantId).get
                     theirRow = rows.find(_.participantId == theirs.participantId).get
                 } yield mineRow.timeTaken == Duration.ofMinutes(4) &&
@@ -2620,7 +2623,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       roundDuration = Some(Duration.ofHours(2))
                     )
                     (started, _) = made
-                    listed <- services.matches.active(externalId)
+                    listed <- services.matches.active(externalId, GameScope.All)
                     row = listed.find(_.matchId == started.matchId).get
                 } yield started.timeLimit.contains(Duration.ofHours(1)) &&
                     started.timeLimitKind == TimeLimitKind.Total &&
@@ -2646,8 +2649,8 @@ class GameEngineServiceSpec extends PropertySuite {
                     participants <- participantsOf(started)
                     // The lists the main page's "waiting on you" is drawn from, asked for with no refresh in
                     // between — this is the state a player finds when the page loads after a start.
-                    mine <- services.matches.due(externalId)
-                    theirs <- services.matches.due(otherExternalId)
+                    mine <- services.matches.due(externalId, GameScope.All)
+                    theirs <- services.matches.due(otherExternalId, GameScope.All)
                 } yield participants.count(_.isPending) == 1 &&
                     (mine ++ theirs).map(_.matchId) == List(started.matchId)
                 result.timeout(30.seconds).unsafeRunSync()
@@ -2804,8 +2807,8 @@ class GameEngineServiceSpec extends PropertySuite {
                       callerExternalId = externalId
                     )
                     participants <- participantsOf(started)
-                    due <- services.matches.due(externalId)
-                    active <- services.matches.active(externalId)
+                    due <- services.matches.due(externalId, GameScope.All)
+                    active <- services.matches.active(externalId, GameScope.All)
                 } yield !refreshed.isCompleted &&
                     participants.forall(p => !p.isPending && p.due.isEmpty) &&
                     due.isEmpty &&
@@ -2859,7 +2862,7 @@ class GameEngineServiceSpec extends PropertySuite {
                   callerExternalId = externalId
                 )
                 participants <- participantsOf(started)
-                active <- services.matches.active(externalId)
+                active <- services.matches.active(externalId, GameScope.All)
             } yield refreshed.isCompleted &&
                 participants.nonEmpty &&
                 participants.forall(p => p.isCompleted && !p.isPending && p.due.isEmpty) &&

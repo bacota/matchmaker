@@ -107,6 +107,18 @@ In tests, `Challenges.offeredIn(game)` offers the model, and `Challenges.started
 the asynchronous round and match. `TestMatches` writes a match or seat directly, and `TestServices.servicesInline`
 runs the ending queue synchronously, for mail specs.
 
+## Game sites
+
+**A query that lists rows from more than one game takes a `GameScope`.** Required, never
+defaulted, and applied in SQL with `SkunkCodecs.inGameScope`. Its route reads the scope with
+`Router.gameScope`, and `GameScopeSpec` gets a case for it. Game sites
+(design/game-sites-plan.md) rely on it: a list that skips it shows a site's players every game.
+
+**A new way to make a tournament records its site.** `tournament.site_origin` comes from the
+request's `Origin` (`Sites.current.forOrigin`), and mail uses it to send everyone in the
+tournament to the site it was made on. A path that makes a tournament without it sends that
+tournament's mail to the main domain.
+
 ## Errors
 
 Failure is a `Throwable`: services raise `ServiceError` into `IO`, and `api/Errors.toResponse` maps a `Throwable`

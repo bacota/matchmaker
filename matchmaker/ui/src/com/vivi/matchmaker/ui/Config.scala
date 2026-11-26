@@ -20,7 +20,8 @@ case class Config(
     region: String,
     redirectUri: String,
     authMode: String,
-    localExternalId: String
+    localExternalId: String,
+    siteHeading: Option[String]
 ) {
 
     /** True in the local development mode, where there is no Cognito and the caller's identity is asserted rather than
@@ -93,8 +94,27 @@ object Config {
           authMode = mode,
           // Whoever you are when there is nothing to prove it. Configurable so two browser profiles
           // can be two players, which is what testing a challenge and an acceptance needs.
-          localExternalId = optional("localExternalId").getOrElse("local-dev-1")
+          localExternalId = optional("localExternalId").getOrElse("local-dev-1"),
+          siteHeading = siteHeadingOf(raw)
         )
+    }
+
+    /** The heading of the game site this page is served as, when it is one: `sites` is keyed by origin, each value `{
+      * heading }`, and the page's own origin picks one. A site shows only some games, but the API is what narrows the
+      * lists, by the request's origin; the page only shows the heading. See design/game-sites-plan.md.
+      */
+    private def siteHeadingOf(raw: js.Dynamic): Option[String] = {
+        val sites = raw.selectDynamic("sites")
+        if (js.isUndefined(sites) || sites == null) None
+        else {
+            val site = sites.selectDynamic(dom.window.location.origin)
+            if (js.isUndefined(site) || site == null) None
+            else {
+                val heading = site.selectDynamic("heading")
+                if (js.isUndefined(heading) || heading == null || heading.toString.isEmpty) None
+                else Some(heading.toString)
+            }
+        }
     }
 
     /** The region out of `https://<prefix>.auth.<region>.amazoncognito.com`.

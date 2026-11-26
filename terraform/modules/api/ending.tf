@@ -165,6 +165,7 @@ resource "aws_lambda_function" "ending" {
       MAIL_QUEUE_URL = var.mail_queue_url
       MAIL_SENDER    = var.mail_sender
       UI_BASE_URL    = var.ui_base_url
+      UI_SITES       = var.ui_sites_json
     }
   }
 

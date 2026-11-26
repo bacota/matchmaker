@@ -67,7 +67,49 @@ class MailTemplatesSpec extends FunSuite {
     test("a variable the file names and the caller did not supply is refused, by name") {
         val failure = intercept[IllegalArgumentException](MailTemplates.render("mail.links", "wrong" -> "x"))
         assert(failure.getMessage.contains("mail.links"), failure.getMessage)
-        assert(failure.getMessage.contains("uiBaseUrl"), failure.getMessage)
+        assert(failure.getMessage.contains("siteName"), failure.getMessage)
+    }
+
+    // The two bodies that name the site, as the main site and as a game site. See design/game-sites-plan.md.
+    private val gameSite = MailSite(name = "Capture the Flag", url = "https://capture-the-flag.example")
+    private val main = MailSite(name = MailText.mainSiteName, url = "https://matchmaker.example.com")
+    private val tournament = Seq("game" -> "Capture the Flag", "tournament" -> "Spring Open", "round" -> "2")
+
+    test("the main site is called matchmaker") {
+        assertEquals(MailText.mainSiteName, "matchmaker")
+    }
+
+    test("a round over says to open the tournament in the site it was made on") {
+        assert(
+          MailTemplates
+              .render("mail.tournament.roundDone.body", (tournament ++ MailText.siteValues(main))*)
+              .contains("open the tournament in matchmaker")
+        )
+        val onSite =
+            MailTemplates.render("mail.tournament.roundDone.body", (tournament ++ MailText.siteValues(gameSite))*)
+        assert(onSite.contains("open the tournament in Capture the Flag"), onSite)
+        assert(!onSite.contains("matchmaker"), onSite)
+    }
+
+    test("a match not created says to open the tournament in the site it was made on") {
+        assert(
+          MailTemplates
+              .render("mail.tournament.matchNotCreated.body", (tournament ++ MailText.siteValues(main))*)
+              .contains("Open the tournament in matchmaker")
+        )
+        val onSite =
+            MailTemplates.render("mail.tournament.matchNotCreated.body", (tournament ++ MailText.siteValues(gameSite))*)
+        assert(onSite.contains("Open the tournament in Capture the Flag"), onSite)
+        assert(!onSite.contains("matchmaker"), onSite)
+    }
+
+    test("the links name the site and go to it") {
+        val links = MailText.links(site = gameSite, playUrl = None)
+        assertEquals(links, "Open Capture the Flag: https://capture-the-flag.example")
+        assertEquals(
+          MailText.links(site = main, playUrl = Some("https://engine/play/1")),
+          "Play: https://engine/play/1\nOpen matchmaker: https://matchmaker.example.com"
+        )
     }
 
     /* Every `${` in the file has to be a variable this can actually substitute: the pattern is

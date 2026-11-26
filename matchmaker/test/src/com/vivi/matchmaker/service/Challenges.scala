@@ -7,6 +7,7 @@ import java.time.Duration
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.standard.RoundRobin
 import com.vivi.matchmaker.persistence.{GameAdminRepo, TestSession}
+import com.vivi.matchmaker.util.Site
 
 /** Challenges for specs: one offered, entered and started as players would, through the services, up to its match being
   * created in the engine.
@@ -39,7 +40,8 @@ object Challenges {
         isPublic: Boolean = false,
         isAutoStarted: Boolean = false,
         invitations: List[PlayerId] = Nil,
-        characterInvitations: List[CharacterId] = Nil
+        characterInvitations: List[CharacterId] = Nil,
+        site: Option[Site] = None
     ): IO[Tournament] = {
         val pool = poolSize.getOrElse(game.poolSeats)
         for {
@@ -70,7 +72,8 @@ object Challenges {
                 ),
                 entry = Option.when(isPlaying)(TournamentEntry(characterId))
               ),
-              callerExternalId = owner.externalId
+              callerExternalId = owner.externalId,
+              site = site
             )
             _ <- invitations.traverse_(p =>
                 tournaments.invite(
@@ -111,7 +114,8 @@ object Challenges {
         live: Boolean = false,
         isPublic: Boolean = false,
         settings: String = "{}",
-        hostedBy: Option[Player] = None
+        hostedBy: Option[Player] = None,
+        site: Option[Site] = None
     ): IO[(TournamentId, MatchId)] =
         hostedBy match {
             case None =>
@@ -124,7 +128,8 @@ object Challenges {
                       roundDuration = roundDuration,
                       live = live,
                       isPublic = isPublic,
-                      settings = settings
+                      settings = settings,
+                      site = site
                     )
                     started <- startAndChoose(services = services, game = game, t = t, seats = seats)
                 } yield (t, started)
@@ -143,7 +148,8 @@ object Challenges {
                       isFriendly = friendly,
                       isPublic = isPublic,
                       isAutoStarted = true,
-                      invitations = seats.map(_.player.playerId)
+                      invitations = seats.map(_.player.playerId),
+                      site = site
                     )
                     _ <- seats.traverse_(s =>
                         services.tournaments.enter(
@@ -172,7 +178,8 @@ object Challenges {
         roundDuration: Option[Duration] = None,
         live: Boolean = false,
         isPublic: Boolean = false,
-        settings: String = "{}"
+        settings: String = "{}",
+        site: Option[Site] = None
     ): IO[TournamentId] = {
         val host = seats.head
         for {
@@ -187,7 +194,8 @@ object Challenges {
               gameSettings = settings,
               isLive = live,
               isFriendly = friendly,
-              isPublic = isPublic
+              isPublic = isPublic,
+              site = site
             )
             _ <- seats.tail.traverse_(s =>
                 services.tournaments.enter(

@@ -442,7 +442,7 @@ class MatchRepo(session: Session[IO]) {
           -- completed_at would mean reading every seat the player has ever had. The match's
           -- conditions stay, for a seat whose match ended without retiring it.
           WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.completed_at IS NULL
-            AND m.completed_at IS NULL AND NOT m.is_cancelled
+            AND m.completed_at IS NULL AND NOT m.is_cancelled AND ${SkunkCodecs.inGameScope("p.game_id")}
           -- Ordered by the caller's own deadline, most urgent first, with NULLS LAST so matches
           -- with no deadline do not crowd out ones that have one; then by seat, so a match's
           -- rows arrive together and in a stable order.
@@ -454,7 +454,7 @@ class MatchRepo(session: Session[IO]) {
 
     /* One window of the player's finished matches: the seats they finished with from `from`, up to
      * but not including `until` -- by the seat's own
-     * `completed_at`, and in one game where `game` names one. Served by the index on
+     * `completed_at`, and in the games its scope allows. Served by the index on
      * participant(player_id, completed_at).
      *
      * Not a cancelled match: one called off was never finished, and is not listed as though it had
@@ -490,7 +490,7 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
           LEFT JOIN character seat_char
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND ${SkunkCodecs.inGameScope("p.game_id")}
             AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
@@ -553,6 +553,7 @@ class MatchRepo(session: Session[IO]) {
           -- out of this list, as the next one leaves it out on purpose.
           -- Supported by the index on participant(player_id, completed_at).
           WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.completed_at IS NULL
+            AND ${SkunkCodecs.inGameScope("p.game_id")}
           -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
           -- most recently started first, which is the order a stranger reads a list of games in.
           ORDER BY m.start DESC, m.match_id, seat.participant_id"""
@@ -586,7 +587,9 @@ class MatchRepo(session: Session[IO]) {
                  ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           -- The other half of that: their seat is done, whatever the match is doing -- in one window
           -- of time, as the caller's own list above, and never a match called off.
-          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+          WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND ${SkunkCodecs.inGameScope(
+              "p.game_id"
+            )}
             AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.is_cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
@@ -621,62 +624,65 @@ class MatchRepo(session: Session[IO]) {
           -- `p.is_pending` written bare, as the partial index participant_player_pending's predicate is,
           -- so that the planner matches the two and reads only the player's pending seats.
           WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.is_pending AND m.completed_at IS NULL AND NOT m.is_cancelled
+            AND ${SkunkCodecs.inGameScope("p.game_id")}
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     /** Every match the player is in that is still running, most urgent first, one row per seat. */
-    def listActiveForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
-        session.execute(selectActiveForPlayer)(playerId)
+    def listActiveForPlayer(playerId: PlayerId, games: GameScope): IO[List[MatchSeatRow]] =
+        session.execute(selectActiveForPlayer)((playerId, games))
 
     /** One window of the matches the player has finished, most recent first, one row per seat: see [[CompletedSpan]].
       */
     def listCompletedForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[MatchSeatRow]] =
         session
-            .execute(selectOverForPlayer)((playerId, span.gameId, span.from, span.until))
+            .execute(selectOverForPlayer)((playerId, span.games, span.from, span.until))
 
     /** The public matches one player is in that are still running, one row per seat.
       *
       * For somebody else's page: the lists above answer about the caller and show everything, this one and the next
       * answer about anybody and show only what that player marked public.
       */
-    def listPublicActiveForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
-        session.execute(selectPublicActiveForPlayer)(playerId).map(_.map(toSeatRow))
+    def listPublicActiveForPlayer(playerId: PlayerId, games: GameScope): IO[List[MatchSeatRow]] =
+        session.execute(selectPublicActiveForPlayer)((playerId, games)).map(_.map(toSeatRow))
 
     /** One window of the public matches the player has finished, most recent first, one row per seat. */
     def listPublicCompletedForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[MatchSeatRow]] =
         session
-            .execute(selectPublicOverForPlayer)((playerId, span.gameId, span.from, span.until))
+            .execute(selectPublicOverForPlayer)((playerId, span.games, span.from, span.until))
             .map(_.map(toSeatRow))
 
     /* Whether anything the same list could show was finished before a window began: what decides
      * whether there is an older window to go to. The same rules as the two lists -- the player's
-     * seats, the one game where there is one, never a cancelled match, and only public ones for
+     * seats, the games the scope allows, never a cancelled match, and only public ones for
      * somebody else's page -- and the same reason for writing the two out rather than flagging one. */
-    private val selectCompletedBefore: Query[(PlayerId, Option[GameId], Instant), Boolean] =
+    private val selectCompletedBefore: Query[(PlayerId, GameScope, Instant), Boolean] =
         sql"""SELECT EXISTS (
             SELECT 1 FROM participant p
             JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND ${SkunkCodecs.inGameScope("p.game_id")}
               AND p.completed_at < $instant AND NOT m.is_cancelled
           )""".query(bool)
 
-    private val selectPublicCompletedBefore: Query[(PlayerId, Option[GameId], Instant), Boolean] =
+    private val selectPublicCompletedBefore: Query[(PlayerId, GameScope, Instant), Boolean] =
         sql"""SELECT EXISTS (
             SELECT 1 FROM participant p
             JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+            WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.is_public AND ${SkunkCodecs.inGameScope(
+              "p.game_id"
+            )}
               AND p.completed_at < $instant AND NOT m.is_cancelled
           )""".query(bool)
 
-    /** Whether the player finished anything before `before`, in the one game where there is one, that their own
-      * completed list would show.
+    /** Whether the player finished anything before `before`, in the games `games` allows, that their own completed list
+      * would show.
       */
-    def hasCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
-        session.unique(selectCompletedBefore)((playerId, gameId, before))
+    def hasCompletedBefore(playerId: PlayerId, games: GameScope, before: Instant): IO[Boolean] =
+        session.unique(selectCompletedBefore)((playerId, games, before))
 
     /** The same, for the public list on the player's page. */
-    def hasPublicCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
-        session.unique(selectPublicCompletedBefore)((playerId, gameId, before))
+    def hasPublicCompletedBefore(playerId: PlayerId, games: GameScope, before: Instant): IO[Boolean] =
+        session.unique(selectPublicCompletedBefore)((playerId, games, before))
 
     private val characterIdOf = SkunkIdCodecs.characterId
 
@@ -755,7 +761,7 @@ class MatchRepo(session: Session[IO]) {
         session.execute(selectPublicActiveForCharacter)((game, character)).map(_.map(toSeatRow))
 
     /** One window of the public matches a character has finished, most recent first, one row per seat. Always in the
-      * character's own game, whatever `span.gameId` says.
+      * character's own game, whatever `span.games` says.
       */
     def listPublicCompletedForCharacter(
         game: GameId,
@@ -776,8 +782,8 @@ class MatchRepo(session: Session[IO]) {
     def now: IO[Instant] = session.unique(sql"SELECT now()".query(instant))
 
     /** The running matches in which it is this player's turn, one row per seat. */
-    def listDueForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
-        session.execute(selectDueForPlayer)(playerId).map(_.map(toSeatRow))
+    def listDueForPlayer(playerId: PlayerId, games: GameScope): IO[List[MatchSeatRow]] =
+        session.execute(selectDueForPlayer)((playerId, games)).map(_.map(toSeatRow))
 
     /* Still its own query rather than more joined columns, because unlike whose turn it is this
      * really is an aggregate: a seat's balance is a sum over every turn it has taken, and joining
@@ -1022,9 +1028,9 @@ object MatchRepo {
     )
 
     /** The stretch of time one window of a completed list covers: finished from `from`, up to but not including
-      * `until`; and in one game where `gameId` names one.
+      * `until`; and in the games `games` allows.
       */
-    case class CompletedSpan(from: Instant, until: Instant, gameId: Option[GameId])
+    case class CompletedSpan(from: Instant, until: Instant, games: GameScope)
 
     /** What one seat has left of a chess-clock budget. */
     case class MatchClockRow(

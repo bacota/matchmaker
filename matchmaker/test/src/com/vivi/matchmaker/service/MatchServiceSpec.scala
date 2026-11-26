@@ -314,33 +314,35 @@ class MatchServiceSpec extends PropertySuite {
         })
 
         // The default: the last day, and something older to go back to.
-        val first = run(matchService.completed(externalId))
+        val first = run(matchService.completed(externalId, GameScope.All))
         assertEquals(first.frame, CompletedFrame.Day)
         assertEquals(first.matches.map(_.matchId), List(recent))
         assert(first.hasOlder)
         // The day before, measured from the same moment the first window was.
-        val second = run(matchService.completed(externalId, CompletedQuery(page = 1, asOf = Some(first.asOf))))
+        val second =
+            run(matchService.completed(externalId, GameScope.All, CompletedQuery(page = 1, asOf = Some(first.asOf))))
         assertEquals(second.matches.map(_.matchId), List(yesterday))
         assertEquals(second.until, first.from)
         assert(second.hasOlder)
         // Back to the most recent window from the same moment: the same window, which ends at that
         // moment. Pinned three hours back, the match finished two hours ago is after it, so is not in it.
-        val again = run(matchService.completed(externalId, CompletedQuery(asOf = Some(first.asOf))))
+        val again = run(matchService.completed(externalId, GameScope.All, CompletedQuery(asOf = Some(first.asOf))))
         assertEquals(again.matches.map(_.matchId), List(recent))
         assertEquals(again.until, first.asOf)
         val earlier = first.asOf.minus(Duration.ofHours(3))
-        val pinned = run(matchService.completed(externalId, CompletedQuery(asOf = Some(earlier))))
+        val pinned = run(matchService.completed(externalId, GameScope.All, CompletedQuery(asOf = Some(earlier))))
         assertEquals(pinned.matches, Nil)
         assertEquals(pinned.until, earlier)
 
         // A week at a time: the first holds both recent ones, the second the oldest -- and with the
         // oldest match on screen there is nothing further back.
-        val week = run(matchService.completed(externalId, CompletedQuery(frame = CompletedFrame.Week)))
+        val week = run(matchService.completed(externalId, GameScope.All, CompletedQuery(frame = CompletedFrame.Week)))
         assertEquals(week.matches.map(_.matchId), List(recent, yesterday))
         assert(week.hasOlder)
         val older = run(
           matchService.completed(
             externalId,
+            GameScope.All,
             CompletedQuery(frame = CompletedFrame.Week, page = 1, asOf = Some(week.asOf))
           )
         )
@@ -376,15 +378,17 @@ class MatchServiceSpec extends PropertySuite {
         })
 
         // Every game: the other game's match is older, so there is a Next.
-        val everything = run(matchService.completed(externalId))
+        val everything = run(matchService.completed(externalId, GameScope.All))
         assertEquals(everything.matches.map(_.matchId), List(here))
         assert(everything.hasOlder)
         // This game alone: nothing older, so none.
-        val thisGame = run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId))))
+        val thisGame =
+            run(matchService.completed(externalId, GameScope.All, CompletedQuery(gameId = Some(game.gameId))))
         assertEquals(thisGame.matches.map(_.matchId), List(here))
         assert(!thisGame.hasOlder)
         // The other game: nothing today, but something to go back to.
-        val otherGame = run(matchService.completed(externalId, CompletedQuery(gameId = Some(other.gameId))))
+        val otherGame =
+            run(matchService.completed(externalId, GameScope.All, CompletedQuery(gameId = Some(other.gameId))))
         assertEquals(otherGame.matches, Nil)
         assert(otherGame.hasOlder)
     }
@@ -429,6 +433,7 @@ class MatchServiceSpec extends PropertySuite {
               matchService.publicCompleted(
                 callerExternalId = watcher,
                 playerId = player.playerId,
+                games = GameScope.All,
                 query = CompletedQuery(gameId = Some(game.gameId))
               )
             )
@@ -505,7 +510,7 @@ class MatchServiceSpec extends PropertySuite {
         })
 
         def summary(externalId: String) =
-            run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId)))).matches
+            run(matchService.completed(externalId, GameScope.All, CompletedQuery(gameId = Some(game.gameId)))).matches
                 .find(_.matchId == matchId)
                 .map(s => (s.opponents.flatMap(_.player.map(_.nickname)), s.outcome, s.eloDelta))
 
@@ -714,7 +719,7 @@ class MatchServiceSpec extends PropertySuite {
                 )
             } yield (game, matchId, ownerless)
         })
-        val listed = run(matchService.active(unique)).filter(_.matchId == matchId)
+        val listed = run(matchService.active(unique, GameScope.All)).filter(_.matchId == matchId)
         assertEquals(
           listed.map(_.opponents),
           List(
@@ -759,9 +764,9 @@ class MatchServiceSpec extends PropertySuite {
                         )
                         // A second player, because this list is read by somebody who is not in the match.
                         _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
-                        seen <- matchService.publicActive(watcherId, player.playerId)
+                        seen <- matchService.publicActive(watcherId, player.playerId, GameScope.All)
                         // And the player's own list is unchanged by any of it: they see both.
-                        mine <- matchService.active(externalId)
+                        mine <- matchService.active(externalId, GameScope.All)
                     } yield seen.map(_.matchId) == List(open) &&
                         mine.map(_.matchId).toSet == Set(open, hiddenId)
                 }
@@ -799,11 +804,12 @@ class MatchServiceSpec extends PropertySuite {
                           isPublic = true
                         )
                         _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
-                        running <- matchService.publicActive(watcherId, player.playerId)
+                        running <- matchService.publicActive(watcherId, player.playerId, GameScope.All)
                         over <- matchService
                             .publicCompleted(
                               callerExternalId = watcherId,
                               playerId = player.playerId,
+                              games = GameScope.All,
                               query = CompletedQuery()
                             )
                             .map(_.matches.toList)
@@ -871,8 +877,8 @@ class MatchServiceSpec extends PropertySuite {
                           pending = false,
                           settings = """{"rounds":"6","venue":"moon"}"""
                         )
-                        running <- matchService.active(externalId)
-                        over <- matchService.completed(externalId).map(_.matches.toList)
+                        running <- matchService.active(externalId, GameScope.All)
+                        over <- matchService.completed(externalId, GameScope.All).map(_.matches.toList)
                     } yield (running.map(_.parameters), over.map(_.parameters))
                 }
                 val (running, over) = result.timeout(15.seconds).unsafeRunSync()
@@ -914,9 +920,9 @@ class MatchServiceSpec extends PropertySuite {
                           isPublic = true
                         )
                         _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
-                        seen <- matchService.publicActive(watcherId, player.playerId)
+                        seen <- matchService.publicActive(watcherId, player.playerId, GameScope.All)
                         // And on the player's own list, which is the same summary read by its owner.
-                        mine <- matchService.active(externalId)
+                        mine <- matchService.active(externalId, GameScope.All)
                     } yield seen.find(_.matchId == watchableId).flatMap(_.publicUrl).contains(url) &&
                         seen.find(_.matchId == plainId).exists(_.publicUrl.isEmpty) &&
                         mine.find(_.matchId == watchableId).flatMap(_.publicUrl).contains(url)
@@ -947,11 +953,12 @@ class MatchServiceSpec extends PropertySuite {
                           seatCompleted = Some(true)
                         )
                         _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
-                        running <- matchService.publicActive(watcherId, player.playerId)
+                        running <- matchService.publicActive(watcherId, player.playerId, GameScope.All)
                         over <- matchService
                             .publicCompleted(
                               callerExternalId = watcherId,
                               playerId = player.playerId,
+                              games = GameScope.All,
                               query = CompletedQuery()
                             )
                             .map(_.matches.toList)
@@ -966,7 +973,7 @@ class MatchServiceSpec extends PropertySuite {
     property("publicActive rejects a caller who has never registered") {
         forAll(genUniqueString) { externalId =>
             matchService
-                .publicActive(externalId, PlayerId(1))
+                .publicActive(externalId, PlayerId(1), GameScope.All)
                 .attempt
                 .timeout(10.seconds)
                 .unsafeRunSync() match {
@@ -987,7 +994,7 @@ class MatchServiceSpec extends PropertySuite {
                   pending = true
                 )
                 (_, game, matchId) = made
-                due <- matchService.due(externalId)
+                due <- matchService.due(externalId, GameScope.All)
             } yield due.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) &&
                 due.forall(_.gameName == "game")
             result.timeout(10.seconds).unsafeRunSync()
@@ -1004,7 +1011,7 @@ class MatchServiceSpec extends PropertySuite {
                   completed = false,
                   pending = false
                 )
-                due <- matchService.due(externalId)
+                due <- matchService.due(externalId, GameScope.All)
             } yield due.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1021,8 +1028,8 @@ class MatchServiceSpec extends PropertySuite {
                   pending = true
                 )
                 (_, game, matchId) = made
-                active <- matchService.active(externalId)
-                completed <- matchService.completed(externalId).map(_.matches.toList)
+                active <- matchService.active(externalId, GameScope.All)
+                completed <- matchService.completed(externalId, GameScope.All).map(_.matches.toList)
             } yield active.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) && completed.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1068,7 +1075,7 @@ class MatchServiceSpec extends PropertySuite {
                             case Some(m) => new MatchRepo(session).update(m.copy(isCancelled = true))
                             case None => IO.raiseError(new IllegalStateException("the match just written is not there"))
                         }
-                        over <- matchService.completed(externalId).map(_.matches.toList)
+                        over <- matchService.completed(externalId, GameScope.All).map(_.matches.toList)
                     } yield over.map(_.matchId.value) == List(newerId, olderId)
                 }
                 result.timeout(10.seconds).unsafeRunSync()
@@ -1086,8 +1093,8 @@ class MatchServiceSpec extends PropertySuite {
                   pending = false
                 )
                 (_, game, matchId) = made
-                active <- matchService.active(externalId)
-                completed <- matchService.completed(externalId).map(_.matches.toList)
+                active <- matchService.active(externalId, GameScope.All)
+                completed <- matchService.completed(externalId, GameScope.All).map(_.matches.toList)
             } yield completed.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) && active.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1105,8 +1112,8 @@ class MatchServiceSpec extends PropertySuite {
                       pending = true
                     )
                     _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
-                    due <- matchService.due(otherExternalId)
-                    active <- matchService.active(otherExternalId)
+                    due <- matchService.due(otherExternalId, GameScope.All)
+                    active <- matchService.active(otherExternalId, GameScope.All)
                 } yield due.isEmpty && active.isEmpty
                 result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1114,7 +1121,7 @@ class MatchServiceSpec extends PropertySuite {
 
     property("an unregistered caller is unauthorized") {
         forAll(genUniqueString) { externalId =>
-            matchService.due(externalId).attempt.timeout(10.seconds).unsafeRunSync() match {
+            matchService.due(externalId, GameScope.All).attempt.timeout(10.seconds).unsafeRunSync() match {
                 case Left(_: UnauthorizedError) => true
                 case _                          => false
             }
@@ -1139,9 +1146,9 @@ class MatchServiceSpec extends PropertySuite {
                 )
                 (_, game, matchId) = made
                 cancelled <- matchService.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
-                due <- matchService.due(externalId)
-                active <- matchService.active(externalId)
-                over <- matchService.completed(externalId).map(_.matches.toList)
+                due <- matchService.due(externalId, GameScope.All)
+                active <- matchService.active(externalId, GameScope.All)
+                over <- matchService.completed(externalId, GameScope.All).map(_.matches.toList)
             } yield cancelled.isCancelled &&
                 // Gone from the lists of things still to play, and not among the finished ones either: a
                 // match called off was never finished, and completed lists leave it out.
@@ -1206,10 +1213,10 @@ class MatchServiceSpec extends PropertySuite {
         }
         val (player, game, unbegun, waiting) = result.timeout(30.seconds).unsafeRunSync()
         val outcome = for {
-            active <- matchService.active(player.externalId)
-            due <- matchService.due(player.externalId)
-            completed <- matchService.completed(player.externalId)
-            results <- matchService.results(player.externalId)
+            active <- matchService.active(player.externalId, GameScope.All)
+            due <- matchService.due(player.externalId, GameScope.All)
+            completed <- matchService.completed(player.externalId, GameScope.All)
+            results <- matchService.results(player.externalId, GameScope.All)
             read <- TestServices.services.engine
                 .read(gameId = game.gameId, matchId = waiting, callerExternalId = player.externalId)
                 .attempt
@@ -1275,8 +1282,8 @@ class MatchServiceSpec extends PropertySuite {
         }
         val (owner, game, ownerMatch, otherExternalId, seatedMatch) = result.unsafeRunSync()
         val outcome = for {
-            ownersList <- matchService.active(owner.externalId)
-            othersList <- matchService.active(otherExternalId)
+            ownersList <- matchService.active(owner.externalId, GameScope.All)
+            othersList <- matchService.active(otherExternalId, GameScope.All)
             refused <- matchService
                 .cancel(gameId = game.gameId, matchId = seatedMatch, callerExternalId = otherExternalId)
                 .attempt
@@ -1373,7 +1380,7 @@ class MatchServiceSpec extends PropertySuite {
                         .cancel(gameId = game.gameId, matchId = matchId, callerExternalId = otherExternalId)
                         .attempt
                     // And the refusal is a refusal, not a silent no-op.
-                    active <- matchService.active(externalId)
+                    active <- matchService.active(externalId, GameScope.All)
                 } yield (outcome match {
                     case Left(_: UnauthorizedError) => true
                     case _                          => false
@@ -1696,7 +1703,7 @@ class MatchServiceSpec extends PropertySuite {
                           )
                     )
                 )
-                results <- matchService.results(externalId)
+                results <- matchService.results(externalId, GameScope.All)
                 mine = results.filter(_.matchId == matchId)
             } yield mine.map(r => (r.nickname, r.roleName, r.rank, r.isWinner)) ==
                 List((nickname, Some("only"), Some(1), true)) &&
@@ -1716,7 +1723,7 @@ class MatchServiceSpec extends PropertySuite {
                   pending = false
                 )
                 (_, _, matchId) = made
-                results <- matchService.results(externalId)
+                results <- matchService.results(externalId, GameScope.All)
                 mine = results.filter(_.matchId == matchId)
             } yield mine.map(r => (r.nickname, r.rank, r.isWinner)) == List((nickname, None, false)) &&
                 mine.head.scores.isEmpty
@@ -1735,7 +1742,7 @@ class MatchServiceSpec extends PropertySuite {
                   pending = true
                 )
                 (_, _, matchId) = made
-                results <- matchService.results(externalId)
+                results <- matchService.results(externalId, GameScope.All)
             } yield results.forall(_.matchId != matchId)
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1754,11 +1761,12 @@ class MatchServiceSpec extends PropertySuite {
                   pending = false
                 )
                 (_, game, matchId) = made
-                current <- matchService.results(externalId)
-                ofGame <- matchService.results(externalId, CompletedQuery(gameId = Some(game.gameId)))
-                earlier <- matchService.results(externalId, CompletedQuery(page = 1))
+                current <- matchService.results(externalId, GameScope.All)
+                ofGame <- matchService.results(externalId, GameScope.All, CompletedQuery(gameId = Some(game.gameId)))
+                earlier <- matchService.results(externalId, GameScope.All, CompletedQuery(page = 1))
                 otherGame <- matchService.results(
                   externalId,
+                  GameScope.All,
                   CompletedQuery(gameId = Some(GameId(game.gameId.value + 1)))
                 )
             } yield current.exists(_.matchId == matchId) && ofGame.exists(_.matchId == matchId) &&
@@ -1779,7 +1787,7 @@ class MatchServiceSpec extends PropertySuite {
                       pending = false
                     )
                     _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
-                    results <- matchService.results(otherExternalId)
+                    results <- matchService.results(otherExternalId, GameScope.All)
                 } yield results.isEmpty
                 result.timeout(10.seconds).unsafeRunSync()
         }
@@ -1795,7 +1803,7 @@ class MatchServiceSpec extends PropertySuite {
                   completed = false,
                   pending = true
                 )
-                active <- matchService.active(externalId)
+                active <- matchService.active(externalId, GameScope.All)
             } yield active.forall(_.isOwner)
             result.timeout(10.seconds).unsafeRunSync()
         }

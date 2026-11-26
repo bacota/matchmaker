@@ -8,7 +8,7 @@ import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
-import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantId, PlayerId, Result}
+import com.vivi.matchmaker.model.{GameId, GameScope, MatchId, ParticipantId, PlayerId, Result}
 import ResultRepo.{ParticipantResultRow, TimeTakenRow}
 import MatchRepo.CompletedSpan
 
@@ -60,7 +60,7 @@ class ResultRepo(session: Session[IO]) {
     // — see ParticipantResult. Ordered by rank within a match, unreported seats last, so the
     // winner comes first without the caller having to sort.
     private val selectResultsForPlayer: Query[
-      (PlayerId, Option[GameId], Instant, Instant),
+      (PlayerId, GameScope, Instant, Instant),
       (
           GameId,
           MatchId,
@@ -88,7 +88,7 @@ class ResultRepo(session: Session[IO]) {
           LEFT JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           -- Begun: a tournament's match is_cancelled before it began has seats with no ratings and no results.
-          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND mine.game_id = COALESCE(${gameId.opt}, mine.game_id)
+          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND ${SkunkCodecs.inGameScope("mine.game_id")}
             AND mine.completed_at >= $instant AND mine.completed_at < $instant
             AND m.start IS NOT NULL AND ((m.completed_at IS NOT NULL) OR m.is_cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
@@ -106,7 +106,7 @@ class ResultRepo(session: Session[IO]) {
       */
     def listForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[ParticipantResultRow]] =
         session
-            .execute(selectResultsForPlayer)((playerId, span.gameId, span.from, span.until))
+            .execute(selectResultsForPlayer)((playerId, span.games, span.from, span.until))
             .map(_.map {
                 case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit, eloStart, eloDelta) =>
                     ParticipantResultRow(
@@ -138,7 +138,7 @@ class ResultRepo(session: Session[IO]) {
      * for a match played before turns were recorded. GREATEST clamps a turn the engine reported as
      * taken before it started, matching `Turn.elapsed`: two clocks disagreeing is not a refund. */
     private val selectTimeTakenForPlayer
-        : Query[(PlayerId, Option[GameId], Instant, Instant), (GameId, ParticipantId, Double)] =
+        : Query[(PlayerId, GameScope, Instant, Instant), (GameId, ParticipantId, Double)] =
         sql"""SELECT t.game_id, t.participant_id,
                  EXTRACT(EPOCH FROM sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0')))::float8
           FROM participant p
@@ -149,7 +149,7 @@ class ResultRepo(session: Session[IO]) {
                   SELECT mine.game_id, mine.match_id FROM participant mine
                   JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
                   WHERE mine.player_id = ${SkunkIdCodecs.playerId}
-                    AND mine.game_id = COALESCE(${gameId.opt}, mine.game_id)
+                    AND ${SkunkCodecs.inGameScope("mine.game_id")}
                     AND mine.completed_at >= $instant AND mine.completed_at < $instant
                     AND m.start IS NOT NULL AND ((m.completed_at IS NOT NULL) OR m.is_cancelled))
           GROUP BY t.game_id, t.participant_id"""
@@ -158,7 +158,7 @@ class ResultRepo(session: Session[IO]) {
     /** What each seat of the caller's finished matches within `span` spent, by seat. */
     def timeTakenForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[TimeTakenRow]] =
         session
-            .execute(selectTimeTakenForPlayer)((playerId, span.gameId, span.from, span.until))
+            .execute(selectTimeTakenForPlayer)((playerId, span.games, span.from, span.until))
             .map(_.map { case (gameId, participantId, seconds) =>
                 TimeTakenRow(
                   gameId = gameId,

@@ -47,13 +47,58 @@ class GameRepoSpec extends PropertySuite {
         )
     }
 
+    // A game site lists its games by name: see design/game-sites-plan.md.
+    test("idsNamed finds games by name, active or not, and skips a name that matches none") {
+        val (found, none) = TestSession.resource
+            .use { session =>
+                val repo = new GameRepo[String](session)
+                val token = java.util.UUID.randomUUID().toString
+                for {
+                    active <- repo.create(
+                      Generators.genGame().sample.get.copy(name = s"active-$token", isActive = true)
+                    )
+                    inactive <- repo.create(
+                      Generators.genGame().sample.get.copy(name = s"inactive-$token", isActive = false)
+                    )
+                    found <- repo.idsNamed(List(s"active-$token", s"inactive-$token", s"missing-$token"))
+                    none <- repo.idsNamed(List(s"missing-$token"))
+                } yield (found.toSet == Set(active.gameId, inactive.gameId), none)
+            }
+            .unsafeRunSync()
+        assert(found)
+        assertEquals(none, Nil)
+    }
+
+    test("list shows every game, or only the games in its scope") {
+        val (all, first, nothing) = TestSession.resource
+            .use { session =>
+                val repo = new GameRepo[String](session)
+                for {
+                    a <- repo.create(Generators.genGame().sample.get.copy(isActive = true))
+                    b <- repo.create(Generators.genGame().sample.get.copy(isActive = true))
+                    ours = Set(a.gameId, b.gameId)
+                    all <- repo.list(activeOnly = false, games = GameScope.All)
+                    first <- repo.list(activeOnly = false, games = GameScope.only(a.gameId))
+                    nothing <- repo.list(activeOnly = false, games = GameScope.Only(Set.empty))
+                } yield (
+                  all.map(_.gameId).filter(ours.contains).toSet == ours,
+                  first.map(_.gameId) == List(a.gameId),
+                  nothing
+                )
+            }
+            .unsafeRunSync()
+        assert(all)
+        assert(first)
+        assertEquals(nothing, Nil)
+    }
+
     test("list returns each role and parameter value once, despite the join's cross product") {
         val found = TestSession.resource
             .use { session =>
                 val repo = new GameRepo[String](session)
                 for {
                     created <- repo.create(gameWithFanOut)
-                    listed <- repo.list(activeOnly = false)
+                    listed <- repo.list(activeOnly = false, games = GameScope.All)
                 } yield listed.find(_.gameId == created.gameId)
             }
             .unsafeRunSync()
@@ -78,7 +123,7 @@ class GameRepoSpec extends PropertySuite {
                 for {
                     created <- repo.create(gameWithFanOut)
                     read <- repo.read(created.gameId)
-                    listed <- repo.list(activeOnly = false)
+                    listed <- repo.list(activeOnly = false, games = GameScope.All)
                 } yield (read, listed.find(_.gameId == created.gameId))
             }
             .unsafeRunSync()
@@ -112,7 +157,7 @@ class GameRepoSpec extends PropertySuite {
                           Generators.genGame().sample.get.copy(name = s"${9 - i}-$token", displayName = s"$n-$token")
                         )
                     )
-                    listed <- repo.list(activeOnly = false)
+                    listed <- repo.list(activeOnly = false, games = GameScope.All)
                 } yield (created, listed)
             }
             .unsafeRunSync()
@@ -137,7 +182,7 @@ class GameRepoSpec extends PropertySuite {
                     created <- repo.create(
                       Generators.genGame().sample.get.copy(isActive = true, roles = Seq.empty, parameters = Seq.empty)
                     )
-                    listed <- repo.list(activeOnly = false)
+                    listed <- repo.list(activeOnly = false, games = GameScope.All)
                 } yield listed.find(_.gameId == created.gameId)
             }
             .unsafeRunSync()
@@ -184,7 +229,7 @@ class GameRepoSpec extends PropertySuite {
                 for {
                     created <- repo.create(game)
                     read <- repo.read(created.gameId)
-                    listed <- repo.list(activeOnly = false)
+                    listed <- repo.list(activeOnly = false, games = GameScope.All)
                     _ <- repo.update(
                       created.copy(
                         moveType = MoveType.Sequential,

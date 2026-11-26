@@ -207,7 +207,8 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         services.tournaments.create(
           gameId = game.gameId,
           request = TournamentRequest(name = unique("t"), tournamentModelId = model.tournamentModelId),
-          callerExternalId = owner.externalId
+          callerExternalId = owner.externalId,
+          site = None
         )
 
     private def count(table: String, t: Tournament): IO[Long] =

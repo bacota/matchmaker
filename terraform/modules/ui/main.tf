@@ -88,7 +88,7 @@ resource "aws_cloudfront_distribution" "ui" {
 
   # CloudFront rejects a request whose Host header is not one of these, so the alias has to exist
   # before the Route 53 record starts sending traffic to it.
-  aliases = local.custom_domain ? [var.domain_name] : []
+  aliases = concat(local.custom_domain ? [var.domain_name] : [], keys(var.sites))
 
   lifecycle {
     # The three custom-domain variables are only meaningful together, and terraform 1.5 has no
@@ -104,6 +104,12 @@ resource "aws_cloudfront_distribution" "ui" {
       # the custom name at it, and every visitor would get a certificate mismatch.
       condition     = var.domain_name == "" || var.certificate_arn != ""
       error_message = "certificate_arn is required when domain_name is set: CloudFront cannot serve a custom domain on the default *.cloudfront.net certificate."
+    }
+
+    precondition {
+      # A game site is another name on this distribution, served on the same certificate.
+      condition     = length(var.sites) == 0 || local.custom_domain
+      error_message = "sites need domain_name and certificate_arn: the default *.cloudfront.net certificate cannot serve another name."
     }
   }
 
@@ -186,6 +192,35 @@ resource "aws_route53_record" "ipv6" {
 
   zone_id = var.hosted_zone_id
   name    = var.domain_name
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_cloudfront_distribution.ui.domain_name
+    zone_id                = aws_cloudfront_distribution.ui.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+# The game sites' names, pointed at the same distribution in the same way.
+resource "aws_route53_record" "site_ipv4" {
+  for_each = var.sites
+
+  zone_id = var.hosted_zone_id
+  name    = each.key
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.ui.domain_name
+    zone_id                = aws_cloudfront_distribution.ui.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "site_ipv6" {
+  for_each = var.sites
+
+  zone_id = var.hosted_zone_id
+  name    = each.key
   type    = "AAAA"
 
   alias {
@@ -284,6 +319,8 @@ resource "aws_s3_object" "config" {
   hostedLoginUrl = var.hosted_login_url
   clientId       = var.user_pool_client_id
   region         = var.cognito_region
+  # Each game site's heading, by origin: the page served on one shows it. See design/game-sites-plan.md.
+  sites = { for domain, site in var.sites : "https://${domain}" => { heading = site.heading } }
 })};
   EOT
 

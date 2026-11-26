@@ -122,13 +122,19 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         addressee: Player => (Player, String)
     ): IO[Unit] =
         dispatch(repos, s"invitation to tournament ${tournament.tournamentId} of game ${tournament.gameId}") {
-            (from, uiBaseUrl) =>
+            (from, mailSites) =>
                 repos.notifications.gameNotice(tournament.gameId).flatMap {
                     // A game that is no longer there is not a thing to write about, and this path reports rather
                     // than decides -- it sends nothing instead of failing what has already happened.
                     case None => IO.pure(Seq.empty[MailMessage])
                     case Some(notice) =>
                         for {
+                            site <- siteOf(
+                              repos = repos,
+                              mailSites = mailSites,
+                              tournament = tournament,
+                              handle = notice.handle
+                            )
                             owner <- repos.players.read(tournament.owner)
                             room <- roomIn(repos, tournament)
                             mail <- owner.traverse { offeredBy =>
@@ -148,7 +154,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                             .flatMap(_ =>
                                                 ChallengeMail.compose(
                                                   sender = from,
-                                                  uiBaseUrl = uiBaseUrl,
+                                                  site = site,
                                                   recipient = recipient,
                                                   kind = kind,
                                                   news = news
@@ -204,7 +210,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       */
     def matchStarted(repos: Repos, started: Match): IO[Unit] =
         aboutMatch(repos = repos, played = started, about = s"start of match ${started.matchId.value}") {
-            (from, uiBaseUrl, notice, seats, participants) =>
+            (from, site, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
                 seats.flatMap { seat =>
@@ -214,7 +220,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         .flatMap { kind =>
                             MatchMail.compose(
                               sender = from,
-                              uiBaseUrl = uiBaseUrl,
+                              site = site,
                               recipient = seat.player,
                               kind = kind,
                               news = MatchNews(
@@ -247,7 +253,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       */
     def turnTaken(repos: Repos, played: Match, moved: ParticipantId): IO[Unit] =
         aboutMatch(repos = repos, played = played, about = s"move in match ${played.matchId.value}") {
-            (from, uiBaseUrl, notice, seats, participants) =>
+            (from, site, notice, seats, participants) =>
                 val mover = seats.find(_.participantId == moved).map(_.player.nickname)
                 val pending = participants.filter(_.isPending).map(_.participantId).toSet
                 val nextUp = seats.filter(seat => pending.contains(seat.participantId)).map(_.player.nickname)
@@ -263,7 +269,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         .flatMap { kind =>
                             MatchMail.compose(
                               sender = from,
-                              uiBaseUrl = uiBaseUrl,
+                              site = site,
                               recipient = seat.player,
                               kind = kind,
                               news = MatchNews(
@@ -300,14 +306,14 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         except: Option[PlayerId] = None
     ): IO[Unit] =
         aboutMatch(repos = repos, played = played, about = s"end of match ${played.matchId.value}") {
-            (from, uiBaseUrl, notice, seats, _) =>
+            (from, site, notice, seats, _) =>
                 seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
                     NotificationPolicy
                         .choose(Seq(NotificationType.MatchEnded), seat.preferences.apply)
                         .flatMap { kind =>
                             MatchMail.compose(
                               sender = from,
-                              uiBaseUrl = uiBaseUrl,
+                              site = site,
                               recipient = seat.player,
                               kind = kind,
                               news = MatchNews(
@@ -334,11 +340,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         dispatch(
           repos,
           s"round $round of tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
-        ) { (from, uiBaseUrl) =>
+        ) { (from, mailSites) =>
             repos.notifications.gameNotice(tournament.gameId).flatMap {
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
+                        site <- siteOf(
+                          repos = repos,
+                          mailSites = mailSites,
+                          tournament = tournament,
+                          handle = notice.handle
+                        )
                         owner <- repos.players.read(tournament.owner)
                         levels <- repos.notifications.levelsForPlayer(tournament.owner, tournament.gameId)
                     } yield owner.toSeq.flatMap { recipient =>
@@ -347,7 +359,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(_ =>
                                 TournamentMail.compose(
                                   sender = from,
-                                  uiBaseUrl = uiBaseUrl,
+                                  site = site,
                                   recipient = recipient,
                                   kind = NotificationType.TournamentRoundDone,
                                   news = TournamentNews(
@@ -364,13 +376,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     /** A match of the tournament its engine would not create. Told to the owner and every admin -- the site's and the
       * game's -- since fixing it may be any of theirs, and not a preference anybody can turn off: it is a fault, not
       * news, and is said once, the first time a try fails.
+      *
+      * The owner is sent to the tournament's site, as everyone else in it would be; an admin who is not the owner to
+      * the main site, where the admin screens are.
       */
     def matchNotCreated(repos: Repos, tournament: Tournament, game: Game): IO[Unit] =
         dispatch(
           repos,
           s"a match not created in tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
-        ) { (from, uiBaseUrl) =>
+        ) { (from, mailSites) =>
             for {
+                site <- siteOf(repos = repos, mailSites = mailSites, tournament = tournament, handle = game.name)
                 owner <- repos.players.read(tournament.owner)
                 admins <- repos.players.listAdmins
                 gameAdmins <- repos.gameAdmins
@@ -379,6 +395,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             } yield {
                 val values = Seq("game" -> game.displayName, "tournament" -> tournament.name)
                 (owner.toList ++ admins ++ gameAdmins.flatten).distinctBy(_.playerId).flatMap { recipient =>
+                    val sentTo = if (recipient.playerId == tournament.owner) site else mailSites.main
+                    val bodyValues = values ++ MailText.siteValues(sentTo)
                     recipient.email.map(address =>
                         MailMessage(
                           sender = from,
@@ -386,8 +404,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                           subject = MailTemplates.render("mail.tournament.matchNotCreated.subject", values*),
                           body = MailText.letter(
                             recipient = recipient,
-                            body = MailTemplates.render("mail.tournament.matchNotCreated.body", values*),
-                            uiBaseUrl = uiBaseUrl
+                            body = MailTemplates.render("mail.tournament.matchNotCreated.body", bodyValues*),
+                            site = sentTo
                           )
                         )
                     )
@@ -417,7 +435,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         except: Option[PlayerId],
         wasInvited: Boolean = false
     ): IO[Unit] =
-        dispatch(repos, s"tournament ${tournament.tournamentId} of game ${tournament.gameId}") { (from, uiBaseUrl) =>
+        dispatch(repos, s"tournament ${tournament.tournamentId} of game ${tournament.gameId}") { (from, mailSites) =>
             repos.notifications.gameNotice(tournament.gameId).flatMap {
                 // A game that is not there is not a thing to write about, and this is the reporting path: it
                 // sends nothing rather than failing the entry that got here.
@@ -426,6 +444,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                     IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
+                        site <- siteOf(
+                          repos = repos,
+                          mailSites = mailSites,
+                          tournament = tournament,
+                          handle = notice.handle
+                        )
                         room <- roomIn(repos, tournament)
                         levels <- repos.notifications.levelsForPlayer(tournament.owner, tournament.gameId)
                         owner <- repos.players.read(tournament.owner)
@@ -446,7 +470,15 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             else Seq(NotificationType.CompetitionEntered)
                         NotificationPolicy
                             .choose(kinds, levels.apply)
-                            .flatMap(ChallengeMail.compose(from, uiBaseUrl, offeredBy, _, news))
+                            .flatMap(kind =>
+                                ChallengeMail.compose(
+                                  sender = from,
+                                  site = site,
+                                  recipient = offeredBy,
+                                  kind = kind,
+                                  news = news
+                                )
+                            )
                             .toSeq
                     }
             }
@@ -459,32 +491,63 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * `matchStarted` used to do by zipping two queries that happened to be ordered the same way.
      *
      * A match whose game has gone is a broken row rather than a thing to write about, and this is the
-     * reporting path -- so it sends nothing rather than failing the action that got here. */
+     * reporting path -- so it sends nothing rather than failing the action that got here.
+     *
+     * Everyone in the match is sent to one site, its tournament's: see `siteOf`. */
     private def aboutMatch(repos: Repos, played: Match, about: String)(
-        compose: (String, String, GameNotice, List[Seat], List[Participant]) => Seq[MailMessage]
+        compose: (String, MailSite, GameNotice, List[Seat], List[Participant]) => Seq[MailMessage]
     ): IO[Unit] =
-        dispatch(repos, about) { (from, uiBaseUrl) =>
+        dispatch(repos, about) { (from, mailSites) =>
             repos.notifications.gameNotice(played.gameId).flatMap {
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
                         seats <- repos.notifications.preferencesForMatch(played.gameId, played.matchId)
+                        site <- siteAt(
+                          repos = repos,
+                          mailSites = mailSites,
+                          gameId = played.gameId,
+                          tournamentId = played.tournamentId,
+                          handle = notice.handle
+                        )
                         participants <- repos.participants
                             .listForMatch(played.gameId, played.matchId)
                             .map(_.map((participant, _, _) => participant))
-                    } yield compose(from, uiBaseUrl, notice, seats, participants)
+                    } yield compose(from, site, notice, seats, participants)
             }
         }
+
+    /* The one site everybody told about an event in this tournament is sent to: see `MailSites.choose`.
+     * The tournament's origin is read only when a site is configured, so a deployment with none makes
+     * exactly the queries it made before sites. */
+    private def siteOf(repos: Repos, mailSites: MailSites, tournament: Tournament, handle: String): IO[MailSite] =
+        siteAt(
+          repos = repos,
+          mailSites = mailSites,
+          gameId = tournament.gameId,
+          tournamentId = tournament.tournamentId,
+          handle = handle
+        )
+
+    private def siteAt(
+        repos: Repos,
+        mailSites: MailSites,
+        gameId: GameId,
+        tournamentId: TournamentId,
+        handle: String
+    ): IO[MailSite] =
+        if (mailSites.isEmpty) IO.pure(mailSites.main)
+        else repos.tournaments.siteOrigin(gameId = gameId, tournamentId = tournamentId).map(mailSites.choose(_, handle))
 
     /* The four terms in the class comment, in the order they apply: no settings, no reads and no
      * mail; otherwise compose, drop whatever is addressed to somewhere that has stopped working,
      * enqueue the rest, and swallow whatever comes back with a line saying what it was about. */
     private def dispatch(repos: Repos, about: String)(
-        compose: (String, String) => IO[Seq[MailMessage]]
+        compose: (String, MailSites) => IO[Seq[MailMessage]]
     ): IO[Unit] =
         mail.sender
-            .zip(mail.uiBaseUrl)
-            .traverse_ { (sender, uiBaseUrl) =>
+            .zip(mail.mainSite)
+            .traverse_ { (sender, mainSite) =>
                 /* `parTraverse_`, not `traverse_`: one event is one mail per recipient, and each is an
                  * independent round trip to SQS. Sent one after another, a four-player match start put
                  * four sequential network calls on the request path for no reason -- none of them is
@@ -503,7 +566,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                  * regardless; what is lost is the same thing sequential order lost, which is any send
                  * that had not started. Making delivery survive a single bad send is the durable-outbox
                  * change the class comment describes, not this one. */
-                compose(sender, uiBaseUrl)
+                compose(sender, new MailSites(main = mainSite, sites = mail.sites))
                     .flatMap(deliverable(repos, about, _))
                     .flatMap(_.parTraverse_(notifier.enqueue))
             }

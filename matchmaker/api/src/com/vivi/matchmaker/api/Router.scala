@@ -6,7 +6,7 @@ import cats.syntax.all._
 import upickle.default.{ReadWriter, read, write}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.service._
-import com.vivi.matchmaker.util.JsonValues
+import com.vivi.matchmaker.util.{JsonValues, Sites}
 import ApiGateway.{Request, Response}
 import Json.given
 import TournamentJson.given
@@ -46,6 +46,14 @@ object Router {
             }
             .handleError(Errors.toResponse(_, where))
     }
+
+    /** The games this request may see: its site's, by the Origin header, or every game. See design/game-sites-plan.md.
+      */
+    private def gameScope(services: Services[String], request: Request): IO[GameScope] =
+        Sites.current.forOrigin(request.header("origin")) match {
+            case None       => IO.pure(GameScope.All)
+            case Some(site) => services.games.scopeFor(site)
+        }
 
     /* A case added here is only half of a new endpoint.
      *
@@ -102,7 +110,7 @@ object Router {
             // everywhere, and in one game. The per-match level is on the match's own route below,
             // because that is where it is set from and what it is about.
             case ("GET", "me" :: "notifications" :: Nil) =>
-                ok(services.notifications.mine(caller))
+                gameScope(services, request).flatMap(games => ok(services.notifications.mine(caller, games)))
 
             /* Try my address again: clears the suppression a bounce left behind, so the next
              * notification is sent rather than held back.
@@ -155,15 +163,19 @@ object Router {
                 }
 
             case ("GET", "me" :: "matches" :: Nil) =>
-                ok(services.matches.active(caller))
+                gameScope(services, request).flatMap(games => ok(services.matches.active(caller, games)))
 
             case ("GET", "me" :: "matches" :: "due" :: Nil) =>
-                ok(services.matches.due(caller))
+                gameScope(services, request).flatMap(games => ok(services.matches.due(caller, games)))
 
             /* Completed lists are a window of time at a time -- `CompletedQuery`, read from
              * `?frame=day|week|month|year&page=<n>&asOf=<instant>&gameId=<id>`, every one optional. */
             case ("GET", "me" :: "matches" :: "completed" :: Nil) =>
-                withCompletedQuery(request)(query => ok(services.matches.completed(caller, query)))
+                withCompletedQuery(request)(query =>
+                    gameScope(services, request).flatMap(games =>
+                        ok(services.matches.completed(callerExternalId = caller, games = games, query = query))
+                    )
+                )
 
             /* Finding somebody, and then looking at them. Three routes and no body between them:
              * the prefix is a query parameter because this is a GET that reads, and the player's
@@ -177,17 +189,39 @@ object Router {
                 ok(services.players.search(caller, request.query.getOrElse("prefix", "")))
 
             case ("GET", "players" :: playerId :: "matches" :: Nil) =>
-                withPlayerId(playerId)(id => ok(services.matches.publicActive(caller, id)))
+                withPlayerId(playerId)(id =>
+                    gameScope(services, request).flatMap(games =>
+                        ok(services.matches.publicActive(callerExternalId = caller, playerId = id, games = games))
+                    )
+                )
 
             case ("GET", "players" :: playerId :: "matches" :: "completed" :: Nil) =>
                 withPlayerId(playerId)(id =>
                     withCompletedQuery(request)(query =>
-                        ok(services.matches.publicCompleted(callerExternalId = caller, playerId = id, query = query))
+                        gameScope(services, request).flatMap(games =>
+                            ok(
+                              services.matches
+                                  .publicCompleted(
+                                    callerExternalId = caller,
+                                    playerId = id,
+                                    games = games,
+                                    query = query
+                                  )
+                            )
+                        )
                     )
                 )
 
             case ("GET", "games" :: Nil) =>
-                ok(services.games.list(caller, activeOnly = request.query.get("activeOnly").contains("true")))
+                gameScope(services, request).flatMap(games =>
+                    ok(
+                      services.games.list(
+                        callerExternalId = caller,
+                        games = games,
+                        activeOnly = request.query.get("activeOnly").contains("true")
+                      )
+                    )
+                )
 
             case ("POST", "games" :: Nil) =>
                 // The engine's API key travels in the same object as the game, and is read apart from
@@ -405,25 +439,27 @@ object Router {
             // five tables, and per-match would be a request per row.
             case ("GET", "me" :: "results" :: Nil) =>
                 withCompletedQuery(request)(query =>
-                    ok(
-                      services.matches
-                          .results(caller, query)
-                          .map(_.map { r =>
-                              Json.ParticipantResultView(
-                                gameId = r.gameId,
-                                matchId = r.matchId,
-                                participantId = r.participantId,
-                                nickname = r.nickname,
-                                roleName = r.roleName,
-                                rank = r.rank,
-                                scores = r.scores.view.mapValues(JsonValues.fromScala).toMap,
-                                isWinner = r.isWinner,
-                                isForfeit = r.isForfeit,
-                                timeTaken = r.timeTaken,
-                                eloStart = r.eloStart,
-                                eloDelta = r.eloDelta
-                              )
-                          })
+                    gameScope(services, request).flatMap(games =>
+                        ok(
+                          services.matches
+                              .results(callerExternalId = caller, games = games, query = query)
+                              .map(_.map { r =>
+                                  Json.ParticipantResultView(
+                                    gameId = r.gameId,
+                                    matchId = r.matchId,
+                                    participantId = r.participantId,
+                                    nickname = r.nickname,
+                                    roleName = r.roleName,
+                                    rank = r.rank,
+                                    scores = r.scores.view.mapValues(JsonValues.fromScala).toMap,
+                                    isWinner = r.isWinner,
+                                    isForfeit = r.isForfeit,
+                                    timeTaken = r.timeTaken,
+                                    eloStart = r.eloStart,
+                                    eloDelta = r.eloDelta
+                                  )
+                              })
+                        )
                     )
                 )
 
@@ -557,25 +593,31 @@ object Router {
 
             // ---- tournaments ------------------------------------------------------------------------
 
-            // The caller's own: owned, entered or invited to, in every game.
+            // The caller's own: owned, entered or invited to, in every game the request's site shows.
             case ("GET", "me" :: "tournaments" :: Nil) =>
-                ok(services.tournaments.mine(caller))
+                gameScope(services, request).flatMap(games => ok(services.tournaments.mine(caller, games)))
 
             // The tournaments the caller owns that ended within the last `frame` (a day if not given).
             case ("GET", "me" :: "tournaments" :: "ended" :: Nil) =>
                 request.query.get("frame") match {
-                    case None => ok(services.tournaments.endedOwned(caller, CompletedFrame.Day))
+                    case None =>
+                        gameScope(services, request).flatMap(games =>
+                            ok(services.tournaments.endedOwned(caller, CompletedFrame.Day, games))
+                        )
                     case Some(raw) =>
                         CompletedFrame
                             .fromCode(raw)
                             .fold(IO.pure(Errors.badRequest(ErrorText.request.invalid(raw = raw, what = "frame"))))(
-                              frame => ok(services.tournaments.endedOwned(caller, frame))
+                              frame =>
+                                  gameScope(services, request).flatMap(games =>
+                                      ok(services.tournaments.endedOwned(caller, frame, games))
+                                  )
                             )
                 }
 
             // Where the caller stands in every tournament they have entered.
             case ("GET", "me" :: "tournament-standings" :: Nil) =>
-                ok(services.tournaments.standings(caller))
+                gameScope(services, request).flatMap(games => ok(services.tournaments.standings(caller, games)))
 
             case ("GET", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.tournaments.listForGame(gid, caller)))
@@ -584,7 +626,15 @@ object Router {
             case ("POST", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid =>
                     body[TournamentRequest](request).flatMap(r =>
-                        created(services.tournaments.create(gameId = gid, request = r, callerExternalId = caller))
+                        created(
+                          services.tournaments.create(
+                            gameId = gid,
+                            request = r,
+                            callerExternalId = caller,
+                            // Only an origin that is a configured site is stored; any other, or none, is the main domain.
+                            site = Sites.current.forOrigin(request.header("origin"))
+                          )
+                        )
                     )
                 )
 
@@ -776,7 +826,7 @@ object Router {
                 )
 
             case ("GET", "me" :: "tournament-choices" :: Nil) =>
-                ok(services.rounds.choicesFor(caller))
+                gameScope(services, request).flatMap(games => ok(services.rounds.choicesFor(caller, games)))
 
             // A completed match's archive, the engine's to move and matchmaker's to keep track of
             // (archiving-matches-plan.md). Authorized as the game, like the callbacks above, but addressed
