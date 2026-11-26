@@ -194,6 +194,49 @@ Expect an apply that adds or changes the domain to spend several minutes deployi
 distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
 comparing it against `ui_url` separates a DNS problem from a CloudFront one.
 
+### Game sites
+
+A game site is the same UI on a domain of its own, showing only some games:
+`boxing.vivi.com` with Boxing and nothing else. It is the same deployment — the same distribution,
+bucket, `main.js`, API, user pool and database — so a player has one account, one set of ratings and
+one set of matches wherever they sign in. It is not a security boundary: the main domain still
+shows everything. The design is `design/game-sites-plan.md`.
+
+Sites are one variable, `ui_sites` in `environments/<env>.tfvars`, keyed by domain name (no
+scheme, no slash):
+
+```hcl
+ui_sites = {
+  "boxing.vivi.com" = { heading = "Boxing", games = ["boxing"] }
+}
+```
+
+- `heading` is what the site is called: its page title and header, and the name its mail uses.
+- `games` are game *names* (`Game.name`, the fixed short name such as `boxing` or
+  `capture-the-flag`), never numeric ids, so the same list works in every environment. A name
+  that matches no registered game is skipped, and a site none of whose games are registered shows
+  nothing — register them first (`./init-games.sh <env>`).
+
+Leave it empty, the default, and nothing changes. With sites set, one apply:
+
+1. Adds each domain to the distribution's `aliases`, and points `A` and `AAAA` alias records at it,
+   as for the main domain.
+2. Adds each site to the user pool's callback and logout URLs and to the API's CORS origins. Do not
+   repeat them in `callback_urls` / `cors_allowed_origins`.
+3. Writes each site's heading into `config.js`, keyed by origin, so the page knows which site it is.
+4. Sets `UI_SITES` (JSON keyed by origin) on the API function and the ending function. The API
+   narrows every cross-game list to the site's games, by the request's `Origin` header; mail about
+   a tournament made on a site links to that site and calls it by its heading.
+
+Sites need the custom domain: **`ui_domain_name` must be set**, and the plan fails on a precondition
+otherwise, because the default `*.cloudfront.net` certificate cannot serve another name. Every site
+domain must be **covered by `ui_certificate_arn`** (a wildcard such as `*.vivi.com`, or a SAN per
+site) and sit in **`hosted_zone_id`**. A certificate is replaced, not edited, to add names — issue
+the new one, validate it, then point `ui_certificate_arn` at it in the same apply that adds the site.
+
+Removing a site later is safe. Tournaments made on it keep its origin, but mail only uses a site
+that is still configured and still lists the game; otherwise it links to the main domain.
+
 ## Match archives
 
 Completed matches are archived to two buckets in `modules/api/archive.tf`
