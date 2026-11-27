@@ -27,64 +27,100 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     def createOrUpdate(externalUserId: String, game: Game, apiKey: Option[String] = None): IO[Game] =
         sessionPool.use { session =>
-            val repos = Repos(session)
             // A game is its rows plus its roles, parameters and parameter values; the repo writes
             // them as separate statements, so the transaction that makes them one change lives here.
+            session.transaction.use(_ =>
+                save(repos = Repos(session), externalUserId = externalUserId, game = game, apiKey = apiKey)
+            )
+        }
+
+    /** Creates `game` unless a game with its engine identity (`externalId`) is already registered, which is left as it
+      * is: what `init-games.sh` registers a bundled engine with. The look and the insert are one transaction under the
+      * identity's lock, so two runs at once, or a run and an admin adding the same game, cannot both find none and both
+      * insert.
+      *
+      * An admin may still give two games one engine identity on purpose (see [[ApiKeys]]); only this path refuses to.
+      */
+    def registerUnlessPresent(externalUserId: String, game: Game, apiKey: Option[String]): IO[GameRegistration] =
+        sessionPool.use { session =>
+            val repos = Repos(session)
             session.transaction.use { _ =>
+                val identity = normalize(game).externalId
                 for {
                     _ <- authorize(repos.players, externalUserId)
-                    // Trimmed before it is checked, so that "  attacker  " and "attacker" are refused as the
-                    // duplicate they are rather than stored as two roles that read identically.
-                    trimmed = normalize(game)
-                    _ <- validate(trimmed)
-                    newKey = apiKey.map(_.trim).filter(_.nonEmpty)
-                    // The same floor the engine module puts on the key it is given: this is the only thing
-                    // protecting the callback routes, and a short one is a typo or a guessable token.
-                    _ <- newKey.traverse_(key =>
-                        IO.raiseWhen(key.length < GameService.MinApiKeyLength)(
-                          ValidationError(
-                            ErrorText.game
-                                .shortApiKey(least = GameService.MinApiKeyLength.toString, length = key.length.toString)
-                          )
-                        )
-                    )
-                    result <-
-                        if (trimmed.gameId == GameId.unassigned) repos.games[T].create(trimmed)
-                        else
-                            // Locked before it is read: `checkRoles` below decides what may be written
-                            // from what is there now, and the update rewrites the roles and parameters it
-                            // was checked against. Two admins saving the same game at once would
-                            // otherwise both diff against the state before either of them wrote.
-                            repos
-                                .games[T]
-                                .lockForUpdate(trimmed.gameId) *> repos.games[T].read(trimmed.gameId).flatMap {
-                                case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
-                                case Some(existing) =>
-                                    checkRoles(
-                                      existing = existing,
-                                      incoming = trimmed,
-                                      tournaments = repos.tournaments
-                                    ) *> repos
-                                        .games[T]
-                                        .update(trimmed) *> repos.games[T].read(trimmed.gameId).flatMap {
-                                        case Some(updated) => IO.pure(updated)
-                                        case None =>
-                                            IO.raiseError(NotFoundError(ErrorText.game.notFound))
-                                    }
+                    _ <- repos.games[T].lockIdentity(identity)
+                    present <- repos.games[T].readIdsByExternalId(identity)
+                    registered <- present.headOption match {
+                        case Some(id) =>
+                            repos.games[T].read(id).flatMap {
+                                case Some(found) => IO.pure(GameRegistration.AlreadyRegistered(found))
+                                case None        => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                             }
-                    // A new game offers every tournament model it can play but the challenge, which its admins may then change.
-                    _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
-                      TournamentModelService.offerPlayable(repos, result).void
-                    )
-                    // Unique across games. A clash rolls the whole save back, game and all.
-                    _ <- newKey.traverse_(key =>
-                        repos.gameApiKeys.set(result.gameId, key).recoverWith { case SqlState.UniqueViolation(_) =>
-                            IO.raiseError(ConflictError(ErrorText.game.apiKeyTaken))
-                        }
-                    )
-                } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
+                        case None =>
+                            save(repos = repos, externalUserId = externalUserId, game = game, apiKey = apiKey)
+                                .map(GameRegistration.Registered(_))
+                    }
+                } yield registered
             }
         }
+
+    /** [[createOrUpdate]]'s work, inside the caller's transaction. */
+    private def save(repos: Repos, externalUserId: String, game: Game, apiKey: Option[String]): IO[Game] =
+        for {
+            _ <- authorize(repos.players, externalUserId)
+            // Trimmed before it is checked, so that "  attacker  " and "attacker" are refused as the
+            // duplicate they are rather than stored as two roles that read identically.
+            trimmed = normalize(game)
+            _ <- validate(trimmed)
+            newKey = apiKey.map(_.trim).filter(_.nonEmpty)
+            // The same floor the engine module puts on the key it is given: this is the only thing
+            // protecting the callback routes, and a short one is a typo or a guessable token.
+            _ <- newKey.traverse_(key =>
+                IO.raiseWhen(key.length < GameService.MinApiKeyLength)(
+                  ValidationError(
+                    ErrorText.game
+                        .shortApiKey(least = GameService.MinApiKeyLength.toString, length = key.length.toString)
+                  )
+                )
+            )
+            result <-
+                if (trimmed.gameId == GameId.unassigned)
+                    // Under its identity's lock, so that `registerUnlessPresent` looking for a game with it sees this
+                    // one or waits for it.
+                    repos.games[T].lockIdentity(trimmed.externalId) *> repos.games[T].create(trimmed)
+                else
+                    // Locked before it is read: `checkRoles` below decides what may be written
+                    // from what is there now, and the update rewrites the roles and parameters it
+                    // was checked against. Two admins saving the same game at once would
+                    // otherwise both diff against the state before either of them wrote.
+                    repos
+                        .games[T]
+                        .lockForUpdate(trimmed.gameId) *> repos.games[T].read(trimmed.gameId).flatMap {
+                        case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
+                        case Some(existing) =>
+                            checkRoles(
+                              existing = existing,
+                              incoming = trimmed,
+                              tournaments = repos.tournaments
+                            ) *> repos
+                                .games[T]
+                                .update(trimmed) *> repos.games[T].read(trimmed.gameId).flatMap {
+                                case Some(updated) => IO.pure(updated)
+                                case None =>
+                                    IO.raiseError(NotFoundError(ErrorText.game.notFound))
+                            }
+                    }
+            // A new game offers every tournament model it can play but the challenge, which its admins may then change.
+            _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
+              TournamentModelService.offerPlayable(repos, result).void
+            )
+            // Unique across games. A clash rolls the whole save back, game and all.
+            _ <- newKey.traverse_(key =>
+                repos.gameApiKeys.set(result.gameId, key).recoverWith { case SqlState.UniqueViolation(_) =>
+                    IO.raiseError(ConflictError(ErrorText.game.apiKeyTaken))
+                }
+            )
+        } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
 
     /** Every stored engine key, filed under the engine identity of its game: what a game engine's callback is
       * authenticated against. Asked by the authenticator before there is any caller to authorize, which is why it takes
@@ -298,4 +334,10 @@ object GameService {
       * deploys an engine with, so any key that engine could have been given passes.
       */
     val MinApiKeyLength = 24
+}
+
+/** What [[GameService.registerUnlessPresent]] did: saved the game, or found one with its engine identity already. */
+enum GameRegistration {
+    case Registered(game: Game)
+    case AlreadyRegistered(game: Game)
 }

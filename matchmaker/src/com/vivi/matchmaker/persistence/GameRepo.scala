@@ -119,6 +119,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val lockGamesByExternalId: Query[String, GameId] =
         sql"SELECT game_id FROM game WHERE external_id = $text ORDER BY game_id FOR SHARE".query(gameId)
 
+    /* An advisory lock on an engine identity, since no row lock can hold a game that is not there yet. The identity is
+     * hashed into the second key, so two identities may now and then share a lock, which only makes one wait. The
+     * function returns void, which skunk cannot decode; as text it is the empty string. */
+    private val lockIdentityQuery: Query[String, String] =
+        sql"SELECT pg_advisory_xact_lock(${int4}, hashtext($text))::text"
+            .query(text)
+            .contramap(id => (GameRepo.IdentityLockSpace, id))
+
     /* And the exclusive form, for the caller that is about to rewrite the game itself. A game is
      * its row plus its roles, parameters and values, and an edit reads all of that to decide what
      * to write -- so two admins saving the same game at once must queue here rather than both
@@ -212,6 +220,12 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       */
     def lockForShareByExternalId(externalId: String): IO[List[GameId]] =
         session.execute(lockGamesByExternalId)(externalId)
+
+    /** Holds the engine identity `externalId` until the transaction ends, so that a look for a game with it and the
+      * insert of one cannot be split by another transaction's insert: what every new game takes, in
+      * [[com.vivi.matchmaker.service.GameService]], before it is written.
+      */
+    def lockIdentity(externalId: String): IO[Unit] = session.unique(lockIdentityQuery)(externalId).void
 
     /** As [[lockForShareByExternalId]], for a read that writes nothing and so needs no lock. */
     def readIdsByExternalId(externalId: String): IO[List[GameId]] =
@@ -557,4 +571,12 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             _ <- session.execute(deleteParameters)(gameId)
             _ <- parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
         } yield ()
+}
+
+object GameRepo {
+
+    /** The first key of [[GameRepo.lockIdentity]]'s advisory locks: anything, so long as nothing else takes locks under
+      * it.
+      */
+    val IdentityLockSpace: Int = 0x47494454 // "GIDT"
 }

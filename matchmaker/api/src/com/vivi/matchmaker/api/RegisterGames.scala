@@ -6,10 +6,10 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all._
 import upickle.default.{ReadWriter, macroRW, read}
 import com.vivi.matchmaker.archive.ArchiveStore
-import com.vivi.matchmaker.model.{Game, GameScope}
+import com.vivi.matchmaker.model.Game
 import com.vivi.matchmaker.notify.Notifier
 import com.vivi.matchmaker.persistence.TextCodec.given
-import com.vivi.matchmaker.service.{DbConfig, Services}
+import com.vivi.matchmaker.service.{DbConfig, GameRegistration, Services}
 import Json.given
 
 /** Registers the bundled engines' games in a matchmaker database: what `init-games.sh` runs.
@@ -21,8 +21,10 @@ import Json.given
   * model's tournaments.
   *
   * A game whose engine identity (`external_id`) is already registered is skipped rather than saved again: it is a real
-  * game by then, its admins may have changed it, and a second game for the same engine would split its players. A moved
-  * url is `update-engine-urls.sh`'s to fix.
+  * game by then, its admins may have changed it, and a second game for the same engine would split its players. The
+  * look and the save are one transaction under the identity's lock
+  * ([[com.vivi.matchmaker.service.GameService.registerUnlessPresent]]), so two runs at once cannot both register it. A
+  * moved url is `update-engine-urls.sh`'s to fix.
   *
   * {{{
   * DB_HOST=… DB_NAME=… DB_USER=… DB_PASSWORD=… ADMIN_EXTERNAL_ID=… \
@@ -81,21 +83,20 @@ object RegisterGames {
                     services.tournamentModels
                         .sync(admin)
                         .flatMap(done => IO.println(s"    tournament models: none stored; synced ${done.added.size}"))
-            existing <- services.games.list(admin, GameScope.All).map(_.map(g => g.externalId -> g.displayName).toMap)
             _ <- engines.traverse_(engine =>
-                existing.get(engine.externalId) match {
-                    case Some(name) =>
-                        IO.println(s"    ${engine.externalId}: already registered as '$name'; skipped")
-                    case None =>
-                        services.games
-                            .createOrUpdate(externalUserId = admin, game = gameOf(engine), apiKey = engine.apiKey)
-                            .flatMap(saved =>
-                                IO.println(
-                                  s"    ${engine.externalId}: registered '${saved.displayName}' at ${saved.url}" +
-                                      (if (engine.apiKey.isDefined) ", with its API key" else ", with no API key")
-                                )
+                services.games
+                    .registerUnlessPresent(externalUserId = admin, game = gameOf(engine), apiKey = engine.apiKey)
+                    .flatMap {
+                        case GameRegistration.AlreadyRegistered(found) =>
+                            IO.println(
+                              s"    ${engine.externalId}: already registered as '${found.displayName}'; skipped"
                             )
-                }
+                        case GameRegistration.Registered(saved) =>
+                            IO.println(
+                              s"    ${engine.externalId}: registered '${saved.displayName}' at ${saved.url}" +
+                                  (if (engine.apiKey.isDefined) ", with its API key" else ", with no API key")
+                            )
+                    }
             )
         } yield ()
 

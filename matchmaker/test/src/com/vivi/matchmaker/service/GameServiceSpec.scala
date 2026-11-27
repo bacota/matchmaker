@@ -315,6 +315,47 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), (true, false))
     }
 
+    // What init-games.sh registers an engine with. Several at once, as overlapping runs would be: the look and the
+    // save are one transaction under the identity's lock, so exactly one registers it and the rest find that one.
+    test("registerUnlessPresent registers an engine identity once, however many register it at once") {
+        val result = for {
+            admin <- makeAdmin()
+            game = Generators.genGameWithRole.sample.get
+            outcomes <- List
+                .fill(4)(game)
+                .parTraverse(g =>
+                    gameService.registerUnlessPresent(externalUserId = admin.externalId, game = g, apiKey = None)
+                )
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.count(_.externalId == game.externalId))
+        } yield (outcomes.count(_.isInstanceOf[GameRegistration.Registered]), listed)
+
+        assertEquals(result.unsafeRunSync(), (1, 1))
+    }
+
+    // A game an admin made first is the engine's game, and is left as they made it.
+    test("registerUnlessPresent leaves a game with the same engine identity as it is") {
+        val result = for {
+            admin <- makeAdmin()
+            made <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = Generators.genGameWithRole.sample.get
+            )
+            outcome <- gameService.registerUnlessPresent(
+              externalUserId = admin.externalId,
+              game = Generators.genGameWithRole.sample.get.copy(externalId = made.externalId),
+              apiKey = None
+            )
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.count(_.externalId == made.externalId))
+        } yield (outcome, made, listed)
+
+        val (outcome, made, listed) = result.unsafeRunSync()
+        outcome match {
+            case GameRegistration.AlreadyRegistered(found) => assertEquals(found.gameId, made.gameId)
+            case other                                     => fail(s"expected the game already registered, got $other")
+        }
+        assertEquals(listed, 1)
+    }
+
     // Saving an edit with the key the game already has is not a clash with itself.
     test("a game may be saved again with the key it already holds") {
         val key = s"key-${java.util.UUID.randomUUID()}"
