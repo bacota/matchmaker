@@ -78,6 +78,16 @@ object EngineConfig {
     def matchmakerUrl(env: String => Option[String]): Option[String] =
         env("MATCHMAKER_URL").map(_.trim).filter(_.nonEmpty)
 
+    /** Redeeming the sign-in codes matchmaker's UI opens a play page with, through matchmaker at `MATCHMAKER_URL` with
+      * this engine's key. None offline or without one: a code is then answered 503, and the page asks the player to
+      * sign in.
+      */
+    def handOffs(env: String => Option[String]): HandOffs =
+        matchmakerUrl(env).filterNot(_ => isOffline(env)) match {
+            case Some(url) => HandOffs(Seq(matchmaker(env) -> url))
+            case None      => HandOffs.none
+        }
+
     /** How matchmaker is called back: over HTTP, or — with `MATCHMAKER_OFFLINE=true` — not at all, the calls printed.
       */
     def matchmaker(env: String => Option[String]): Matchmaker =

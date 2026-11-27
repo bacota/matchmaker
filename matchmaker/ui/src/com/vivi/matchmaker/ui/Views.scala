@@ -494,18 +494,30 @@ object Views {
         )
 
     /** Opens a game engine's page — a board, a spectator's view, a character page — in a new tab, signed in as the
-      * player signed in here. See `Auth.handOff`. Only a trusted game's engine is handed the refresh token; any other
+      * player signed in here: see `Auth.handOff`. Only a trusted game's engine is handed the refresh token; any other
       * is given the ID token alone, and asks the player to sign in again once that expires.
       *
-      * Opened at once when the hand-off is ready at once, which keeps it inside the click a browser requires a popup to
-      * come from; only a session that has to be refreshed first waits for that.
+      * The tab is opened at once, blank, within the click a browser requires a popup to come from, and sent to the page
+      * once its one-time code has been made, which takes a request. `noopener` cannot be asked of `window.open` here,
+      * since it would answer `null` and leave nothing to send there later, so the new tab's `opener` is cleared by
+      * hand, which keeps the engine's page from reaching back into this one all the same.
       */
-    private[ui] def openSignedIn(url: String, isTrusted: Boolean): Unit = {
-        def open(target: String): Unit = { dom.window.open(target, "_blank", "noopener,noreferrer"); () }
-        val handed = Auth.handOff(url = url, isTrusted = isTrusted)
-        handed.value match {
-            case Some(scala.util.Success(target)) => open(target)
-            case _                                => handed.foreach(open)
+    private[ui] def openSignedIn(url: String, gameId: GameId, isTrusted: Boolean): Unit = {
+        val tab = Option(dom.window.open("", "_blank"))
+        tab.foreach { t =>
+            t.asInstanceOf[scala.scalajs.js.Dynamic].opener = null
+            // Something to look at while the code is made. A blank tab of this origin, so it can be written to.
+            try {
+                t.document.title = "Opening…"
+                t.document.body.textContent = "Opening…"
+            } catch { case scala.util.control.NonFatal(_) => () }
+        }
+        Auth.handOff(url = url, gameId = gameId, isTrusted = isTrusted).foreach { target =>
+            tab match {
+                case Some(t) => t.location.href = target
+                // The browser refused the blank tab: try once more with the page itself.
+                case None => dom.window.open(target, "_blank", "noopener,noreferrer")
+            }
         }
     }
 

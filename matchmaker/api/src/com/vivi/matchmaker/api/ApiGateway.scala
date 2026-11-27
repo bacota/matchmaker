@@ -35,7 +35,8 @@ object ApiGateway {
         def segments: List[String] = path.split('/').iterator.filter(_.nonEmpty).toList
     }
 
-    case class Response(statusCode: Int, body: String)
+    /** `headers` are any beyond the content type, such as `cache-control` on an answer carrying a credential. */
+    case class Response(statusCode: Int, body: String, headers: Map[String, String] = Map.empty)
 
     /** Header carrying the caller's identity in the local development mode, where there is no gateway to verify a
       * token. Deployed, the identity is the `sub` claim instead — see `Authenticator`.
@@ -105,7 +106,11 @@ object ApiGateway {
         ujson.write(
           ujson.Obj(
             "statusCode" -> ujson.Num(response.statusCode.toDouble),
-            "headers" -> ujson.Obj("content-type" -> ujson.Str("application/json")),
+            "headers" -> ujson.Obj.from(
+              ("content-type" -> ujson.Str("application/json")) +: response.headers.toSeq.map((k, v) =>
+                  k -> ujson.Str(v)
+              )
+            ),
             "isBase64Encoded" -> ujson.Bool(false),
             "body" -> ujson.Str(response.body)
           )

@@ -2,7 +2,16 @@ package com.vivi.stratego
 
 import java.time.Instant
 import upickle.default.write
-import com.vivi.engine.{EngineRequest, EngineResponse, InMemoryMatchStore, Live, Matchmaker, PlayAuth, RoutesContract}
+import com.vivi.engine.{
+    EngineRequest,
+    EngineResponse,
+    HandOffs,
+    InMemoryMatchStore,
+    Live,
+    Matchmaker,
+    PlayAuth,
+    RoutesContract
+}
 import Protocol.given
 
 /** The routes every engine serves, as stratego serves them: the first move is Red's setup. What a move does is
@@ -15,7 +24,8 @@ class RoutesContractSpec extends RoutesContract {
         matchmakerKey: Option[String],
         live: Option[Live],
         matchmaker: Matchmaker,
-        now: () => Instant
+        now: () => Instant,
+        handOffs: HandOffs
     ): EngineRequest => EngineResponse =
         Routes(
           engine = Engine(
@@ -26,7 +36,8 @@ class RoutesContractSpec extends RoutesContract {
           ),
           playAuth = playAuth,
           matchmakerKey = matchmakerKey,
-          live = live
+          live = live,
+          handOffs = handOffs
         )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =

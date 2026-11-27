@@ -190,7 +190,12 @@ ${authScript(Some(login))}
 
   /* A session exists when there is a usable ID token or a refresh token that could obtain one.
    * Used for rendering; `freshIdToken` is what establishes whether the refresh actually works. */
-  function isSignedIn() { return !!(idToken() || refreshToken()); }
+  function isSignedIn() { return !!(idToken() || refreshToken() || handingOff); }
+
+  /* A sign-in handed over from matchmaker being redeemed (`takeHandOff`), until it is: the tab
+   * counts as signed in meanwhile, and `freshIdToken` waits for it, so nothing asks for a seat
+   * before the tokens are stored. */
+  let handingOff = null;
 
   /* At most one refresh in flight: the board polls, so several requests can meet an expired token
    * at once and must share one redemption rather than race to spend the token each. */
@@ -203,6 +208,7 @@ ${authScript(Some(login))}
   let generation = 0;
 
   async function freshIdToken() {
+    if (handingOff) await handingOff;
     const token = idToken();
     if (token) return token;
     await refreshed();
@@ -284,7 +290,8 @@ ${authScript(Some(login))}
     const token = sessionStorage.getItem(TokenKey);
     const claims = token && claimsOf(token);
     const email = claims && typeof claims.email === "string" ? claims.email : null;
-    const text = !isShown ? "" : email ? "Signed in as " + email + " — not you?" : "Signed in.";
+    const text = !isShown ? "" : handingOff ? "Signing in…" :
+      email ? "Signed in as " + email + " — not you?" : "Signed in.";
     const who = document.getElementById("signed-in-who");
     if (who.textContent !== text) who.textContent = text;
   }
@@ -296,31 +303,72 @@ ${authScript(Some(login))}
     if (button) button.addEventListener("click", () => { clearSession(); location.reload(); });
   })();
 
-  /* A session handed over by matchmaker's UI, which opens this page with its own tokens in the
-   * fragment — `#idToken=…&refreshToken=…`, see `Auth.handOff` there — so that a player signed in
-   * on the main page is signed in here without being asked again. Same pool, same app client, so
-   * the refresh token redeems here as it does there.
+  /* A sign-in handed over by matchmaker's UI, which opens this page with a one-time code in the
+   * fragment — `#handoff=CODE`, see `Auth.handOff` there — so that a player signed in on the main
+   * page is signed in here without being asked again. The code goes to this engine's own server
+   * (`POST api/handoff`), which redeems it with matchmaker using the game's API key and answers
+   * with the player's tokens. Same pool, same app client, so the refresh token redeems here as it
+   * does there.
    *
-   * In the fragment because a fragment is never sent to a server and so never lands in a log, and
-   * taken out of the address bar at once, before anything else on the page runs, so that it is not
-   * bookmarked, shared or left in history. It replaces whatever session the tab held.
+   * A code and not the tokens, because the browser keeps the url in its history before the page
+   * can clear it: a code read from there is spent, or expired a minute after it was made. It is
+   * taken out of the address bar at once all the same, before the request.
    *
-   * Nothing here vouches for the tokens — the engine verifies the ID token on every request, and
-   * Cognito the refresh token on every redemption — and nothing here can tell whether matchmaker
-   * made the link. Anyone can write one with their own tokens in it, and a player who follows it
-   * is signed in as them: whatever they then do on the page is done as that account. The tokens
-   * travel only into the tab, never out of it, so the player's own session is not exposed; what
-   * guards against the rest is `renderSignedInAs`, which says whose account this is. */
+   * Nothing here can tell whether the player meant to follow the link: anyone can make a code for
+   * their own account and send it, and a player who follows it is signed in as them. So a tab
+   * already signed in as someone else asks before switching, and `renderSignedInAs` says whose
+   * account this is. */
   (function takeHandOff() {
     if (!location.hash) return;
-    const handed = new URLSearchParams(location.hash.substring(1));
-    const id = handed.get("idToken"), refresh = handed.get("refreshToken");
-    if (!id && !refresh) return;
+    const code = new URLSearchParams(location.hash.substring(1)).get("handoff");
+    if (!code) return;
     history.replaceState(history.state, "", location.pathname + location.search);
-    clearSession();
-    if (id) sessionStorage.setItem(TokenKey, id);
-    if (refresh) sessionStorage.setItem(RefreshKey, refresh);
+    handingOff = redeemHandOff(code).finally(() => { handingOff = null; renderSignedInAs(); });
   })();
+
+  async function redeemHandOff(code) {
+    // This engine's root: the page's path less its own part, since behind API Gateway the path
+    // carries a stage prefix.
+    const root = location.pathname.replace(new RegExp("/(matches|fighters|rules)(/.*)?$$"), "");
+    let tokens = null;
+    try {
+      const response = await fetch(root + "/api/handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: code }),
+        cache: "no-store"
+      });
+      if (response.ok) tokens = await response.json();
+    } catch (e) { tokens = null; }
+    if (!tokens || typeof tokens.idToken !== "string") { handOffFailed(); return; }
+    if (!isSwitchAgreed(tokens.idToken)) return;
+    clearSession();
+    sessionStorage.setItem(TokenKey, tokens.idToken);
+    if (tokens.refreshToken) sessionStorage.setItem(RefreshKey, tokens.refreshToken);
+  }
+
+  /* Whether to replace the session the tab holds with one for `handed`: at once when the tab holds
+   * none, or one for the same account, and otherwise only if the player says so. */
+  function isSwitchAgreed(handed) {
+    const held = sessionStorage.getItem(TokenKey);
+    const current = held && claimsOf(held);
+    const next = claimsOf(handed);
+    if (!current || !current.sub || !next || current.sub === next.sub) return true;
+    const name = claims => typeof claims.email === "string" ? claims.email : "another account";
+    return confirm(${jsString(ErrorText.signIn.switchAccount(current = "{current}", handed = "{handed}"))}
+      .replace("{current}", name(current)).replace("{handed}", name(next)));
+  }
+
+  /* The code was not redeemed: the tab stays as it was, and the form, when the page has one, says
+   * why it is being shown. */
+  function handOffFailed() {
+    try {
+      if (typeof renderSignIn === "function" && login) {
+        problem = ${jsString(ErrorText.signIn.handOffFailed)};
+        renderSignIn();
+      }
+    } catch (e) { /* a page without the form */ }
+  }
   renderSignedInAs();
 
   /* One call to the Cognito user pools API. Not an SDK and not SigV4 signed: `InitiateAuth` and

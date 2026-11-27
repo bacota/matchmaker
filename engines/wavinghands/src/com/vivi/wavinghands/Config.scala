@@ -18,7 +18,8 @@ object Config {
           engine = engine(env = env, baseUrl = baseUrl, announce = announce),
           playAuth = EngineConfig.playAuth(env, baseUrl),
           matchmakerKey = EngineConfig.matchmakerKey(env),
-          live = live.orElse(EngineConfig.live(env, baseUrl))
+          live = live.orElse(EngineConfig.live(env, baseUrl)),
+          handOffs = EngineConfig.handOffs(env)
         )
     }
 

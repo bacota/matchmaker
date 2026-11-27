@@ -582,7 +582,7 @@ object engines extends Module {
       * `mvn"com.vivi::engines-common:<publishVersion>"`. The generated text objects are compiled in, so it needs nothing
       * from this repository at run time.
       */
-    def publishVersion = "0.1.0"
+    def publishVersion = "0.2.0"
 
     def pomSettings = PomSettings(
       description = "What every vivi game engine shares: the Lambda event, signed HTTP, DynamoDB, S3, sign-in",

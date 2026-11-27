@@ -27,7 +27,8 @@ case class Services[T](
     suppression: SuppressionService,
     tournaments: TournamentService[T],
     tournamentModels: TournamentModelService[T],
-    rounds: TournamentRounds[T]
+    rounds: TournamentRounds[T],
+    handOffs: HandOffService
 )
 
 object Services {
@@ -163,7 +164,8 @@ object Services {
             started = (g, t) => endings.tournamentRoundDue(g, t)
           ),
           tournamentModels = new TournamentModelService[T](pool),
-          rounds = rounds
+          rounds = rounds,
+          handOffs = new HandOffService(pool)
         )
     }
 }

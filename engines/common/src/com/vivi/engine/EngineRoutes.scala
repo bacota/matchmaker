@@ -33,7 +33,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     playAuth: PlayAuth,
     matchmakerKey: Option[String],
     signIn: SignIn,
-    live: Option[Live] = None
+    live: Option[Live] = None,
+    handOffs: HandOffs = HandOffs.none
 ) extends (EngineRequest => EngineResponse) {
 
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board — and what a viewer may
@@ -263,6 +264,10 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>
                 withPublic(matchId)(m => revalidated(request, write(stateOf(m, None))))
+
+            // A sign-in handed over from matchmaker by a one-time code, which this engine redeems with its own key
+            // for the player's tokens (`HandOffs`). Anyone may ask: the code is the credential.
+            case ("POST", "api" :: "handoff" :: Nil) => handOffs.respond(request.body)
 
             case ("GET", "health" :: Nil) => EngineResponse(status = 200, body = """{"status":"ok"}""")
 

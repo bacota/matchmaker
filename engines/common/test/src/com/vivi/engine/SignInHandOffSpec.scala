@@ -37,8 +37,15 @@ class SignInHandOffSpec extends FunSuite {
         storage: Map[String, String],
         replaced: Seq[(ujson.Value, String)],
         signedInAs: Option[String],
-        isReloaded: Boolean
+        isReloaded: Boolean,
+        fetched: Seq[Fetched] = Nil,
+        asked: Seq[String] = Nil,
+        problem: Option[String] = None
     )
+
+    /** A request the page made: where, with what body and cache mode, and how many address-bar replacements came first.
+      */
+    private case class Fetched(url: String, body: String, cache: Option[String], replacedBefore: Int)
 
     /** Loads the page's sign-in script with `hash` — a JavaScript expression — as `location.hash`, and with `stored`
       * already in `sessionStorage`. The page has the `#signed-in-as` line; `isSignOutPressed` presses its button once
@@ -51,7 +58,10 @@ class SignInHandOffSpec extends FunSuite {
         login: Option[LoginConfig] = None,
         isSignOutPressed: Boolean = false,
         `then`: String = "",
-        hasForm: Boolean = false
+        hasForm: Boolean = false,
+        handOffAnswer: String = "null",
+        isSwitchConfirmed: Boolean = true,
+        path: String = path
     ): After = {
         val form =
             if (hasForm) s"""${HtmlText.escapeScript}
@@ -70,6 +80,15 @@ globalThis.sessionStorage = {
 };
 const replaced = [];
 let reloaded = false;
+// What the page posted, with how many replaceStates had been made by then; and what it asked.
+const fetched = [];
+const asked = [];
+globalThis.confirm = question => { asked.push(question); return $isSwitchConfirmed; };
+globalThis.fetch = (url, init) => {
+  fetched.push({ url, init, replacedBefore: replaced.length });
+  const answer = $handOffAnswer;
+  return answer === null ? Promise.reject(new TypeError("no answer")) : Promise.resolve(answer);
+};
 globalThis.location = { hash: $hash, pathname: "$path", search: "$search", reload: () => { reloaded = true; } };
 globalThis.history = { state: { kept: true }, replaceState: (state, title, url) => replaced.push([state, url]) };
 const listeners = {};
@@ -91,9 +110,12 @@ ${signIn.authScript(login)}
 $form
 if ($isSignOutPressed) listeners.click();
 (async () => {
+  while (handingOff) await handingOff;
   ${`then`}
   const line = elements["signed-in-as"].hidden ? null : elements["signed-in-who"].textContent;
-  console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line, reloaded }));
+  const problemShown = typeof problem === "undefined" ? null : problem;
+  console.log(JSON.stringify({ storage: Object.fromEntries(store), replaced, line, reloaded, fetched, asked,
+    problem: problemShown }));
 })();
 """
         val file = Files.createTempFile("signin-handoff", ".js")
@@ -112,7 +134,17 @@ if ($isSignOutPressed) listeners.click();
               storage = json("storage").obj.view.mapValues(_.str).toMap,
               replaced = json("replaced").arr.toSeq.map(r => (r(0), r(1).str)),
               signedInAs = json("line").strOpt,
-              isReloaded = json("reloaded").bool
+              isReloaded = json("reloaded").bool,
+              fetched = json("fetched").arr.toSeq.map(f =>
+                  Fetched(
+                    url = f("url").str,
+                    body = f("init")("body").str,
+                    cache = f("init").obj.get("cache").map(_.str),
+                    replacedBefore = f("replacedBefore").num.toInt
+                  )
+              ),
+              asked = json("asked").arr.toSeq.map(_.str),
+              problem = json("problem").strOpt
             )
         } finally Files.deleteIfExists(file)
     }
@@ -122,39 +154,134 @@ if ($isSignOutPressed) listeners.click();
         "\"#\" + new URLSearchParams(" + ujson.write(ujson.Obj.from(params.map((k, v) => k -> ujson.Str(v)))) +
             ").toString()"
 
-    test("a handed-over session is stored, and the fragment is gone from the address bar") {
-        val after = load(handedHash("idToken" -> "id-1", "refreshToken" -> "r-1"))
+    /** The engine's server answering `POST api/handoff` with `status` and `body`, as `fetch` resolves. */
+    private def answered(status: Int, body: ujson.Value): String =
+        s"""({ ok: ${status >= 200 && status < 300}, status: $status, json: async () => (${ujson.write(body)}) })"""
+
+    private def tokens(idToken: String, refreshToken: Option[String] = None): String =
+        answered(
+          200,
+          ujson.Obj.from(Seq("idToken" -> ujson.Str(idToken)) ++ refreshToken.map(r => "refreshToken" -> ujson.Str(r)))
+        )
+
+    test("a handed-over code is redeemed by this engine's server, and its tokens stored") {
+        val after = load(handedHash("handoff" -> "c0de"), handOffAnswer = tokens("id-1", Some("r-1")))
         assertEquals(after.storage, Map("stratego.idToken" -> "id-1", "stratego.refreshToken" -> "r-1"))
+        assertEquals(
+          after.fetched.map(f => (f.url, ujson.read(f.body))),
+          Seq(("/api/handoff", ujson.Obj("code" -> "c0de")))
+        )
+        assertEquals(after.fetched.map(_.cache), Seq(Some("no-store")))
+    }
+
+    test("the fragment is gone from the address bar before the code is sent") {
+        val after = load(handedHash("handoff" -> "c0de"), handOffAnswer = tokens("id-1"))
         // The path and the query stay — `?as=` is who the player is locally — and only the fragment goes.
         assertEquals(after.replaced.map(_._2), Seq(path + search))
         assertEquals(after.replaced.map(_._1), Seq(ujson.Obj("kept" -> true)))
+        assertEquals(after.fetched.map(_.replacedBefore), Seq(1))
     }
 
-    // Whatever base64 can hold — `+`, `/`, `=` — and worse besides, read back as exactly what was handed.
-    test("tokens are read back exactly as they were encoded") {
-        val id = "eyJ+a/b=.c_d-e"
-        val refresh = "x&y=z+w/v==%20 q"
-        val after = load(handedHash("idToken" -> id, "refreshToken" -> refresh))
-        assertEquals(after.storage.get("stratego.idToken"), Some(id))
-        assertEquals(after.storage.get("stratego.refreshToken"), Some(refresh))
+    test("behind a stage prefix, the code goes to the engine's root under it") {
+        val after =
+            load(handedHash("handoff" -> "c0de"), handOffAnswer = tokens("id-1"), path = "/dev/matches/m-1/play")
+        assertEquals(after.fetched.map(_.url), Seq("/dev/api/handoff"))
+    }
+
+    // Whatever base64url can hold, and worse besides, sent exactly as it was handed.
+    test("the code is sent exactly as it was encoded") {
+        val code = "a+b/c=d&e f"
+        val after = load(handedHash("handoff" -> code), handOffAnswer = tokens("id-1"))
+        assertEquals(after.fetched.map(f => ujson.read(f.body)("code").str), Seq(code))
     }
 
     test("the session the tab held is replaced, not merged with") {
         val held = Map(
-          "stratego.idToken" -> "someone-else",
+          "stratego.idToken" -> "not-a-jwt",
           "stratego.accessToken" -> "their-access",
           "stratego.refreshToken" -> "their-refresh",
           "stratego.pkceVerifier" -> "v",
           "stratego.authState" -> "s"
         )
-        val after = load(handedHash("idToken" -> "id-1"), held)
+        val after = load(handedHash("handoff" -> "c0de"), held, handOffAnswer = tokens("id-1"))
         assertEquals(after.storage, Map("stratego.idToken" -> "id-1"))
+        assertEquals(after.asked, Seq.empty)
     }
 
-    test("a refresh token on its own is enough to hand over") {
-        val after = load(handedHash("refreshToken" -> "r-1"))
-        assertEquals(after.storage, Map("stratego.refreshToken" -> "r-1"))
-        assertEquals(after.replaced.size, 1)
+    test("a code the server does not redeem leaves the tab as it was, and the form says why") {
+        val held = Map("stratego.refreshToken" -> "mine")
+        val after = load(
+          handedHash("handoff" -> "spent"),
+          held,
+          login = Some(login),
+          hasForm = true,
+          handOffAnswer = answered(404, ujson.Obj("error" -> "that sign-in code is spent, expired or unknown"))
+        )
+        assertEquals(after.storage, held)
+        assertEquals(after.problem, Some(ErrorText.signIn.handOffFailed))
+        // Out of the address bar all the same.
+        assertEquals(after.replaced.map(_._2), Seq(path + search))
+    }
+
+    test("an engine that cannot be reached leaves the tab signed out") {
+        val after = load(handedHash("handoff" -> "c0de"), login = Some(login), hasForm = true)
+        assertEquals(after.storage, Map.empty[String, String])
+        assertEquals(after.signedInAs, None)
+        assertEquals(after.problem, Some(ErrorText.signIn.handOffFailed))
+    }
+
+    test("while the code is out the tab counts as signed in, and asking for a token waits for it") {
+        val id = idToken("email" -> "alice@example.com", "exp" -> inAnHour)
+        val waited = load(
+          "\"\"",
+          login = Some(login),
+          `then` = s"""
+            let answer;
+            globalThis.fetch = () => new Promise(resolve => { answer = resolve; });
+            handingOff = redeemHandOff("c0de").finally(() => { handingOff = null; renderSignedInAs(); });
+            renderSignedInAs();
+            if (!isSignedIn()) throw new Error("not signed in while handing off");
+            if (elements["signed-in-who"].textContent !== "Signing in…") throw new Error("not shown as signing in");
+            const token = freshIdToken();
+            answer(${tokens(id)});
+            if (await token !== "$id") throw new Error("the token was asked for before it was stored");
+          """
+        )
+        assertEquals(waited.storage.get("stratego.idToken"), Some(id))
+        assertEquals(waited.signedInAs, Some("Signed in as alice@example.com — not you?"))
+    }
+
+    test("a tab signed in as someone else asks before switching, and keeps its session if told not to") {
+        val alice = idToken("sub" -> "a", "email" -> "alice@example.com", "exp" -> inAnHour)
+        val bob = idToken("sub" -> "b", "email" -> "bob@example.com", "exp" -> inAnHour)
+        val held = Map("stratego.idToken" -> alice, "stratego.refreshToken" -> "r-alice")
+        val kept = load(
+          handedHash("handoff" -> "c0de"),
+          held,
+          handOffAnswer = tokens(bob, Some("r-bob")),
+          isSwitchConfirmed = false
+        )
+        assertEquals(kept.asked, Seq("Signed in here as alice@example.com. Switch to bob@example.com?"))
+        assertEquals(kept.storage, held)
+
+        val switched = load(handedHash("handoff" -> "c0de"), held, handOffAnswer = tokens(bob, Some("r-bob")))
+        assertEquals(switched.storage, Map("stratego.idToken" -> bob, "stratego.refreshToken" -> "r-bob"))
+    }
+
+    test("a hand-off for the account the tab already holds does not ask") {
+        val first = idToken("sub" -> "a", "exp" -> inAnHour)
+        val again = idToken("sub" -> "a", "exp" -> inAnHour, "iat" -> ujson.Num(2))
+        val after =
+            load(handedHash("handoff" -> "c0de"), Map("stratego.idToken" -> first), handOffAnswer = tokens(again))
+        assertEquals(after.asked, Seq.empty)
+        assertEquals(after.storage, Map("stratego.idToken" -> again))
+    }
+
+    test("tokens in the fragment, as matchmaker used to hand them, are not taken") {
+        val after = load(handedHash("idToken" -> "id-1", "refreshToken" -> "r-1"))
+        assertEquals(after.storage, Map.empty[String, String])
+        assertEquals(after.fetched, Seq.empty)
+        assertEquals(after.replaced, Seq.empty)
     }
 
     test("a fragment that is not a hand-off is left where it is, and so is the session") {
@@ -182,7 +309,7 @@ if ($isSignOutPressed) listeners.click();
 
     test("a handed-over session says whose account it is") {
         val id = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
-        val after = load(handedHash("idToken" -> id, "refreshToken" -> "r-1"), login = Some(login))
+        val after = load(handedHash("handoff" -> "c0de"), login = Some(login), handOffAnswer = tokens(id, Some("r-1")))
         assertEquals(after.signedInAs, Some("Signed in as mallory@example.com — not you?"))
     }
 
@@ -201,7 +328,7 @@ if ($isSignOutPressed) listeners.click();
     }
 
     test("a session whose token names no address is still shown as signed in") {
-        val after = load(handedHash("refreshToken" -> "r-1"), login = Some(login))
+        val after = load("\"\"", Map("stratego.refreshToken" -> "r-1"), login = Some(login))
         assertEquals(after.signedInAs, Some("Signed in."))
     }
 
@@ -211,13 +338,14 @@ if ($isSignOutPressed) listeners.click();
 
     // A page with no login is one where `?as=` says who the player is, and there is no session to name.
     test("the line is hidden on a page with no login") {
-        assertEquals(load(handedHash("refreshToken" -> "r-1")).signedInAs, None)
+        assertEquals(load("\"\"", Map("stratego.refreshToken" -> "r-1")).signedInAs, None)
     }
 
     test("signing out drops the session and reloads the page") {
         val id = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
         val after = load(
-          handedHash("idToken" -> id, "refreshToken" -> "r-1"),
+          "\"\"",
+          Map("stratego.idToken" -> id, "stratego.refreshToken" -> "r-1"),
           login = Some(login),
           isSignOutPressed = true
         )

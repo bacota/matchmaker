@@ -121,4 +121,28 @@ class HttpMatchmakerSpec extends FunSuite {
             assertEquals(refusal.status, 404)
         }
     }
+
+    test("a sign-in code is redeemed at /handoffs/redeem with the key, and answered with the tokens") {
+        withMatchmaker(200, """{"idToken":"id-1","refreshToken":"r-1"}""") { (matchmaker, url, seen) =>
+            assertEquals(matchmaker.redeemHandOff(url, "c0de"), Some(Protocol.HandedOff("id-1", Some("r-1"))))
+            assertEquals(
+              seen().map(s => (s.method, s.path, s.apiKey)),
+              Some(("POST", "/handoffs/redeem", Some("the-key")))
+            )
+            assertEquals(seen().map(s => ujson.read(s.body)), Some(ujson.Obj("code" -> "c0de")))
+        }
+    }
+
+    test("a code matchmaker does not redeem is None, not a refusal") {
+        withMatchmaker(404, """{"error":"that sign-in code is spent, expired or unknown"}""") { (matchmaker, url, _) =>
+            assertEquals(matchmaker.redeemHandOff(url, "spent"), None)
+        }
+    }
+
+    test("matchmaker failing to redeem a code says nothing of the code") {
+        withMatchmaker(500, """{"error":"boom"}""") { (matchmaker, url, _) =>
+            val error = intercept[AwsError](matchmaker.redeemHandOff(url, "secret-code"))
+            assert(!error.getMessage.contains("secret-code"), error.getMessage)
+        }
+    }
 }

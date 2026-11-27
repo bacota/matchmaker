@@ -237,6 +237,12 @@ class RouterSpec extends FunSuite {
       )
     )
 
+    /** An unsigned ID token whose `sub` is `sub`: matchmaker reads the claim and leaves the signature to the engine. */
+    private def idTokenOf(sub: String): String = {
+        def part(json: String) = java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(json.getBytes("UTF-8"))
+        part("""{"alg":"none"}""") + "." + part(s"""{"sub":"$sub"}""") + ".sig"
+    }
+
     /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test would notice
       * breaking.
       */
@@ -346,7 +352,11 @@ class RouterSpec extends FunSuite {
         "/games/1/tournaments/2/matches/3/result",
         """{"ranks":[{"entrantId":5,"rank":1},{"entrantId":6,"rank":2}]}"""
       ),
-      ("GET", "/me/tournament-choices", "{}")
+      ("GET", "/me/tournament-choices", "{}"),
+      // A sign-in handed to an engine's page: the ID token is the caller's own, or it is refused before the
+      // service reaches the database. Redeemed by the engine, with the code its page was opened with.
+      ("POST", "/handoffs", s"""{"gameId":1,"idToken":"${idTokenOf("sub-1")}"}"""),
+      ("POST", "/handoffs/redeem", """{"code":"c0de"}""")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -373,7 +383,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 72)
+        assertEquals(routed.size, 74)
         assertEquals(routed.distinct.size, routed.size)
     }
 
@@ -652,5 +662,71 @@ class RouterSpec extends FunSuite {
         val response = Errors.toResponse(ConflictError("nickname is already registered"))
         assertEquals(response.statusCode, 409)
         assert(response.body.contains("nickname is already registered"), response.body)
+    }
+
+    // ---- a sign-in handed to an engine's page by a one-time code ----
+
+    test("a hand-off of an ID token that is not the caller's is refused before the database") {
+        val response = dispatch(
+          request(method = "POST", path = "/handoffs", body = s"""{"gameId":1,"idToken":"${idTokenOf("sub-2")}"}""")
+        )
+        assertEquals(response.statusCode, 403)
+        assert(response.body.contains(ErrorText.handOff.notYourToken), response.body)
+    }
+
+    test("redeeming a hand-off needs the game's key, and a missing or wrong one is refused as on other engine routes") {
+        def responseWith(headers: Map[String, String]) =
+            Router
+                .dispatch(
+                  services = services,
+                  request = request(
+                    method = "POST",
+                    path = "/handoffs/redeem",
+                    headers = headers,
+                    body = """{"code":"c0de"}"""
+                  ),
+                  authenticator = Authenticator.Gateway(keys)
+                )
+                .unsafeRunSync()
+
+        assertEquals(responseWith(Map.empty), Errors.unauthenticatedToken)
+        assertEquals(responseWith(Map(ApiKeys.Header -> "guess")), Errors.unauthenticated)
+        // The right key reaches the service, here the unusable pool.
+        assertEquals(quietly(responseWith(Map(ApiKeys.Header -> "s3cret"))).statusCode, 500)
+    }
+
+    /** Services whose hand-offs answer at once, without a database. */
+    private val handingServices = services.copy(handOffs = new HandOffService(unusablePool) {
+        override def create(
+            cognitoId: String,
+            gameId: GameId,
+            idToken: String,
+            refreshToken: Option[String]
+        ): IO[HandOff] = IO.pure(HandOff(code = "c0de", expiresAt = java.time.Instant.parse("2030-01-01T00:00:00Z")))
+        override def redeem(code: String, callerExternalId: String): IO[HandedOff] =
+            IO.pure(HandedOff(idToken = "id-1", refreshToken = Some("r-1")))
+    })
+
+    test("neither hand-off answer may be cached") {
+        def answer(path: String, body: String) =
+            Router
+                .dispatch(
+                  services = handingServices,
+                  request = request(method = "POST", path = path, body = body),
+                  authenticator = Authenticator.TrustedHeader
+                )
+                .unsafeRunSync()
+
+        val made = answer("/handoffs", s"""{"gameId":1,"idToken":"${idTokenOf("sub-1")}"}""")
+        assertEquals(made.statusCode, 200)
+        assertEquals(made.headers.get("cache-control"), Some("no-store"))
+        assertEquals(upickle.default.read[Json.HandOff](made.body).code, "c0de")
+
+        val redeemed = answer("/handoffs/redeem", """{"code":"c0de"}""")
+        assertEquals(redeemed.statusCode, 200)
+        assertEquals(redeemed.headers.get("cache-control"), Some("no-store"))
+        assertEquals(upickle.default.read[Json.HandedOff](redeemed.body), Json.HandedOff("id-1", Some("r-1")))
+        // And the gateway is told so.
+        assert(ApiGateway.encodeResponse(redeemed).contains("\"cache-control\":\"no-store\""))
     }
 }

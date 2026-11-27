@@ -412,6 +412,27 @@ object Json {
     given ReadWriter[ArchiveConfirmation] = macroRW
     given ReadWriter[ArchiveDownload] = macroRW
 
+    // ---- handing a sign-in to an engine's page (design/sign-in-handoff.md) ----
+
+    /** The UI asking for a one-time code for the signed-in player's tokens, to open game `gameId`'s engine page with.
+      * `refreshToken` is kept only for a trusted game.
+      */
+    case class HandOffRequest(gameId: GameId, idToken: String, refreshToken: Option[String] = None)
+
+    /** The code, for the url's fragment (`#handoff=CODE`), and when it can no longer be redeemed. */
+    case class HandOff(code: String, expiresAt: Instant)
+
+    /** The engine redeeming a code its page was opened with. */
+    case class HandOffRedeem(code: String)
+
+    /** The tokens a code was made with. */
+    case class HandedOff(idToken: String, refreshToken: Option[String] = None)
+
+    given ReadWriter[HandOffRequest] = macroRW
+    given ReadWriter[HandOff] = macroRW
+    given ReadWriter[HandOffRedeem] = macroRW
+    given ReadWriter[HandedOff] = macroRW
+
     given ReadWriter[RegisterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW

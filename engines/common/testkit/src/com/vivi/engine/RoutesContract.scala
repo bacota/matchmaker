@@ -20,14 +20,15 @@ import Protocol.given
 abstract class RoutesContract extends FunSuite with QuietTests {
 
     /** This game's routes, over a fresh in-memory store, at `http://engine.test`, offering Play Live through `live`,
-      * calling `matchmaker` back and telling the time by `now`.
+      * calling `matchmaker` back, telling the time by `now` and redeeming sign-in codes through `handOffs`.
       */
     protected def routes(
         playAuth: PlayAuth,
         matchmakerKey: Option[String],
         live: Option[Live],
         matchmaker: Matchmaker,
-        now: () => Instant
+        now: () => Instant,
+        handOffs: HandOffs
     ): EngineRequest => EngineResponse
 
     private def routes(
@@ -40,7 +41,8 @@ abstract class RoutesContract extends FunSuite with QuietTests {
           matchmakerKey = matchmakerKey,
           live = live,
           matchmaker = RecordingMatchmaker(),
-          now = () => Instant.now()
+          now = () => Instant.now(),
+          handOffs = HandOffs.none
         )
 
     private def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
@@ -121,7 +123,8 @@ abstract class RoutesContract extends FunSuite with QuietTests {
           matchmakerKey = None,
           live = None,
           matchmaker = RecordingMatchmaker(),
-          now = () => throw IllegalStateException("the clock at db-internal.example is down")
+          now = () => throw IllegalStateException("the clock at db-internal.example is down"),
+          handOffs = HandOffs.none
         )
         val answer = failing(
           EngineRequest(
@@ -615,7 +618,8 @@ abstract class RoutesContract extends FunSuite with QuietTests {
           matchmakerKey = None,
           live = live,
           matchmaker = matchmaker,
-          now = () => clock.get
+          now = () => clock.get,
+          handOffs = HandOffs.none
         )
         assertEquals(
           served(EngineRequest(method = "POST", path = "/games", query = Map.empty, body = write(calledBack()))).status,
@@ -643,7 +647,8 @@ abstract class RoutesContract extends FunSuite with QuietTests {
           matchmakerKey = None,
           live = None,
           matchmaker = matchmaker,
-          now = () => kickOff
+          now = () => kickOff,
+          handOffs = HandOffs.none
         )
         assertEquals(
           served(
@@ -796,7 +801,8 @@ abstract class RoutesContract extends FunSuite with QuietTests {
           matchmakerKey = None,
           live = None,
           matchmaker = matchmaker,
-          now = () => clock.get
+          now = () => clock.get,
+          handOffs = HandOffs.none
         )
         val create = calledBack(live = Some(Protocol.LiveTerms(30, "TOTAL")))
         assertEquals(
@@ -839,5 +845,56 @@ abstract class RoutesContract extends FunSuite with QuietTests {
         assert(page.contains("function turnClock(refresh)"))
         assert(page.contains("const showClock = turnClock(refresh);"))
         assert(page.contains("showClock(state && state.clock, "), "render must hand the clock to the timer")
+    }
+
+    // ---- a sign-in handed over from matchmaker by a one-time code ----
+
+    /** This game's routes redeeming codes through `matchmaker`, and a hand-off of `code` to them. */
+    private def handingOff(matchmaker: Matchmaker, code: String, handOffs: Option[HandOffs] = None) =
+        routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = Some("engine-key"),
+          live = None,
+          matchmaker = matchmaker,
+          now = () => Instant.now(),
+          handOffs = handOffs.getOrElse(HandOffs(Seq(matchmaker -> "http://matchmaker.test")))
+        )(EngineRequest(method = "POST", path = "/api/handoff", body = write(Protocol.HandOffRedeem(code))))
+
+    test("POST /api/handoff answers a code matchmaker redeems with its tokens, once, and no cache keeps them") {
+        val matchmaker = RecordingMatchmaker()
+        matchmaker.handOffs("c0de") = Protocol.HandedOff(idToken = "id-1", refreshToken = Some("r-1"))
+        val first = handingOff(matchmaker, "c0de")
+        assertEquals(first.status, 200)
+        assertEquals(read[Protocol.HandedOff](first.body), Protocol.HandedOff("id-1", Some("r-1")))
+        assertEquals(first.headers.get("cache-control"), Some("no-store"))
+        // Spent.
+        assertEquals(handingOff(matchmaker, "c0de").status, 404)
+    }
+
+    test("POST /api/handoff answers 404 for a code matchmaker does not redeem") {
+        val answer = handingOff(RecordingMatchmaker(), "made-up")
+        assertEquals(answer.status, 404)
+        assertEquals(answer.headers.get("cache-control"), Some("no-store"))
+        assert(answer.body.contains(ErrorText.handOff.unknown), answer.body)
+    }
+
+    test("POST /api/handoff answers 503 with no matchmaker, or one that fails".tag(Quiet)) {
+        assertEquals(handingOff(RecordingMatchmaker(), "c0de", Some(HandOffs.none)).status, 503)
+        val failing = RecordingMatchmaker()
+        failing.isFailingHandOffs = true
+        failing.handOffs("c0de") = Protocol.HandedOff(idToken = "id-1")
+        assertEquals(handingOff(failing, "c0de").status, 503)
+    }
+
+    test("POST /api/handoff refuses a body with no code") {
+        val answer = routes(
+          playAuth = PlayAuth.Trusted,
+          matchmakerKey = None,
+          live = None,
+          matchmaker = RecordingMatchmaker(),
+          now = () => Instant.now(),
+          handOffs = HandOffs.none
+        )(EngineRequest(method = "POST", path = "/api/handoff", body = "{}"))
+        assertEquals(answer.status, 400)
     }
 }

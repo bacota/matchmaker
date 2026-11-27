@@ -35,7 +35,9 @@ object Characters {
                             button(
                               cls := "link",
                               Buttons.characters.manage(game = game.displayName),
-                              onClick --> (_ => openSignedIn(url = url, isTrusted = game.isTrusted))
+                              onClick --> (_ =>
+                                  openSignedIn(url = url, gameId = game.gameId, isTrusted = game.isTrusted)
+                              )
                             )
                           )
                       )
@@ -74,7 +76,7 @@ object Characters {
                   div(
                     button(
                       Buttons.characters.make(game = game.displayName),
-                      onClick --> (_ => openSignedIn(url = url, isTrusted = game.isTrusted))
+                      onClick --> (_ => openSignedIn(url = url, gameId = game.gameId, isTrusted = game.isTrusted))
                     ),
                     busyButton(label = Buttons.characters.checkAgain, classes = Some("link")) { busy =>
                         // Cleared first, so that a second "no character yet" is a change the live

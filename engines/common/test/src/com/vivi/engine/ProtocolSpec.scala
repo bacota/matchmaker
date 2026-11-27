@@ -425,4 +425,16 @@ class ProtocolSpec extends FunSuite {
           Protocol.ArchiveDownload("https://s3/b/k", at)
         )
     }
+
+    test("a sign-in code's redeem request and its answer read the same on both sides") {
+        assertEquals(
+          read[Json.HandOffRedeem](write(Protocol.HandOffRedeem("c0de")))(using Json.given_ReadWriter_HandOffRedeem),
+          Json.HandOffRedeem("c0de")
+        )
+        for (refresh <- List(Some("r-1"), None))
+            assertEquals(
+              read[Protocol.HandedOff](write(Json.HandedOff("id-1", refresh))(using Json.given_ReadWriter_HandedOff)),
+              Protocol.HandedOff("id-1", refresh)
+            )
+    }
 }

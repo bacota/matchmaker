@@ -250,6 +250,17 @@ object Protocol {
     given ReadWriter[ArchiveConfirmation] = macroRW
     given ReadWriter[ArchiveDownload] = macroRW
 
+    /** `POST /handoffs/redeem`'s body: the one-time code a play page was opened with (design/sign-in-handoff.md). */
+    case class HandOffRedeem(code: String)
+
+    /** Its answer: the player's tokens, the refresh token only for a game matchmaker trusts with one. What an engine's
+      * `POST /api/handoff` answers its page with too.
+      */
+    case class HandedOff(idToken: String, refreshToken: Option[String] = None)
+
+    given ReadWriter[HandOffRedeem] = macroRW
+    given ReadWriter[HandedOff] = macroRW
+
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW

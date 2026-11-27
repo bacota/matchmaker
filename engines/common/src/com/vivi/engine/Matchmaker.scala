@@ -63,6 +63,12 @@ trait Matchmaker {
       * checks for itself before believing it, and refuses it for a permanent archive, whose absence is a fault.
       */
     def reportArchiveExpired(matchmakerUrl: String, matchId: String): Unit
+
+    /** `POST {matchmakerUrl}/handoffs/redeem`: the tokens a one-time sign-in code was made with, or `None` when
+      * matchmaker does not redeem it for this engine — spent, expired, another game's, or made up, which matchmaker
+      * answers alike with a 404. Redeeming spends the code whatever the answer.
+      */
+    def redeemHandOff(matchmakerUrl: String, code: String): Option[Protocol.HandedOff]
 }
 
 /** Where a match's archive is, as matchmaker answers. */
@@ -185,6 +191,24 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
           url = archiveUrl(matchmakerUrl = matchmakerUrl, matchId = matchId, action = "/expired"),
           body = Some("{}")
         )
+
+    def redeemHandOff(matchmakerUrl: String, code: String): Option[Protocol.HandedOff] = {
+        val url = s"${matchmakerUrl.stripSuffix("/")}/handoffs/redeem"
+        http.exchange(
+          method = "POST",
+          url = url,
+          body = Some(write(Protocol.HandOffRedeem(code))),
+          service = "execute-api",
+          headers = headers
+        ) match {
+            case (status, answer) if status >= 200 && status < 300 => Some(read[Protocol.HandedOff](answer))
+            case (404, _)                                          => None
+            case (status, answer) if status >= 400 && status < 500 =>
+                throw MatchmakerRefusal(status, MatchmakerRefusal.reason(answer))
+            // Not the answer: it could carry nothing but matchmaker's error, and never the code.
+            case (status, _) => throw AwsError(s"POST $url returned $status")
+        }
+    }
 
     /* A call whose answer the engine reads. Matchmaker's own refusal is raised with its reason, so
      * that the engine can tell the player what it was; anything else is matchmaker failing, and the
@@ -399,6 +423,20 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
         log(s"POST $matchmakerUrl/matches/$matchId/archive/expired")
         reportedExpired = reportedExpired :+ matchId
         expiredArchives = expiredArchives + matchId
+    }
+
+    /** Sign-in codes [[redeemHandOff]] redeems, each once, as a test or a local server puts them here. */
+    val handOffs: scala.collection.concurrent.Map[String, Protocol.HandedOff] =
+        scala.collection.concurrent.TrieMap.empty
+
+    /** While set, [[redeemHandOff]] fails as an unreachable matchmaker would. */
+    @volatile var isFailingHandOffs: Boolean = false
+
+    def redeemHandOff(matchmakerUrl: String, code: String): Option[Protocol.HandedOff] = {
+        // Never the code: it is a credential until it is spent.
+        log(s"POST $matchmakerUrl/handoffs/redeem")
+        if (isFailingHandOffs) throw AwsError(s"POST $matchmakerUrl/handoffs/redeem failed: unreachable")
+        handOffs.remove(code)
     }
 
     /** Whether matchmaker has confirmed this match's archive. */

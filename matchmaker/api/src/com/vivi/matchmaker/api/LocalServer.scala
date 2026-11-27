@@ -254,6 +254,7 @@ object LocalServer {
         private def send(exchange: HttpExchange, response: Response): Unit = {
             val body = response.body.getBytes(StandardCharsets.UTF_8)
             exchange.getResponseHeaders.set("Content-Type", "application/json")
+            response.headers.foreach((name, value) => exchange.getResponseHeaders.set(name, value))
             // A 204 and an empty body must be declared as "no body" rather than a zero-length one,
             // which the JDK server reads as "chunked, length unknown".
             exchange.sendResponseHeaders(response.statusCode, if (body.isEmpty) -1 else body.length.toLong)

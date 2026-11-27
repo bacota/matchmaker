@@ -1,7 +1,16 @@
 package com.vivi.rps
 
 import java.time.Instant
-import com.vivi.engine.{EngineRequest, EngineResponse, InMemoryMatchStore, Live, Matchmaker, PlayAuth, RoutesContract}
+import com.vivi.engine.{
+    EngineRequest,
+    EngineResponse,
+    HandOffs,
+    InMemoryMatchStore,
+    Live,
+    Matchmaker,
+    PlayAuth,
+    RoutesContract
+}
 
 /** The routes every engine serves, as rock-paper-scissors serves them. What a throw does is `RoutesSpec`'s. */
 class RoutesContractSpec extends RoutesContract {
@@ -11,7 +20,8 @@ class RoutesContractSpec extends RoutesContract {
         matchmakerKey: Option[String],
         live: Option[Live],
         matchmaker: Matchmaker,
-        now: () => Instant
+        now: () => Instant,
+        handOffs: HandOffs
     ): EngineRequest => EngineResponse =
         Routes(
           engine = Engine(
@@ -22,7 +32,8 @@ class RoutesContractSpec extends RoutesContract {
           ),
           playAuth = playAuth,
           matchmakerKey = matchmakerKey,
-          live = live
+          live = live,
+          handOffs = handOffs
         )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =

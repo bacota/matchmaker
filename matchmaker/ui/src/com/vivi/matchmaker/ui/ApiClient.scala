@@ -32,6 +32,10 @@ object ApiClient {
 
     def me(): Future[Player] = get[Player]("/me")
 
+    /** A one-time code for opening game `request.gameId`'s engine page signed in: see `Auth.handOff`. */
+    def handOff(request: Json.HandOffRequest): Future[Json.HandOff] =
+        send[Json.HandOff](method = HttpMethod.POST, path = "/handoffs", body = Some(write(request)))
+
     /** Creates the caller's player. Their address is not sent: the server takes it from the verified claim of the ID
       * token this request carries, so a new player can be written to from the moment they exist.
       */

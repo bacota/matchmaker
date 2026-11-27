@@ -16,6 +16,7 @@ class Repos(val session: Session[IO]) {
     lazy val entrants: EntrantRepo = new EntrantRepo(session)
     lazy val gameAdmins: GameAdminRepo = new GameAdminRepo(session)
     lazy val gameApiKeys: GameApiKeyRepo = new GameApiKeyRepo(session)
+    lazy val handOffs: HandOffRepo = new HandOffRepo(session)
     lazy val invitations: InvitationRepo = new InvitationRepo(session)
     lazy val matches: MatchRepo = new MatchRepo(session)
     lazy val notifications: NotificationRepo = new NotificationRepo(session)

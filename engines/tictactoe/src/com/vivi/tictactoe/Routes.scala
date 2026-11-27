@@ -1,18 +1,24 @@
 package com.vivi.tictactoe
 
-import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, HandOffs, Live, LoginConfig, PlayAuth}
 import Protocol.given
 
 /** The engine's HTTP surface: the routes every engine serves, which are [[EngineRoutes]]'s, and what a move looks like
   * on the wire.
   */
-class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], live: Option[Live] = None)
-    extends EngineRoutes[TicTacToeMatch, Seat, Protocol.StateResponse](
+class Routes(
+    engine: Engine,
+    playAuth: PlayAuth,
+    matchmakerKey: Option[String],
+    live: Option[Live] = None,
+    handOffs: HandOffs = HandOffs.none
+) extends EngineRoutes[TicTacToeMatch, Seat, Protocol.StateResponse](
       engine = engine.core,
       playAuth = playAuth,
       matchmakerKey = matchmakerKey,
       signIn = Html.signIn,
-      live = live
+      live = live,
+      handOffs = handOffs
     ) {
 
     protected def stateOf(m: TicTacToeMatch, seat: Option[Seat]): Protocol.StateResponse = engine.stateOf(m, seat)

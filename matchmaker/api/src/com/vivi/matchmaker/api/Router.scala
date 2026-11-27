@@ -887,10 +887,40 @@ object Router {
             case ("POST", "matches" :: matchId :: "archive" :: "expired" :: Nil) =>
                 withMatchId(matchId)(mid => noContent(services.archives.reportExpired(mid, caller)))
 
+            // A sign-in handed to an engine's page by a one-time code (design/sign-in-handoff.md). Made by the
+            // player, under the JWT authorizer: the ID token must be the caller's own.
+            case ("POST", "handoffs" :: Nil) =>
+                body[Json.HandOffRequest](request).flatMap(r =>
+                    unstored(
+                      services.handOffs
+                          .create(
+                            cognitoId = caller,
+                            gameId = r.gameId,
+                            idToken = r.idToken,
+                            refreshToken = r.refreshToken
+                          )
+                          .map(h => Json.HandOff(code = h.code, expiresAt = h.expiresAt))
+                    )
+                )
+
+            // Redeemed by the game's engine, with its API key: a code made for one game is no use to another's.
+            case ("POST", "handoffs" :: "redeem" :: Nil) =>
+                body[Json.HandOffRedeem](request).flatMap(r =>
+                    unstored(
+                      services.handOffs
+                          .redeem(r.code, caller)
+                          .map(t => Json.HandedOff(idToken = t.idToken, refreshToken = t.refreshToken))
+                    )
+                )
+
             case _ => IO.pure(Errors.notFound)
         }
 
     private def ok[A: ReadWriter](result: IO[A]): IO[Response] = respond(200, result)
+
+    /** A 200 that no cache may keep: it carries a credential. */
+    private def unstored[A: ReadWriter](result: IO[A]): IO[Response] =
+        result.map(value => Response(200, write(value), Map("cache-control" -> "no-store")))
 
     private def created[A: ReadWriter](result: IO[A]): IO[Response] = respond(201, result)
 

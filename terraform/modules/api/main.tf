@@ -408,6 +408,8 @@ locals {
     "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/role",
     "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/result",
     "GET /me/tournament-choices",
+    # A one-time code for opening an engine's page signed in (HandOffService.create).
+    "POST /handoffs",
   ]
 
   /* The game engine's calls, which are not player actions at all: a game engine tells
@@ -447,6 +449,9 @@ locals {
     "POST /matches/{matchId}/archive/confirm",
     "POST /matches/{matchId}/archive/read",
     "POST /matches/{matchId}/archive/expired",
+    # Redeeming a one-time sign-in code the engine's page was opened with (HandOffService.redeem).
+    # With the game's key, so a code made for one game is no use to another's engine.
+    "POST /handoffs/redeem",
   ]
 }
 

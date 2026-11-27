@@ -7,6 +7,8 @@ import scala.scalajs.js
 import scala.util.{Failure, Success, Try}
 import org.scalajs.dom
 import org.scalajs.dom.{HttpMethod, RequestInit, URLSearchParams}
+import com.vivi.matchmaker.api.Json
+import com.vivi.matchmaker.model.GameId
 
 /** Sign-in against the Cognito user pools API, with the hosted pages kept for sign-up and reset.
   *
@@ -202,66 +204,73 @@ object Auth {
         case _ => false
     }
 
-    /** `url` with this session handed over in its fragment, for opening a game engine's page signed in as the same
-      * player — the engine's `SignIn` takes it from there and removes it from the address bar.
+    /** `url` with a one-time code for this session in its fragment (`#handoff=CODE`), for opening a game engine's page
+      * signed in as the same player (design/sign-in-handoff.md). The engine's page sends the code to its own server,
+      * which redeems it with matchmaker for the tokens, using the game's API key, and hands them back to the page.
       *
       * The engines sign in against this same pool and app client, so the refresh token redeems there as it does here,
       * and the ID token is the one they verify. The page is on another origin and opened in a new tab, and
       * `sessionStorage` is per origin and per tab, so without this a player signed in here arrives there signed out.
       *
-      * The fragment because it is never sent to a server: neither the engine's gateway nor CloudFront logs it. What is
-      * handed over is a credential for this whole account, so it goes only to the urls matchmaker's own API gave for a
-      * match — which the engine already earns no less of by serving its own sign-in form on the same pool.
+      * A code, never the tokens: the browser keeps every url it opens in its history, fragment and all, where it can be
+      * synced to other devices or read by an extension. A code found there is spent, or expired a minute after it was
+      * made, and only the engine of game `gameId` can redeem it at all.
       *
-      * The refresh token goes only to a game marked trusted (`Game.isTrusted`). It lasts as long as the session does,
-      * where the ID token runs out within the hour, so an engine nobody has vouched for is handed the ID token alone,
-      * and asks the player to sign in again once it expires.
+      * The refresh token goes only to a game marked trusted (`Game.isTrusted`), and matchmaker drops it for any other
+      * too. It lasts as long as the session does, where the ID token runs out within the hour, so an engine nobody has
+      * vouched for is handed the ID token alone, and asks the player to sign in again once it expires.
       *
-      * A url that already carries a fragment is the engine's own business and is left alone, as is everything when
-      * there is no session or it could not be refreshed: the engine's page then asks the player to sign in, as before.
-      *
-      * Already completed when the ID token in hand is still good, which is nearly always, so that a caller opening a
-      * window can do it within the click that asked for it — a browser blocks a popup opened later than that.
+      * A url that already carries a fragment is the engine's own business and is left alone. With no session, or a
+      * session that could not be refreshed, or a code that could not be made, the url is answered as it is: the
+      * engine's page then asks the player to sign in.
       */
-    def handOff(url: String, isTrusted: Boolean): Future[String] =
+    def handOff(url: String, gameId: GameId, isTrusted: Boolean): Future[String] =
         handOff(
           url = url,
+          gameId = gameId,
           isTrusted = isTrusted,
           current = idToken,
           refresh = () => refreshToken,
-          fresh = () => freshIdToken()
+          fresh = () => freshIdToken(),
+          create = ApiClient.handOff
         )
 
-    /** [[handOff]] with the session it reads passed in rather than read from `sessionStorage`, which is what lets it be
-      * tested where there is none. `refresh` is read after `fresh` has run, since a refresh may have stored a new one.
+    /** [[handOff]] with the session it reads, and the call that makes the code, passed in, which is what lets it be
+      * tested where there is neither. `refresh` is read after `fresh` has run, since a refresh may have stored a new
+      * one.
       */
     private[ui] def handOff(
         url: String,
+        gameId: GameId,
         isTrusted: Boolean,
         current: Option[String],
         refresh: () => Option[String],
-        fresh: () => Future[Option[String]]
-    ): Future[String] = {
-        def handedRefresh = if (isTrusted) refresh() else None
+        fresh: () => Future[Option[String]],
+        create: Json.HandOffRequest => Future[Json.HandOff]
+    ): Future[String] =
         if (url.contains("#")) Future.successful(url)
         else
-            current match {
-                case Some(id) => Future.successful(withSession(url = url, id = id, refresh = handedRefresh))
-                case None =>
-                    fresh()
-                        .map(_.fold(url)(withSession(url, _, handedRefresh)))
-                        .recover { case _ => url }
-            }
-    }
+            current
+                .fold(fresh())(id => Future.successful(Some(id)))
+                .flatMap {
+                    case None => Future.successful(url)
+                    case Some(id) =>
+                        create(
+                          Json.HandOffRequest(
+                            gameId = gameId,
+                            idToken = id,
+                            refreshToken = if (isTrusted) refresh() else None
+                          )
+                        ).map(handed => withCode(url, handed.code))
+                }
+                .recover { case _ => url }
 
-    /** The names the engines' `SignIn` reads the hand-off by. */
-    private[ui] val HandedIdToken = "idToken"
-    private[ui] val HandedRefreshToken = "refreshToken"
+    /** The name the engines' `SignIn` reads the code by. */
+    private[ui] val HandedCode = "handoff"
 
-    private def withSession(url: String, id: String, refresh: Option[String]): String = {
+    private def withCode(url: String, code: String): String = {
         val handed = new URLSearchParams()
-        handed.set(HandedIdToken, id)
-        refresh.foreach(handed.set(HandedRefreshToken, _))
+        handed.set(HandedCode, code)
         s"$url#${handed.toString}"
     }
 
