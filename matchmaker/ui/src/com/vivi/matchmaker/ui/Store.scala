@@ -103,6 +103,8 @@ object Store {
         disabledGames.set(None)
         charactersByGame.set(Map.empty)
         gameAdminsByGame.set(Map.empty)
+        barredGames.set(Set.empty)
+        engineAccessByGame.set(Map.empty)
         myTournaments.set(Seq.empty)
         myEndedTournaments.set(Seq.empty)
         endedFrame.set(CompletedFrame.Day)
@@ -158,6 +160,9 @@ object Store {
         // The games an admin has disabled, for the page that lists them.
         case DisabledGames
         case GameAdmins(gameId: GameId)
+        // The games the caller may not play, and who may play one game's engine, for its admins.
+        case BarredGames
+        case EngineAccess(gameId: GameId)
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
@@ -387,6 +392,25 @@ object Store {
         case PlayerState.Registered(p) => isAdminIn(gameAdminsByGame.now(), gameId, p)
         case _                         => false
     }
+
+    /** The games the caller may not play until a game's admins let them in: a restricted engine's. Loaded as a game's
+      * or a competition's screen is shown, so that it offers an access code where it would otherwise offer an entry.
+      */
+    val barredGames: Var[Set[GameId]] = Var(Set.empty)
+
+    /** Whether the caller may not play the game, as last heard. Distinct, for the reason [[administers]] is. */
+    def isBarred(gameId: GameId): Signal[Boolean] = barredGames.signal.map(_.contains(gameId)).distinct
+
+    def refreshBarredGames(): Future[Unit] =
+        reload(ApiClient.barredGames(), Fetch.BarredGames)(ids => barredGames.set(ids.toSet))
+
+    /** Who may play each game's engine, for its admins: fetched when its section is opened. */
+    val engineAccessByGame: Var[Map[GameId, EngineAccess]] = Var(Map.empty)
+
+    def refreshEngineAccess(gameId: GameId): Future[Unit] =
+        reload(ApiClient.engineAccess(gameId), Fetch.EngineAccess(gameId))(a =>
+            engineAccessByGame.update(_.updated(gameId, a))
+        )
 
     private def isAdminIn(byGame: Map[GameId, Seq[GameAdmin]], gameId: GameId, player: Player): Boolean =
         player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId))
@@ -635,6 +659,7 @@ object Store {
                 // only an admin may make it rated.
                 reloadTournamentModels(gameId)
                 refreshGameAdmins(gameId)
+                refreshBarredGames()
             case Page.OneGame(gameId) =>
                 reloadTournaments(gameId)
                 reloadTournamentModels(gameId)
@@ -642,6 +667,7 @@ object Store {
                 reloadAllTournamentModels()
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
+                refreshBarredGames()
                 ensureGame(gameId)
             /* Emptied before the request rather than left holding the last player's matches: the
              * page is about to be headed with a different nickname, and rows from the player before

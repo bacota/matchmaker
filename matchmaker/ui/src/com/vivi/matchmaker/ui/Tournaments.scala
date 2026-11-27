@@ -82,6 +82,14 @@ object Tournaments {
               case Some(player) =>
                   Store.administers(game.gameId, player).map(if (_) formatsSection(game, player) else emptyNode)
               case None => Val(emptyNode)
+          },
+          // Who may play the game's engine, for whoever administers it.
+          child <-- Store.currentPlayer.flatMapSwitch {
+              case Some(player) =>
+                  Store
+                      .administers(game.gameId, player)
+                      .map(if (_) EngineAccessViews.adminSection(game) else emptyNode)
+              case None => Val(emptyNode)
           }
         )
 
@@ -728,46 +736,66 @@ object Tournaments {
           )
               emptyNode
           else
-              div(
-                cls := "row",
-                if (characterGame)
-                    field(
-                      "Enter with",
-                      select(
-                        onMountCallback(_ => Store.refreshCharacters(t.gameId)),
-                        onChange.mapToValue --> (v => chosen.set(v.toLongOption.map(CharacterId(_)))),
-                        option(value := "", "Choose a character"),
-                        // By invitation, only the characters invited may enter, so only they are offered.
-                        children <-- Store.charactersByGame.signal.map(
-                          _.getOrElse(t.gameId, Seq.empty)
-                              .filter(c =>
-                                  !t.settings.isInvitational || d.summary.isOwner ||
-                                      d.invitedCharacters.exists(_.character.characterId == c.characterId)
-                              )
-                              .map(c => option(value := c.characterId.value.toString, c.name))
-                        )
+              // A restricted engine's game the caller has not been let into: the code that lets them in, where the
+              // entry would be. Redrawn only when that answer changes.
+              div(child <-- Store.isBarred(t.gameId).map { isBarred =>
+                  if (isBarred)
+                      div(
+                        p(cls := "detail", ErrorText.engineAccess.notAllowed(game = d.summary.gameName)),
+                        EngineAccessViews.redeemForm()
                       )
-                    )
-                else emptyNode,
-                busyButton(
-                  label = if (mine.exists(_.isWithdrawn)) Buttons.tournaments.enterAgain else Buttons.tournaments.enter,
-                  busy = answerBusy(t)
-                )(busy =>
-                    Store.runSignedIn(
-                      thenShown(d)(
-                        ApiClient.enterTournament(
-                          gameId = t.gameId,
-                          tournamentId = t.tournamentId,
-                          characterId = chosen.now()
-                        )
-                      ),
-                      busy
-                    )(_ => reload(d))
-                ),
-                declineButton(d, me)
-              )
+                  else enterRow(d, t, mine, characterGame, chosen, me)
+              })
         )
     }
+
+    /* The caller's entry: a character to enter with, in a character game, the Enter button, and Decline. */
+    private def enterRow(
+        d: TournamentDetail,
+        t: Tournament,
+        mine: Seq[Entrant],
+        characterGame: Boolean,
+        chosen: Var[Option[CharacterId]],
+        me: Option[Player]
+    ): HtmlElement =
+        div(
+          cls := "row",
+          if (characterGame)
+              field(
+                "Enter with",
+                select(
+                  onMountCallback(_ => Store.refreshCharacters(t.gameId)),
+                  onChange.mapToValue --> (v => chosen.set(v.toLongOption.map(CharacterId(_)))),
+                  option(value := "", "Choose a character"),
+                  // By invitation, only the characters invited may enter, so only they are offered.
+                  children <-- Store.charactersByGame.signal.map(
+                    _.getOrElse(t.gameId, Seq.empty)
+                        .filter(c =>
+                            !t.settings.isInvitational || d.summary.isOwner ||
+                                d.invitedCharacters.exists(_.character.characterId == c.characterId)
+                        )
+                        .map(c => option(value := c.characterId.value.toString, c.name))
+                  )
+                )
+              )
+          else emptyNode,
+          busyButton(
+            label = if (mine.exists(_.isWithdrawn)) Buttons.tournaments.enterAgain else Buttons.tournaments.enter,
+            busy = answerBusy(t)
+          )(busy =>
+              Store.runSignedIn(
+                thenShown(d)(
+                  ApiClient.enterTournament(
+                    gameId = t.gameId,
+                    tournamentId = t.tournamentId,
+                    characterId = chosen.now()
+                  )
+                ),
+                busy
+              )(_ => reload(d))
+          ),
+          declineButton(d, me)
+        )
 
     /** Turning down the caller's invitation, before they have entered: theirs in a plain game, and in a character game
       * every invitation of a character of theirs. Nothing when they have none.

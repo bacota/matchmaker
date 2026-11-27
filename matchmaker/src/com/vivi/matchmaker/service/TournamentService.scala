@@ -605,6 +605,14 @@ class TournamentService[T](
                 else ErrorText.tournament.notOpen(t.status.label.toLowerCase)
               )
             )
+            // A restricted engine's game is for its listed players: refused here, every entry's one way in,
+            // so that nobody unlisted is ever seated in its matches.
+            _ <- EngineAccessService.requireAllowed(
+              repos = repos,
+              game = game,
+              player = caller,
+              refusal = ErrorText.engineAccess.notAllowed(game.displayName)
+            )
             _ <- checkCharacter(repos = repos, game = game, characterId = characterId, caller = caller)
             invited <- isInvitedAs(
               repos = repos,

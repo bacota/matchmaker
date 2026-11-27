@@ -344,6 +344,14 @@ locals {
     "GET /games/{gameId}/admins",
     "PUT /games/{gameId}/admins/{playerId}",
     "DELETE /games/{gameId}/admins/{playerId}",
+    "GET /games/{gameId}/access",
+    "PUT /games/{gameId}/access",
+    "POST /games/{gameId}/access/players",
+    "DELETE /games/{gameId}/access/players/{playerId}",
+    "POST /games/{gameId}/access/codes",
+    "DELETE /games/{gameId}/access/codes/{codeId}",
+    "POST /access/redeem",
+    "GET /me/engine-access",
     # Players' Elo ratings in a game: the leaderboard, one player's standing on it, and an
     # admin of the game setting one.
     "GET /games/{gameId}/ratings",

@@ -251,6 +251,75 @@ object Router {
                     )
                 )
 
+            /* Who may play the game's engine (EngineAccessService): its admins see and change it. The
+             * list is the engine's, so it covers every game the engine serves; a game is how the route
+             * names it, and whose admins may manage it. */
+            case ("GET", "games" :: gameId :: "access" :: Nil) =>
+                withGameId(gameId)(id => ok(services.engineAccess.access(id, caller)))
+
+            case ("PUT", "games" :: gameId :: "access" :: Nil) =>
+                withGameId(gameId)(id =>
+                    body[Json.RestrictRequest](request).flatMap(r =>
+                        noContent(
+                          services.engineAccess
+                              .setRestricted(gameId = id, isRestricted = r.isRestricted, callerExternalId = caller)
+                        )
+                    )
+                )
+
+            // By nickname, as an admin types it; letting in somebody already listed is not an error.
+            case ("POST", "games" :: gameId :: "access" :: "players" :: Nil) =>
+                withGameId(gameId)(id =>
+                    body[Json.EngineGrantRequest](request).flatMap(r =>
+                        noContent(
+                          services.engineAccess.grant(gameId = id, nickname = r.nickname, callerExternalId = caller)
+                        )
+                    )
+                )
+
+            case ("DELETE", "games" :: gameId :: "access" :: "players" :: playerId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    withPlayerId(playerId)(pid =>
+                        noContent(services.engineAccess.revoke(gameId = gid, playerId = pid, callerExternalId = caller))
+                    )
+                )
+
+            // Answered with the code itself, this once: kept by no cache, as it lets somebody in.
+            case ("POST", "games" :: gameId :: "access" :: "codes" :: Nil) =>
+                withGameId(gameId)(id =>
+                    body[Json.AccessCodeRequest](request).flatMap(r =>
+                        unstored(
+                          services.engineAccess.createCode(
+                            gameId = id,
+                            label = r.label,
+                            maxUses = r.maxUses,
+                            expiresAt = r.expiresAt,
+                            callerExternalId = caller
+                          )
+                        )
+                    )
+                )
+
+            case ("DELETE", "games" :: gameId :: "access" :: "codes" :: codeId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    codeId.toLongOption.fold(
+                      IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = codeId, what = "access code")))
+                    )(cid =>
+                        noContent(
+                          services.engineAccess
+                              .revokeCode(gameId = gid, codeId = EngineAccessCodeId(cid), callerExternalId = caller)
+                        )
+                    )
+                )
+
+            // A player letting themselves in with a code a game's admins gave them.
+            case ("POST", "access" :: "redeem" :: Nil) =>
+                body[Json.RedeemRequest](request).flatMap(r => ok(services.engineAccess.redeem(r.code, caller)))
+
+            // The games the caller may not play, so the UI offers a code where it would offer an entry.
+            case ("GET", "me" :: "engine-access" :: Nil) =>
+                ok(services.engineAccess.barred(caller))
+
             /* Players' Elo ratings in a game: anybody registered may see its leaderboard, a page
              * at a time from `page` 0, and any one player's standing on it; an admin, or an admin of this game, may set one. A PUT, because
              * what is sent is the rating, not a change to it. `?role=` asks about one role's ratings

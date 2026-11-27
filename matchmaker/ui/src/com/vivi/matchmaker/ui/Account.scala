@@ -376,6 +376,8 @@ object Account {
           tabIndex := -1,
           h2(idAttr := "account-menu-heading", Headings.account.menu),
           nicknameForm,
+          // A code a game's admins handed out, which lets the player into a restricted game.
+          div(cls := "account-section", h3(Headings.access.redeem), EngineAccessViews.redeemForm()),
           notificationForms,
           // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
           // header, and offering forms that could only fail would be worse than leaving them out.

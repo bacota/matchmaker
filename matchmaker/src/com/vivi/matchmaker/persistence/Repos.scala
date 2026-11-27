@@ -13,6 +13,7 @@ class Repos(val session: Session[IO]) {
     lazy val archives: ArchiveRepo = new ArchiveRepo(session)
     lazy val characterInvitations: CharacterInvitationRepo = new CharacterInvitationRepo(session)
     lazy val eloRatings: EloRatingRepo = new EloRatingRepo(session)
+    lazy val engineAccess: EngineAccessRepo = new EngineAccessRepo(session)
     lazy val entrants: EntrantRepo = new EntrantRepo(session)
     lazy val gameAdmins: GameAdminRepo = new GameAdminRepo(session)
     lazy val gameApiKeys: GameApiKeyRepo = new GameApiKeyRepo(session)

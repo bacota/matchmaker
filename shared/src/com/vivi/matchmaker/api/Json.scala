@@ -24,6 +24,7 @@ object Json {
     given ReadWriter[TournamentId] = readwriter[Long].bimap(_.value, TournamentId.apply)
     given ReadWriter[TournamentModelId] = readwriter[String].bimap(_.value, TournamentModelId.apply)
     given ReadWriter[EntrantId] = readwriter[Long].bimap(_.value, EntrantId.apply)
+    given ReadWriter[EngineAccessCodeId] = readwriter[Long].bimap(_.value, EngineAccessCodeId.apply)
 
     given ReadWriter[GameType] = readwriter[String].bimap(
       _.code.toString,
@@ -80,6 +81,11 @@ object Json {
     given ReadWriter[PublicPlayer] = macroRW
     given ReadWriter[PlayerSearchResult] = macroRW
     given ReadWriter[GameAdmin] = macroRW
+    given ReadWriter[EngineListedPlayer] = macroRW
+    given ReadWriter[EngineAccessCode] = macroRW
+    given ReadWriter[NewEngineAccessCode] = macroRW
+    given ReadWriter[EngineAccess] = macroRW
+    given ReadWriter[RedeemedAccess] = macroRW
     given ReadWriter[MatchRecord] = macroRW
     given ReadWriter[EloRating] = macroRW
     given ReadWriter[Leaderboard] = macroRW
@@ -206,6 +212,16 @@ object Json {
     /** The part of a game save that is not the game: its engine's API key, sent alongside the game's own fields in the
       * same object and never returned by anything. Absent or blank leaves the stored key as it is.
       */
+    /* Who may play a restricted engine (`/games/{id}/access`, `/access/redeem`). */
+    case class RestrictRequest(isRestricted: Boolean)
+    given ReadWriter[RestrictRequest] = macroRW
+    case class EngineGrantRequest(nickname: String)
+    given ReadWriter[EngineGrantRequest] = macroRW
+    case class AccessCodeRequest(label: String, maxUses: Option[Int] = None, expiresAt: Option[Instant] = None)
+    given ReadWriter[AccessCodeRequest] = macroRW
+    case class RedeemRequest(code: String)
+    given ReadWriter[RedeemRequest] = macroRW
+
     case class GameApiKeyField(apiKey: Option[String] = None)
     given ReadWriter[GameApiKeyField] = macroRW
 

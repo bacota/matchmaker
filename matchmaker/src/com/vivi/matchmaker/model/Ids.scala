@@ -86,3 +86,18 @@ object EntrantId {
     def apply(value: Long): EntrantId = value
     extension (id: EntrantId) def value: Long = id
 }
+
+/** A game engine: the identity its games share (`game.external_id`). There is no engine table; this is what the tables
+  * about one (`restricted_engine`, `engine_player`, `engine_access_code`) are keyed by.
+  */
+opaque type EngineId = String
+object EngineId {
+    def apply(value: String): EngineId = value
+    extension (id: EngineId) def value: String = id
+}
+
+opaque type EngineAccessCodeId = Long
+object EngineAccessCodeId {
+    def apply(value: Long): EngineAccessCodeId = value
+    extension (id: EngineAccessCodeId) def value: Long = id
+}

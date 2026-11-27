@@ -117,6 +117,14 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                         case Some(p) => IO.pure(p)
                         case None    => IO.raiseError(NotFoundError(ErrorText.player.notFound))
                     }
+                    // A character is a way into the game's matches, so a restricted engine makes them only for
+                    // the players it lets in.
+                    _ <- EngineAccessService.requireAllowed(
+                      repos = repos,
+                      game = game,
+                      player = owner,
+                      refusal = ErrorText.engineAccess.notAllowed(game.displayName)
+                    )
                     character <- repos
                         .characters[T]
                         .create(
@@ -210,6 +218,19 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     }
                     _ <- IO.raiseWhen(recipient.externalId == ownerExternalId)(
                       ValidationError(ErrorText.character.alreadyYours(existing.name))
+                    )
+                    // Read plainly, as the game a character belongs to never changes: what the transfer needs locked
+                    // is the recipient's place on a restricted engine's list, which `requireAllowed` holds.
+                    game <- repos.games[T].read(existing.gameId).flatMap {
+                        case Some(g) => IO.pure(g)
+                        case None    => IO.raiseError(NotFoundError(ErrorText.game.notFound))
+                    }
+                    _ <- EngineAccessService.requireAllowed(
+                      repos = repos,
+                      game = game,
+                      player = recipient,
+                      refusal =
+                          ErrorText.engineAccess.ownerNotAllowed(nickname = recipient.nickname, game = game.displayName)
                     )
                     handed = existing.copy(playerId = Some(recipient.playerId))
                     _ <- repos.characters[T].update(handed)

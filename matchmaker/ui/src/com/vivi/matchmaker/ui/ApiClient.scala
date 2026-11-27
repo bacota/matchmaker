@@ -197,6 +197,61 @@ object ApiClient {
     def gameAdmins(gameId: GameId): Future[Seq[GameAdmin]] =
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
 
+    /** Who may play a game's engine, for its admins: whether it is restricted, who is listed, and its codes. */
+    def engineAccess(gameId: GameId): Future[EngineAccess] =
+        get[EngineAccess](s"/games/${gameId.value}/access")
+
+    /** Restricts a game's engine to its listed players, or opens it to everybody. */
+    def setRestricted(gameId: GameId, isRestricted: Boolean): Future[Unit] =
+        sendUnit(
+          method = HttpMethod.PUT,
+          path = s"/games/${gameId.value}/access",
+          body = Some(write(Json.RestrictRequest(isRestricted)))
+        )
+
+    /** Lets the player of this nickname play a game's engine. */
+    def grantEngineAccess(gameId: GameId, nickname: String): Future[Unit] =
+        sendUnit(
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/access/players",
+          body = Some(write(Json.EngineGrantRequest(nickname)))
+        )
+
+    /** Takes a player off a game's engine's list. */
+    def revokeEngineAccess(gameId: GameId, playerId: PlayerId): Future[Unit] =
+        sendUnit(
+          method = HttpMethod.DELETE,
+          path = s"/games/${gameId.value}/access/players/${playerId.value}",
+          body = None
+        )
+
+    /** Makes an access code for a game's engine: the answer carries the code itself, which is never shown again. */
+    def createAccessCode(gameId: GameId, request: Json.AccessCodeRequest): Future[NewEngineAccessCode] =
+        send[NewEngineAccessCode](
+          method = HttpMethod.POST,
+          path = s"/games/${gameId.value}/access/codes",
+          body = Some(write(request))
+        )
+
+    /** Revokes one of a game's engine's access codes. */
+    def revokeAccessCode(gameId: GameId, codeId: EngineAccessCodeId): Future[Unit] =
+        sendUnit(
+          method = HttpMethod.DELETE,
+          path = s"/games/${gameId.value}/access/codes/${codeId.value}",
+          body = None
+        )
+
+    /** Redeems an access code: answered with the names of the games it opened. */
+    def redeemAccessCode(code: String): Future[RedeemedAccess] =
+        send[RedeemedAccess](
+          method = HttpMethod.POST,
+          path = "/access/redeem",
+          body = Some(write(Json.RedeemRequest(code)))
+        )
+
+    /** The games the caller may not play until they are let in. */
+    def barredGames(): Future[Seq[GameId]] = get[Seq[GameId]]("/me/engine-access")
+
     /** A game's matches, running ones first, for its admins to manage them from; refused for anybody else. */
     def gameMatches(gameId: GameId, player: Option[PlayerId] = None): Future[Seq[GameMatch]] =
         get[Seq[GameMatch]](s"/games/${gameId.value}/matches${player.fold("")(p => s"?playerId=${p.value}")}")
