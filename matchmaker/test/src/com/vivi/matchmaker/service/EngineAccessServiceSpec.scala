@@ -203,24 +203,33 @@ class EngineAccessServiceSpec extends PropertySuite {
         assert(refused.isInstanceOf[ValidationError], refused)
     }
 
-    test("the code list keeps every live code and only the newest dead ones") {
-        val dead = EngineAccessRepo.DeadCodesListed + 1
-        def make(f: Fixture, label: String) =
+    test("the code list keeps every live code and only the newest dead ones, used up or revoked") {
+        val revokedCount = EngineAccessRepo.DeadCodesListed + 1
+        def make(f: Fixture, label: String, maxUses: Option[Int] = None) =
             access.createCode(
               gameId = f.game.gameId,
               label = label,
-              maxUses = None,
+              maxUses = maxUses,
               expiresAt = None,
               callerExternalId = f.host.externalId
             )
-        val (live, deadLabels, listed) = run(for {
+        val (listed, expected) = run(for {
             f <- fixture()
-            live <- make(f, "still open")
-            revoked <- (1 to dead).toList.traverse(n => make(f, s"spent $n"))
+            oldestLive <- make(f, "still open")
+            revoked <- (1 to revokedCount).toList.traverse(n => make(f, s"spent $n"))
             _ <- revoked.traverse(r => access.revokeCode(f.game.gameId, r.access.codeId, f.host.externalId))
+            usedUp <- make(f, "used up", maxUses = Some(1))
+            _ <- access.redeem(usedUp.code, f.first.externalId)
+            newestLive <- make(f, "newest open")
             seen <- access.access(f.game.gameId, f.host.externalId)
-        } yield (live, revoked.map(_.access.label), seen.codes.map(_.label)))
-        assertEquals(listed, deadLabels.drop(1).reverse :+ live.access.label)
+        } yield {
+            // Newest first: the newest live code, then the dead -- the used-up one and the newest revoked ones, as
+            // many as are listed -- and the oldest live code, however old.
+            val dead =
+                (revoked.map(_.access.label) :+ usedUp.access.label).reverse.take(EngineAccessRepo.DeadCodesListed)
+            (seen.codes.map(_.label), (newestLive.access.label +: dead) :+ oldestLive.access.label)
+        })
+        assertEquals(listed, expected)
     }
 
     test("a revoked, an expired and an unknown code are refused alike") {
