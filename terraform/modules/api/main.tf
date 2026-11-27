@@ -348,6 +348,7 @@ locals {
     "PUT /games/{gameId}/access",
     "POST /games/{gameId}/access/players",
     "DELETE /games/{gameId}/access/players/{playerId}",
+    "GET /games/{gameId}/access/codes",
     "POST /games/{gameId}/access/codes",
     "DELETE /games/{gameId}/access/codes/{codeId}",
     "POST /access/redeem",

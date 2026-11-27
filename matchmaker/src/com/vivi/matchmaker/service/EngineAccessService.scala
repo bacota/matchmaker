@@ -22,8 +22,10 @@ import com.vivi.matchmaker.persistence.{EngineAccessRepo, Repos, TextCodec}
   */
 class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
 
-    /** Who may play the game's engine, for its admins. */
-    def access(gameId: GameId, callerExternalId: String): IO[EngineAccess] =
+    /** Who may play the game's engine, for its admins: its live codes the first page of them, or, given `codesThrough`,
+      * every one down to that code, so that a list paged that far is refreshed as far.
+      */
+    def access(gameId: GameId, codesThrough: Option[EngineAccessCodeId], callerExternalId: String): IO[EngineAccess] =
         sessionPool.use { session =>
             val repos = Repos(session)
             for {
@@ -32,9 +34,56 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                 isRestricted <- repos.engineAccess.isRestricted(engine)
                 players <- repos.engineAccess.listPlayers(engine)
                 now <- IO.realTimeInstant
-                codes <- repos.engineAccess.listCodes(engine, now)
-            } yield EngineAccess(isRestricted = isRestricted, players = players, codes = codes)
+                live <- codesThrough.fold(livePage(repos = repos, engine = engine, now = now, before = None))(through =>
+                    liveThrough(repos = repos, engine = engine, now = now, through = through)
+                )
+                ended <- repos.engineAccess.endedCodes(engine, now, EngineAccessRepo.EndedCodesListed)
+            } yield EngineAccess(isRestricted = isRestricted, players = players, liveCodes = live, endedCodes = ended)
         }
+
+    /** The page of the game's engine's live codes that comes after the code `before`, for its admins. */
+    def liveCodes(gameId: GameId, before: EngineAccessCodeId, callerExternalId: String): IO[EngineAccessCodePage] =
+        sessionPool.use { session =>
+            val repos = Repos(session)
+            for {
+                game <- requireManager(repos, gameId, callerExternalId)
+                now <- IO.realTimeInstant
+                page <- livePage(repos = repos, engine = EngineId(game.externalId), now = now, before = Some(before))
+            } yield page
+        }
+
+    /* A page of live codes, those after `before` or the newest: one more is read than is answered, to tell whether
+     * there are more. */
+    private def livePage(
+        repos: Repos,
+        engine: EngineId,
+        now: Instant,
+        before: Option[EngineAccessCodeId]
+    ): IO[EngineAccessCodePage] = {
+        val perPage = EngineAccessRepo.LiveCodesPerPage
+        repos.engineAccess
+            .liveCodes(engine = engine, now = now, before = before, from = None, limit = perPage + 1)
+            .map(rows => EngineAccessCodePage(codes = rows.take(perPage), hasMore = rows.size > perPage))
+    }
+
+    /* Every live code down to `through`, up to LiveCodesMost of them, and whether older ones follow. */
+    private def liveThrough(
+        repos: Repos,
+        engine: EngineId,
+        now: Instant,
+        through: EngineAccessCodeId
+    ): IO[EngineAccessCodePage] = {
+        val most = EngineAccessRepo.LiveCodesMost
+        repos.engineAccess
+            .liveCodes(engine = engine, now = now, before = None, from = Some(through), limit = most + 1)
+            .flatMap { rows =>
+                if (rows.size > most) IO.pure(EngineAccessCodePage(codes = rows.take(most), hasMore = true))
+                else
+                    repos.engineAccess
+                        .liveCodes(engine = engine, now = now, before = Some(through), from = None, limit = 1)
+                        .map(older => EngineAccessCodePage(codes = rows, hasMore = older.nonEmpty))
+            }
+    }
 
     /** Restricts the game's engine to its listed players, or opens it to everybody. Neither touches the list. */
     def setRestricted(gameId: GameId, isRestricted: Boolean, callerExternalId: String): IO[Unit] =

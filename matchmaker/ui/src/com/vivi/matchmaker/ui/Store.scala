@@ -165,6 +165,8 @@ object Store {
         // The games the caller may not play, and who may play one game's engine, for its admins.
         case BarredGames
         case EngineAccess(gameId: GameId)
+        // A further page of one game's engine's live codes.
+        case EngineAccessCodes(gameId: GameId)
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
@@ -409,10 +411,37 @@ object Store {
     /** Who may play each game's engine, for its admins: fetched when its section is opened. */
     val engineAccessByGame: Var[Map[GameId, EngineAccess]] = Var(Map.empty)
 
+    /** Reads the game's engine's access again: its live codes as far down as they have been paged, so that a refresh
+      * after an action leaves the list as long as it was. The furthest code is read as the request is let go.
+      */
     def refreshEngineAccess(gameId: GameId): Future[Unit] =
-        reload(ApiClient.engineAccess(gameId), Fetch.EngineAccess(gameId))(a =>
+        reload(ApiClient.engineAccess(gameId, codesThrough = lastLiveCode(gameId)), Fetch.EngineAccess(gameId))(a =>
             engineAccessByGame.update(_.updated(gameId, a))
         )
+
+    /** The next page of the game's engine's live codes, added to those held. Added only if the list still ends where it
+      * did when asked: a refresh that has replaced it meanwhile would leave the page out of place.
+      */
+    def loadMoreLiveCodes(gameId: GameId): Future[Unit] =
+        lastLiveCode(gameId).fold(Future.unit) { before =>
+            reload(ApiClient.engineAccessCodes(gameId, before), Fetch.EngineAccessCodes(gameId)) { page =>
+                engineAccessByGame.update(byGame =>
+                    byGame.get(gameId) match {
+                        case Some(a) if a.liveCodes.codes.lastOption.map(_.codeId).contains(before) =>
+                            byGame.updated(
+                              gameId,
+                              a.copy(liveCodes =
+                                  EngineAccessCodePage(codes = a.liveCodes.codes ++ page.codes, hasMore = page.hasMore)
+                              )
+                            )
+                        case _ => byGame
+                    }
+                )
+            }
+        }
+
+    private def lastLiveCode(gameId: GameId): Option[EngineAccessCodeId] =
+        engineAccessByGame.now().get(gameId).flatMap(_.liveCodes.codes.lastOption).map(_.codeId)
 
     /** The access code each game's admin made last, kept here rather than in the form: the server holds only its hash,
       * so it is shown until another is made or the session ends, even if the section is rebuilt or the answer lands

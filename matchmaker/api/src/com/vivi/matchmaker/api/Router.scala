@@ -254,8 +254,24 @@ object Router {
             /* Who may play the game's engine (EngineAccessService): its admins see and change it. The
              * list is the engine's, so it covers every game the engine serves; a game is how the route
              * names it, and whose admins may manage it. */
+            // `?codesThrough=` a code's id: every live code down to it, for a list already paged that far.
             case ("GET", "games" :: gameId :: "access" :: Nil) =>
-                withGameId(gameId)(id => ok(services.engineAccess.access(id, caller)))
+                withGameId(gameId)(id =>
+                    withOptionalCodeId(request, "codesThrough")(through =>
+                        ok(services.engineAccess.access(gameId = id, codesThrough = through, callerExternalId = caller))
+                    )
+                )
+
+            // The next page of the live codes, after the code `?before=` names.
+            case ("GET", "games" :: gameId :: "access" :: "codes" :: Nil) =>
+                withGameId(gameId)(id =>
+                    withOptionalCodeId(request, "before") {
+                        case None =>
+                            IO.pure(Errors.badRequest(ErrorText.request.noBefore))
+                        case Some(before) =>
+                            ok(services.engineAccess.liveCodes(gameId = id, before = before, callerExternalId = caller))
+                    }
+                )
 
             case ("PUT", "games" :: gameId :: "access" :: Nil) =>
                 withGameId(gameId)(id =>
@@ -1025,6 +1041,18 @@ object Router {
         raw.toLongOption.fold(IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "character"))))(
           id => f(CharacterId(id))
         )
+
+    /* An access code's id in the query parameter `name`, if it is there: refused if it is there and not an id. */
+    private def withOptionalCodeId(request: Request, name: String)(
+        f: Option[EngineAccessCodeId] => IO[Response]
+    ): IO[Response] =
+        request.query.get(name) match {
+            case None => f(None)
+            case Some(raw) =>
+                raw.toLongOption.fold(
+                  IO.pure(Errors.badRequest(ErrorText.request.notAnId(raw = raw, what = "access code")))
+                )(id => f(Some(EngineAccessCodeId(id))))
+        }
 
     /* The window a completed list is asked for: every parameter optional, each one that is given
      * well formed, and the window they name one that can be computed and stored -- or the request is

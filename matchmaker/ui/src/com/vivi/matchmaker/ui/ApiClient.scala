@@ -197,9 +197,17 @@ object ApiClient {
     def gameAdmins(gameId: GameId): Future[Seq[GameAdmin]] =
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
 
-    /** Who may play a game's engine, for its admins: whether it is restricted, who is listed, and its codes. */
-    def engineAccess(gameId: GameId): Future[EngineAccess] =
-        get[EngineAccess](s"/games/${gameId.value}/access")
+    /** Who may play a game's engine, for its admins: whether it is restricted, who is listed, and its codes -- the
+      * first page of the live ones, or every one down to `codesThrough`.
+      */
+    def engineAccess(gameId: GameId, codesThrough: Option[EngineAccessCodeId]): Future[EngineAccess] =
+        get[EngineAccess](
+          s"/games/${gameId.value}/access${codesThrough.fold("")(c => s"?codesThrough=${c.value}")}"
+        )
+
+    /** The page of a game's engine's live codes after the code `before`. */
+    def engineAccessCodes(gameId: GameId, before: EngineAccessCodeId): Future[EngineAccessCodePage] =
+        get[EngineAccessCodePage](s"/games/${gameId.value}/access/codes?before=${before.value}")
 
     /** Restricts a game's engine to its listed players, or opens it to everybody. */
     def setRestricted(gameId: GameId, isRestricted: Boolean): Future[Unit] =

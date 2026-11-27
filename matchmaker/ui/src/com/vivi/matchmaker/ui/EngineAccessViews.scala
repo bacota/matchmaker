@@ -92,9 +92,18 @@ object EngineAccessViews {
             case Some(a) =>
                 playerList(gameId, a.players, said, refocusing(gameId, list = players, fallback = letIn))
         })
-        lazy val codes: HtmlElement = div(child <-- held.map {
-            case None    => emptyNode
-            case Some(a) => codeList(gameId, a.codes, said, refocusing(gameId, list = codes, fallback = makeCode))
+        // The live codes and the button for older ones, in one box, so that Revoke's refocusing counts that button too.
+        lazy val codes: HtmlElement = div(child <-- held.map(_.map(_.liveCodes)).distinct.map {
+            case None => emptyNode
+            case Some(page) =>
+                div(
+                  liveCodeList(gameId, page.codes, said, refocusing(gameId, list = codes, fallback = makeCode)),
+                  if (page.hasMore) moreCodesButton(gameId, list = codes, shown = page.codes.size) else emptyNode
+                )
+        })
+        val ended = div(child <-- held.map(_.map(_.endedCodes)).distinct.map {
+            case None | Some(Nil) => emptyNode
+            case Some(codes)      => div(h4(Headings.access.endedCodes), endedCodeList(codes))
         })
         div(
           cls := "engine-access",
@@ -131,7 +140,8 @@ object EngineAccessViews {
             letIn,
             h4(Headings.access.codes),
             codes,
-            makeCode
+            makeCode,
+            ended
           )
         )
     }
@@ -139,8 +149,9 @@ object EngineAccessViews {
     /* What the lists hold, said as they arrive. */
     private def summary(a: EngineAccess): String = {
         def count(n: Int, one: String, many: String) = if (n == 1) s"1 $one" else s"$n $many"
-        val live = a.codes.count(_.isRedeemable(java.time.Instant.now()))
-        s"${count(a.players.size, "player", "players")} let in, ${count(live, "code", "codes")} that can be used."
+        val live = count(a.liveCodes.codes.size, "code", "codes")
+        val codes = if (a.liveCodes.hasMore) s"more than $live" else live
+        s"${count(a.players.size, "player", "players")} let in, $codes that can be used."
     }
 
     /* A refresh for a button in `list` that the refresh takes away, as Remove and Revoke are: once the list is
@@ -243,40 +254,63 @@ object EngineAccessViews {
         )
     }
 
-    private def codeList(
+    private def liveCodeList(
         gameId: GameId,
         codes: List[EngineAccessCode],
         said: Var[String],
         refresh: () => Unit
     ): HtmlElement =
-        if (codes.isEmpty) p(cls := "empty", "No codes yet.")
-        else {
-            val now = java.time.Instant.now()
+        if (codes.isEmpty) p(cls := "empty", "No codes that can be used.")
+        else
             ul(
               cls := "plain",
               codes.map { c =>
-                  val uses = c.maxUses.fold(s"${c.uses} used")(m => s"${c.uses} of $m used")
-                  val state =
-                      if (c.isRevoked) "revoked"
-                      else if (c.expiresAt.exists(!now.isBefore(_))) "expired"
-                      else c.expiresAt.fold("never expires")(e => s"expires ${Format.date(e)}")
                   li(
                     cls := "row",
                     span(c.label),
-                    span(cls := "detail", s" — $uses, $state"),
-                    if (c.isRevoked) emptyNode
-                    else
-                        busyButton(label = Buttons.access.revokeCode)(busy =>
-                            if (!busy.now())
-                                Store.runSignedIn(ApiClient.revokeAccessCode(gameId, c.codeId), busy) { _ =>
-                                    said.set(s"Code “${c.label}” revoked.")
-                                    refresh()
-                                }
-                        ).amend(aria.label := Buttons.access.revokeCodeNamed(label = c.label))
+                    span(cls := "detail", s" — ${usesOf(c)}, ${stateOf(c)}"),
+                    busyButton(label = Buttons.access.revokeCode)(busy =>
+                        if (!busy.now())
+                            Store.runSignedIn(ApiClient.revokeAccessCode(gameId, c.codeId), busy) { _ =>
+                                said.set(s"Code “${c.label}” revoked.")
+                                refresh()
+                            }
+                    ).amend(aria.label := Buttons.access.revokeCodeNamed(label = c.label))
                   )
               }
             )
-        }
+
+    /* The codes that can no longer be redeemed, newest first: only to be read, as there is nothing left to revoke. */
+    private def endedCodeList(codes: List[EngineAccessCode]): HtmlElement =
+        ul(
+          cls := "plain",
+          codes.map(c => li(cls := "row", span(c.label), span(cls := "detail", s" — ${usesOf(c)}, ${stateOf(c)}")))
+        )
+
+    private def usesOf(c: EngineAccessCode): String = c.maxUses.fold(s"${c.uses} used")(m => s"${c.uses} of $m used")
+
+    private def stateOf(c: EngineAccessCode): String = {
+        val now = java.time.Instant.now()
+        if (c.isRevoked) "revoked"
+        else if (c.expiresAt.exists(!now.isBefore(_))) "expired"
+        else if (c.maxUses.exists(c.uses >= _)) "used up"
+        else c.expiresAt.fold("never expires")(e => s"expires ${Format.date(e)}")
+    }
+
+    /* The next page of live codes. The box it is in is redrawn when the page comes, taking this button, and the focus
+     * if it had it: the focus then goes to the first code of the page it brought, the `shown`th Revoke in `list`. */
+    private def moreCodesButton(gameId: GameId, list: => HtmlElement, shown: Int): HtmlElement =
+        busyButton(label = Buttons.access.moreCodes)(busy =>
+            if (!busy.now())
+                Store.runSignedIn(Store.loadMoreLiveCodes(gameId), busy) { _ =>
+                    if (Views.hasFocusFallen)
+                        list.ref
+                            .querySelectorAll("li button")
+                            .toList
+                            .lift(shown)
+                            .foreach(_.asInstanceOf[dom.html.Element].focus())
+                }
+        )
 
     /* Puts the code on the clipboard and says whether it worked. The clipboard is missing without a secure context,
      * and writing may be refused, so a failure says to copy it by hand, which the code's `user-select: all` makes

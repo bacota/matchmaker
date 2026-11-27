@@ -33,8 +33,18 @@ case class EngineAccessCode(
 /** A code just made: its row, and the code itself, which is never available again. */
 case class NewEngineAccessCode(code: String, access: EngineAccessCode)
 
-/** Who may play a game's engine, for the game's admins: whether it is restricted, who is listed, and the codes. */
-case class EngineAccess(isRestricted: Boolean, players: List[EngineListedPlayer], codes: List[EngineAccessCode])
+/** Some of an engine's codes that can still be redeemed, newest first, and whether there are older ones after them. */
+case class EngineAccessCodePage(codes: List[EngineAccessCode], hasMore: Boolean)
+
+/** Who may play a game's engine, for the game's admins: whether it is restricted, who is listed, its live codes a page
+  * or more at a time, and the newest of those revoked, expired or used up.
+  */
+case class EngineAccess(
+    isRestricted: Boolean,
+    players: List[EngineListedPlayer],
+    liveCodes: EngineAccessCodePage,
+    endedCodes: List[EngineAccessCode]
+)
 
 /** What redeeming a code opened: the display names of the engine's games. */
 case class RedeemedAccess(games: List[String])

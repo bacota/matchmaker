@@ -139,22 +139,25 @@ class EngineAccessRepo(session: Session[IO]) {
           VALUES ($engineId, $bytea, $text, ${int4.opt}, ${instant.opt}, $playerId)
           RETURNING $codeColumns""".query(codeRow)
 
-    /* Every live code, as any may still be revoked: through engine_access_code_live (V29), whose predicate the first
-     * two conditions repeat as it is written there. "Live" is EngineAccessCode.isRedeemable, stated in SQL. */
-    private val selectLiveCodes: Query[(EngineId, Instant), CodeRow] =
+    /* Live codes newest first, with code_id below the first bound and at or above the second, as many as the limit:
+     * through engine_access_code_live (V29), whose predicate the first two conditions repeat as it is written there.
+     * "Live" is EngineAccessCode.isRedeemable, stated in SQL. */
+    private val selectLiveCodes: Query[(EngineId, Instant, EngineAccessCodeId, EngineAccessCodeId, Int), CodeRow] =
         sql"""SELECT $codeColumns FROM engine_access_code
           WHERE external_id = $engineId
             AND NOT is_revoked AND (max_uses IS NULL OR uses < max_uses)
             AND (expires_at IS NULL OR expires_at > $instant)
-          ORDER BY created_at DESC, code_id DESC""".query(codeRow)
+            AND code_id < $codeId AND code_id >= $codeId
+          ORDER BY code_id DESC
+          LIMIT $int4""".query(codeRow)
 
-    /* The newest dead codes: engine_access_code_newest (V29) walked from the newest, past the live ones, until `limit`
+    /* The newest ended codes: engine_access_code_newest (V29) walked from the newest, past the live ones, until `limit`
      * are found. Revoked codes are kept, so these only grow, and the rest are never read. */
-    private val selectDeadCodes: Query[(EngineId, Instant, Int), CodeRow] =
+    private val selectEndedCodes: Query[(EngineId, Instant, Int), CodeRow] =
         sql"""SELECT $codeColumns FROM engine_access_code
           WHERE external_id = $engineId
             AND (is_revoked OR (max_uses IS NOT NULL AND uses >= max_uses) OR expires_at <= $instant)
-          ORDER BY created_at DESC, code_id DESC
+          ORDER BY code_id DESC
           LIMIT $int4""".query(codeRow)
 
     private val selectCodeByHashForUpdate: Query[Array[Byte], EngineId *: CodeRow] =
@@ -187,14 +190,31 @@ class EngineAccessRepo(session: Session[IO]) {
             .unique(insertCode)((code.engine, code.codeHash, code.label, code.maxUses, code.expiresAt, code.createdBy))
             .map(toCode)
 
-    /** The engine's codes, newest first: every one that could be redeemed at `now`, and the
-      * [[EngineAccessRepo.DeadCodesListed]] newest of those revoked, expired or used up.
+    /** The engine's codes that could be redeemed at `now`, newest first: at most `limit` of them, those made before the
+      * code `before` (all, when `None`) and no earlier than the code `from` (all, when `None`).
       */
-    def listCodes(engine: EngineId, now: Instant): IO[List[EngineAccessCode]] =
-        for {
-            live <- session.execute(selectLiveCodes)((engine, now))
-            dead <- session.execute(selectDeadCodes)((engine, now, EngineAccessRepo.DeadCodesListed))
-        } yield (live ++ dead).map(toCode).sortBy(c => (c.createdAt, c.codeId.value)).reverse
+    def liveCodes(
+        engine: EngineId,
+        now: Instant,
+        before: Option[EngineAccessCodeId],
+        from: Option[EngineAccessCodeId],
+        limit: Int
+    ): IO[List[EngineAccessCode]] =
+        session
+            .execute(selectLiveCodes)(
+              (
+                engine,
+                now,
+                before.getOrElse(EngineAccessCodeId(Long.MaxValue)),
+                from.getOrElse(EngineAccessCodeId(Long.MinValue)),
+                limit
+              )
+            )
+            .map(_.map(toCode))
+
+    /** The `limit` newest of the engine's codes that are revoked, expired or used up at `now`. */
+    def endedCodes(engine: EngineId, now: Instant, limit: Int): IO[List[EngineAccessCode]] =
+        session.execute(selectEndedCodes)((engine, now, limit)).map(_.map(toCode))
 
     /** The code stored by this hash, and its engine, locked for the redeem its answer decides. */
     def codeByHashForUpdate(codeHash: Array[Byte]): IO[Option[FoundCode]] =
@@ -216,7 +236,13 @@ class EngineAccessRepo(session: Session[IO]) {
 object EngineAccessRepo {
 
     /** How many revoked, expired or used-up codes an engine's list shows, newest first. */
-    val DeadCodesListed = 20
+    val EndedCodesListed = 20
+
+    /** How many live codes a page of an engine's list holds. */
+    val LiveCodesPerPage = 50
+
+    /** The most live codes one answer holds, however far down the list a refresh asks it to reach. */
+    val LiveCodesMost = 1000
     private type CodeRow = (EngineAccessCodeId, String, Option[Int], Int, Option[Instant], Boolean, Instant)
 
     /** A code to store: only its hash, never the code. */

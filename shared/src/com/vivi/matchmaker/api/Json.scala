@@ -84,6 +84,7 @@ object Json {
     given ReadWriter[EngineListedPlayer] = macroRW
     given ReadWriter[EngineAccessCode] = macroRW
     given ReadWriter[NewEngineAccessCode] = macroRW
+    given ReadWriter[EngineAccessCodePage] = macroRW
     given ReadWriter[EngineAccess] = macroRW
     given ReadWriter[RedeemedAccess] = macroRW
     given ReadWriter[MatchRecord] = macroRW

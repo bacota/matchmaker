@@ -175,11 +175,11 @@ class EngineAccessServiceSpec extends PropertySuite {
             redeemed <- access.redeem(made.code.toLowerCase.replace("-", " "), f.first.externalId)
             t <- openChallenge(f)
             entrant <- enter(f, t, f.first)
-            seen <- access.access(f.game.gameId, f.host.externalId)
+            seen <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
         } yield (redeemed, entrant, seen))
         assertEquals(redeemed.games, List("Duel"))
         assert(entrant.playerId.isDefined)
-        assertEquals(codes.codes.map(c => (c.label, c.uses)), List(("club night", 1)))
+        assertEquals(codes.liveCodes.codes.map(c => (c.label, c.uses)), List(("club night", 1)))
         assertEquals(codes.players.map(_.codeLabel), List(Some("club night")))
     }
 
@@ -197,39 +197,78 @@ class EngineAccessServiceSpec extends PropertySuite {
             _ <- access.redeem(made.code, f.first.externalId)
             _ <- access.redeem(made.code, f.first.externalId)
             refused <- refusal(access.redeem(made.code, f.second.externalId))
-            seen <- access.access(f.game.gameId, f.host.externalId)
-        } yield (seen.codes.map(_.uses), refused))
+            seen <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
+        } yield (seen.endedCodes.map(_.uses), refused))
         assertEquals(uses, List(1))
         assert(refused.isInstanceOf[ValidationError], refused)
     }
 
-    test("the code list keeps every live code and only the newest dead ones, used up or revoked") {
-        val revokedCount = EngineAccessRepo.DeadCodesListed + 1
-        def make(f: Fixture, label: String, maxUses: Option[Int] = None) =
-            access.createCode(
+    private def makeCode(f: Fixture, label: String, maxUses: Option[Int] = None): IO[NewEngineAccessCode] =
+        access.createCode(
+          gameId = f.game.gameId,
+          label = label,
+          maxUses = maxUses,
+          expiresAt = None,
+          callerExternalId = f.host.externalId
+        )
+
+    test("the ended codes are the newest few, used up or revoked, and the live ones are listed apart") {
+        val revokedCount = EngineAccessRepo.EndedCodesListed + 1
+        val (seen, live, ended) = run(
+          for {
+              f <- fixture()
+              oldestLive <- makeCode(f, "still open")
+              revoked <- (1 to revokedCount).toList.traverse(n => makeCode(f, s"spent $n"))
+              _ <- revoked.traverse(r => access.revokeCode(f.game.gameId, r.access.codeId, f.host.externalId))
+              usedUp <- makeCode(f, "used up", maxUses = Some(1))
+              _ <- access.redeem(usedUp.code, f.first.externalId)
+              newestLive <- makeCode(f, "newest open")
+              seen <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
+          } yield (
+            seen,
+            List(newestLive, oldestLive).map(_.access.label),
+            // Newest first: the used-up one, then the newest revoked ones, as many as are listed.
+            (revoked :+ usedUp).map(_.access.label).reverse.take(EngineAccessRepo.EndedCodesListed)
+          )
+        )
+        assertEquals(seen.liveCodes, EngineAccessCodePage(codes = seen.liveCodes.codes, hasMore = false))
+        assertEquals(seen.liveCodes.codes.map(_.label), live)
+        assertEquals(seen.endedCodes.map(_.label), ended)
+    }
+
+    test("the live codes come a page at a time, and a refresh reaches as far down as the list was paged") {
+        val perPage = EngineAccessRepo.LiveCodesPerPage
+        val (made, first, second, throughSecond, throughFirst) = run(for {
+            f <- fixture()
+            made <- (1 to perPage + 2).toList.traverse(n => makeCode(f, s"code $n"))
+            // Revoked, so not live: no page shows it.
+            _ <- access.revokeCode(f.game.gameId, made(perPage / 2).access.codeId, f.host.externalId)
+            first <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
+            second <- access.liveCodes(
               gameId = f.game.gameId,
-              label = label,
-              maxUses = maxUses,
-              expiresAt = None,
+              before = first.liveCodes.codes.last.codeId,
               callerExternalId = f.host.externalId
             )
-        val (listed, expected) = run(for {
-            f <- fixture()
-            oldestLive <- make(f, "still open")
-            revoked <- (1 to revokedCount).toList.traverse(n => make(f, s"spent $n"))
-            _ <- revoked.traverse(r => access.revokeCode(f.game.gameId, r.access.codeId, f.host.externalId))
-            usedUp <- make(f, "used up", maxUses = Some(1))
-            _ <- access.redeem(usedUp.code, f.first.externalId)
-            newestLive <- make(f, "newest open")
-            seen <- access.access(f.game.gameId, f.host.externalId)
-        } yield {
-            // Newest first: the newest live code, then the dead -- the used-up one and the newest revoked ones, as
-            // many as are listed -- and the oldest live code, however old.
-            val dead =
-                (revoked.map(_.access.label) :+ usedUp.access.label).reverse.take(EngineAccessRepo.DeadCodesListed)
-            (seen.codes.map(_.label), (newestLive.access.label +: dead) :+ oldestLive.access.label)
-        })
-        assertEquals(listed, expected)
+            throughSecond <- access.access(
+              gameId = f.game.gameId,
+              codesThrough = Some(second.codes.last.codeId),
+              callerExternalId = f.host.externalId
+            )
+            throughFirst <- access.access(
+              gameId = f.game.gameId,
+              codesThrough = Some(first.liveCodes.codes.last.codeId),
+              callerExternalId = f.host.externalId
+            )
+        } yield (made, first.liveCodes, second, throughSecond.liveCodes, throughFirst.liveCodes))
+        val live = made.patch(perPage / 2, Nil, 1).map(_.access.label).reverse
+        assertEquals(first.codes.map(_.label), live.take(perPage))
+        assert(first.hasMore)
+        assertEquals(second, EngineAccessCodePage(codes = second.codes, hasMore = false))
+        assertEquals(second.codes.map(_.label), live.drop(perPage))
+        assertEquals(throughSecond.codes.map(_.label), live)
+        assert(!throughSecond.hasMore)
+        assertEquals(throughFirst.codes.map(_.label), live.take(perPage))
+        assert(throughFirst.hasMore)
     }
 
     test("a revoked, an expired and an unknown code are refused alike") {
@@ -347,7 +386,7 @@ class EngineAccessServiceSpec extends PropertySuite {
                 }
             }
             _ <- wasBlocked._2.joinWithNever
-            listed <- access.access(f.game.gameId, f.host.externalId)
+            listed <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
         } yield (wasBlocked._1, listed.players.nonEmpty))
         assert(wasBlocked, "the revoke ran while an entry held the player's listing")
         assert(!isListedAfter)
