@@ -17,10 +17,13 @@ object EngineAccessViews {
     private def codeFromLink: String =
         Option(new dom.URLSearchParams(dom.window.location.search).get("access")).getOrElse("")
 
-    /** An access code box and its button. `onRedeemed` runs once the code has let the player in, after the barred games
-      * are read again.
+    /** An access code box and its button.
+      *
+      * `replacedBy` is for a form that letting the player in takes away, as the competition screen's is: its
+      * confirmation is said through [[Views.announce]], which outlives it, rather than in its own live region, and
+      * `replacedBy` runs once the barred games have been read again, to move focus to what took its place.
       */
-    def redeemForm(onRedeemed: () => Unit = () => ()): HtmlElement = {
+    def redeemForm(replacedBy: Option[() => Unit] = None): HtmlElement = {
         val code = Var(codeFromLink)
         val said = Var("")
         val tip = freshTipId("access-code-tip")
@@ -40,11 +43,15 @@ object EngineAccessViews {
                   Store.runSignedIn(ApiClient.redeemAccessCode(sent), busy) { opened =>
                       // Cleared only if it still holds what was sent, not what was typed meanwhile.
                       if (code.now() == sent) code.set("")
-                      said.set(
-                        if (opened.games.isEmpty) "You have been let in."
-                        else s"You can now play ${opened.games.mkString(", ")}."
-                      )
-                      Store.refreshBarredGames().foreach(_ => onRedeemed())
+                      val confirmation =
+                          if (opened.games.isEmpty) "You have been let in."
+                          else s"You can now play ${opened.games.mkString(", ")}."
+                      replacedBy match {
+                          case None => said.set(confirmation); Store.refreshBarredGames()
+                          case Some(moveFocus) =>
+                              Views.announce(confirmation)
+                              Store.refreshBarredGames().foreach(_ => moveFocus())
+                      }
                   }
               }
           ),

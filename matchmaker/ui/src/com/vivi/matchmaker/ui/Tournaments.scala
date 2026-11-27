@@ -738,17 +738,25 @@ object Tournaments {
               emptyNode
           else
               // A restricted engine's game the caller has not been let into: the code that lets them in, where the
-              // entry would be. Redrawn only when that answer changes.
-              div(child <-- Store.isBarred(t.gameId).map { isBarred =>
-                  if (isBarred)
-                      div(
-                        p(cls := "detail", ErrorText.engineAccess.notAllowed(game = d.summary.gameName)),
-                        EngineAccessViews.redeemForm()
-                      )
-                  else enterRow(d, t, mine, characterGame, chosen, me)
-              })
+              // entry would be. Redrawn only when that answer changes. A code redeemed here takes the form, and the
+              // focus on its button, away: the focus goes to the entry row's first control instead.
+              {
+                  lazy val entry: HtmlElement = div(child <-- Store.isBarred(t.gameId).map { isBarred =>
+                      if (isBarred)
+                          div(
+                            p(cls := "detail", ErrorText.engineAccess.notAllowed(game = d.summary.gameName)),
+                            EngineAccessViews.redeemForm(replacedBy = Some(() => focusFirstControl(entry)))
+                          )
+                      else enterRow(d, t, mine, characterGame, chosen, me)
+                  })
+                  entry
+              }
         )
     }
+
+    /* Focus on the first select or button inside `within`, if it has one. */
+    private def focusFirstControl(within: HtmlElement): Unit =
+        Option(within.ref.querySelector("select, button")).foreach(_.asInstanceOf[dom.html.Element].focus())
 
     /* The caller's entry: a character to enter with, in a character game, the Enter button, and Decline. */
     private def enterRow(
