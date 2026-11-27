@@ -65,6 +65,7 @@ object EngineAccessViews {
         val isOpen = Var(false)
         val said = Var("")
         val tip = freshTipId("access-tip")
+        val panelId = freshTipId("access-panel")
         val held: Signal[Option[EngineAccess]] = Store.engineAccessByGame.signal.map(_.get(gameId)).distinct
         def refresh(): Unit = { Store.refreshEngineAccess(gameId); () }
         val letIn = letInForm(gameId, said, () => refresh())
@@ -84,17 +85,23 @@ object EngineAccessViews {
           button(
             tpe := "button",
             aria.expanded <-- isOpen.signal,
+            aria.controls := panelId,
             aria.describedBy := tip,
             Buttons.access.show,
             onClick --> { _ =>
                 val opening = !isOpen.now()
                 isOpen.set(opening)
-                if (opening) refresh()
+                // Said once the lists have come, since they arrive after the panel opens with "Loading…" in it.
+                if (opening) Store.refreshEngineAccess(gameId).foreach { _ =>
+                    if (isOpen.now()) Store.engineAccessByGame.now().get(gameId).foreach(a => said.set(summary(a)))
+                }
             }
           ),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
           div(
+            idAttr := panelId,
             hidden <-- isOpen.signal.map(!_),
+            aria.busy <-- held.map(_.isEmpty),
             restrictedBox(gameId, held, said),
             h4(Headings.access.players),
             players,
@@ -104,6 +111,13 @@ object EngineAccessViews {
             makeCode
           )
         )
+    }
+
+    /* What the lists hold, said as they arrive. */
+    private def summary(a: EngineAccess): String = {
+        def count(n: Int, one: String, many: String) = if (n == 1) s"1 $one" else s"$n $many"
+        val live = a.codes.count(_.isRedeemable(java.time.Instant.now()))
+        s"${count(a.players.size, "player", "players")} let in, ${count(live, "code", "codes")} that can be used."
     }
 
     /* A refresh for a button in `list` that the refresh takes away, as Remove and Revoke are: once the list is
