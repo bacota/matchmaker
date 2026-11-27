@@ -35,15 +35,18 @@ object EngineAccessViews {
             )
           ),
           busyButton(label = Buttons.access.redeem)(busy =>
-              if (!busy.now())
-                  Store.runSignedIn(ApiClient.redeemAccessCode(code.now()), busy) { opened =>
-                      code.set("")
+              if (!busy.now()) {
+                  val sent = code.now()
+                  Store.runSignedIn(ApiClient.redeemAccessCode(sent), busy) { opened =>
+                      // Cleared only if it still holds what was sent, not what was typed meanwhile.
+                      if (code.now() == sent) code.set("")
                       said.set(
                         if (opened.games.isEmpty) "You have been let in."
                         else s"You can now play ${opened.games.mkString(", ")}."
                       )
                       Store.refreshBarredGames().foreach(_ => onRedeemed())
                   }
+              }
           ),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal)
         )
@@ -162,12 +165,14 @@ object EngineAccessViews {
             )
           ),
           busyButton(label = Buttons.access.letIn)(busy =>
-              if (!busy.now())
-                  Store.runSignedIn(ApiClient.grantEngineAccess(gameId, nickname.now()), busy) { _ =>
-                      said.set(s"${nickname.now().trim} let in.")
-                      nickname.set("")
+              if (!busy.now()) {
+                  val sent = nickname.now()
+                  Store.runSignedIn(ApiClient.grantEngineAccess(gameId, sent), busy) { _ =>
+                      said.set(s"${sent.trim} let in.")
+                      if (nickname.now() == sent) nickname.set("")
                       refresh()
                   }
+              }
           )
         )
     }
@@ -236,20 +241,22 @@ object EngineAccessViews {
           tipField(id = daysTip, caption = Labels.access.expiresDays, text = Tips.access.expiresDays)(numberBox(days)),
           busyButton(label = Buttons.access.makeCode)(busy =>
               if (!busy.now()) {
+                  val (sentLabel, sentUses, sentDays) = (labelText.now(), maxUses.now(), days.now())
                   val request = Json.AccessCodeRequest(
-                    label = labelText.now(),
-                    maxUses = maxUses.now().trim.toIntOption,
+                    label = sentLabel,
+                    maxUses = sentUses.trim.toIntOption,
                     expiresAt =
-                        days.now().trim.toIntOption.map(d => java.time.Instant.now().plusSeconds(d.toLong * 86400))
+                        sentDays.trim.toIntOption.map(d => java.time.Instant.now().plusSeconds(d.toLong * 86400))
                   )
                   Store.runSignedIn(ApiClient.createAccessCode(gameId, request), busy) { answer =>
                       Store.freshAccessCodes.update(_.updated(gameId, answer.code))
                       said.set(
                         s"Code “${answer.access.label}” made. Copy it now: it is shown only until you make another or sign out."
                       )
-                      labelText.set("")
-                      maxUses.set("")
-                      days.set("")
+                      // Each cleared only if it still holds what was sent, not what was typed meanwhile.
+                      if (labelText.now() == sentLabel) labelText.set("")
+                      if (maxUses.now() == sentUses) maxUses.set("")
+                      if (days.now() == sentDays) days.set("")
                       refresh()
                   }
               }
