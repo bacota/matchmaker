@@ -67,6 +67,17 @@ object EngineAccessViews {
         val tip = freshTipId("access-tip")
         val held: Signal[Option[EngineAccess]] = Store.engineAccessByGame.signal.map(_.get(gameId)).distinct
         def refresh(): Unit = { Store.refreshEngineAccess(gameId); () }
+        val letIn = letInForm(gameId, said, () => refresh())
+        val makeCode = makeCodeForm(gameId, said, () => refresh())
+        lazy val players: HtmlElement = div(child <-- held.map {
+            case None => p(cls := "empty", "Loading…")
+            case Some(a) =>
+                playerList(gameId, a.players, said, refocusing(gameId, list = players, fallback = letIn))
+        })
+        lazy val codes: HtmlElement = div(child <-- held.map {
+            case None    => emptyNode
+            case Some(a) => codeList(gameId, a.codes, said, refocusing(gameId, list = codes, fallback = makeCode))
+        })
         div(
           cls := "engine-access",
           withTip(id = tip, subject = Headings.access.section, text = Tips.access.section)(h3(Headings.access.section)),
@@ -86,19 +97,31 @@ object EngineAccessViews {
             hidden <-- isOpen.signal.map(!_),
             restrictedBox(gameId, held, said),
             h4(Headings.access.players),
-            child <-- held.map {
-                case None    => p(cls := "empty", "Loading…")
-                case Some(a) => playerList(gameId, a.players, said, () => refresh())
-            },
-            letInForm(gameId, said, () => refresh()),
+            players,
+            letIn,
             h4(Headings.access.codes),
-            child <-- held.map {
-                case None    => emptyNode
-                case Some(a) => codeList(gameId, a.codes, said, () => refresh())
-            },
-            makeCodeForm(gameId, said, () => refresh())
+            codes,
+            makeCode
           )
         )
+    }
+
+    /* A refresh for a button in `list` that the refresh takes away, as Remove and Revoke are: once the list is
+     * redrawn, if the focus fell with the button, it goes to the button now in that place (the next row's), else the
+     * last, else the first field of `fallback`. */
+    private def refocusing(gameId: GameId, list: => HtmlElement, fallback: HtmlElement): () => Unit = () => {
+        def buttons = list.ref.querySelectorAll("button").toList.map(_.asInstanceOf[dom.html.Element])
+        val place = buttons.indexWhere(_ == dom.document.activeElement)
+        Store.refreshEngineAccess(gameId).foreach { _ =>
+            val active = dom.document.activeElement
+            if (place >= 0 && (active == null || active == dom.document.body || !active.isConnected)) {
+                val now = buttons
+                now.lift(place)
+                    .orElse(now.lastOption)
+                    .orElse(Option(fallback.ref.querySelector("input")).map(_.asInstanceOf[dom.html.Element]))
+                    .foreach(_.focus())
+            }
+        }
     }
 
     private def restrictedBox(gameId: GameId, held: Signal[Option[EngineAccess]], said: Var[String]): HtmlElement = {
