@@ -335,8 +335,9 @@ object EngineAccessViews {
                   }
               }
           ),
+          // Not a live region: the section's status line already says the code was made and to copy it, and the two
+          // would be read out one after the other.
           div(
-            aria.live := "polite",
             child <-- made.map {
                 case None => emptyNode
                 case Some(fresh) =>
