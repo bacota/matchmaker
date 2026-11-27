@@ -12,7 +12,7 @@ import skunk.codec.all.{bool, bytea, int8}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
+import com.vivi.matchmaker.persistence.{GameRepo, HandOffRepo, TestSession}
 
 /** A sign-in handed to an engine's page by a one-time code (design/sign-in-handoff.md): what is stored, who may redeem
   * it, and that it is redeemed once.
@@ -263,6 +263,34 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
             assertEquals(outcomes.count(_.isRight), 1)
             assert(outcomes.collect { case Left(e) => e }.forall(_.isInstanceOf[NotFoundError]), outcomes)
         }
+    }
+
+    // A refused insert's message lists the statement's arguments, and an error that is not a ServiceError is logged
+    // with it. The tokens must not be among them.
+    check("a refused insert's error does not carry the tokens") {
+        val sub = unique("sub")
+        val token = idTokenOf(sub)
+        TestSession.resource
+            .use(session =>
+                new HandOffRepo(session)
+                    .insert(
+                      HandOffRepo.NewHandOff(
+                        codeHash = HandOffService.hashOf("c0de"),
+                        gameId = GameId(Int.MaxValue),
+                        cognitoId = sub,
+                        idToken = token,
+                        refreshToken = Some("r-secret"),
+                        expiresAt = Instant.now()
+                      )
+                    )
+                    .attempt
+            )
+            .map {
+                case Left(e) =>
+                    assert(!e.getMessage.contains(token), e.getMessage)
+                    assert(!e.getMessage.contains("r-secret"), e.getMessage)
+                case Right(_) => fail("a hand-off for no game was stored")
+            }
     }
 
     check("nothing logged carries a token or the code") {

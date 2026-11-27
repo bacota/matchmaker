@@ -16,9 +16,11 @@ class HandOffRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val instant = SkunkCodecs.instant
 
+    /* The tokens are redacted: a refused insert (the game deleted since its trust was read, say) raises an error whose
+     * message lists every argument not redacted, and that message is logged. Nothing logs a token. */
     private val insertRow: Command[(Array[Byte], GameId, String, String, Option[String], Instant)] =
         sql"""INSERT INTO sign_in_handoff (code_hash, game_id, cognito_id, id_token, refresh_token, expires_at)
-          VALUES ($bytea, $gameId, $text, $text, ${text.opt}, $instant)""".command
+          VALUES ($bytea, $gameId, $text, ${text.redacted}, ${text.opt.redacted}, $instant)""".command
 
     def insert(handOff: NewHandOff): IO[Unit] =
         session
