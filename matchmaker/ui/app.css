@@ -1294,6 +1294,15 @@ button.toggle {
     min-height: 2.75rem;
   }
 
+  /* And a captioned checkbox outside a card, such as Who may play's "Only players let in": inline, where `min-height`
+     does nothing, so it is made a box first. */
+  label.check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+  }
+
   /* A list of checkboxes, such as the formats a game offers: each label is inline, where `min-height` does nothing,
      so it is made a box first. */
   ul.plain > li > label {
