@@ -13,9 +13,19 @@ object EngineAccessViews {
 
     import Views.{busyButton, field, freshTipId, tipField, withTip}
 
-    /** A code handed out as a link carries it as `?access=`, so the form opens already filled in. */
-    private def codeFromLink: String =
-        Option(new dom.URLSearchParams(dom.window.location.search).get("access")).getOrElse("")
+    /** A code handed out as a link carries it as `?access=`, so the form opens already filled in. Read once, and then
+      * taken out of the address, so that the code is not left in the address bar and the browser's history once it has
+      * been used. Kept here for every redeem form, as the account menu's and a competition's both start from it.
+      */
+    private lazy val codeFromLink: String = {
+        val url = new dom.URL(dom.window.location.href)
+        val code = Option(url.searchParams.get("access")).getOrElse("")
+        if (code.nonEmpty) {
+            url.searchParams.delete("access")
+            dom.window.history.replaceState(dom.window.history.state, "", url.href)
+        }
+        code
+    }
 
     /** An access code box and its button.
       *
