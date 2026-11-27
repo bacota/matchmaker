@@ -106,6 +106,7 @@ object Store {
         barredGames.set(Set.empty)
         engineAccessByGame.set(Map.empty)
         freshAccessCodes.set(Map.empty)
+        linkedAccessCode.set("")
         myTournaments.set(Seq.empty)
         myEndedTournaments.set(Seq.empty)
         endedFrame.set(CompletedFrame.Day)
@@ -419,6 +420,11 @@ object Store {
       * sign-out.
       */
     val freshAccessCodes: Var[Map[GameId, String]] = Var(Map.empty)
+
+    /** The access code the page was opened with as `?access=`, until it is redeemed or the session ends: what a redeem
+      * form starts filled in with. Empty when there is none.
+      */
+    val linkedAccessCode: Var[String] = Var("")
 
     private def isAdminIn(byGame: Map[GameId, Seq[GameAdmin]], gameId: GameId, player: Player): Boolean =
         player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId))

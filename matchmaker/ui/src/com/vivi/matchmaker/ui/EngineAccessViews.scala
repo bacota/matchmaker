@@ -13,19 +13,24 @@ object EngineAccessViews {
 
     import Views.{busyButton, field, freshTipId, tipField, withTip}
 
-    /** A code handed out as a link carries it as `?access=`, so the form opens already filled in. Read once, and then
-      * taken out of the address, so that the code is not left in the address bar and the browser's history once it has
-      * been used. Kept here for every redeem form, as the account menu's and a competition's both start from it.
+    /* Whether the address has been read for a linked code yet: it is read once, by the first redeem form. */
+    private var isLinkRead = false
+
+    /** A code handed out as a link carries it as `?access=`, so the form opens already filled in. Read once, by the
+      * first redeem form, and then taken out of the address, so that the code is not left in the address bar and the
+      * browser's history. Kept in [[Store.linkedAccessCode]], which a redeem of it and the end of the session clear, so
+      * that it fills in no form after it has been used or for the next player.
       */
-    private lazy val codeFromLink: String = {
-        val url = new dom.URL(dom.window.location.href)
-        val code = Option(url.searchParams.get("access")).getOrElse("")
-        if (code.nonEmpty) {
-            url.searchParams.delete("access")
-            dom.window.history.replaceState(dom.window.history.state, "", url.href)
+    private def readCodeFromLink(): Unit =
+        if (!isLinkRead) {
+            isLinkRead = true
+            val url = new dom.URL(dom.window.location.href)
+            Option(url.searchParams.get("access")).filter(_.nonEmpty).foreach { code =>
+                url.searchParams.delete("access")
+                dom.window.history.replaceState(dom.window.history.state, "", url.href)
+                Store.linkedAccessCode.set(code)
+            }
         }
-        code
-    }
 
     /** An access code box and its button.
       *
@@ -34,7 +39,8 @@ object EngineAccessViews {
       * `replacedBy` runs once the barred games have been read again, to move focus to what took its place.
       */
     def redeemForm(replacedBy: Option[() => Unit] = None): HtmlElement = {
-        val code = Var(codeFromLink)
+        readCodeFromLink()
+        val code = Var(Store.linkedAccessCode.now())
         val said = Var("")
         val tip = freshTipId("access-code-tip")
         div(
@@ -53,6 +59,7 @@ object EngineAccessViews {
                   Store.runSignedIn(ApiClient.redeemAccessCode(sent), busy) { opened =>
                       // Cleared only if it still holds what was sent, not what was typed meanwhile.
                       if (code.now() == sent) code.set("")
+                      if (Store.linkedAccessCode.now() == sent) Store.linkedAccessCode.set("")
                       val confirmation =
                           if (opened.games.isEmpty) "You have been let in."
                           else s"You can now play ${opened.games.mkString(", ")}."
