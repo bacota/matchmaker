@@ -324,6 +324,14 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     /** Matches whose archive the friendly bucket has expired, as a test says. */
     @volatile var expiredArchives: Set[String] = Set.empty
 
+    /** Matches a test says are friendly: their archives are answered as expiring 30 days after they were archived, as
+      * matchmaker's friendly bucket expires them. Every other match's is kept for good.
+      */
+    @volatile var friendlyMatches: Set[String] = Set.empty
+
+    private def expiryOf(matchId: String, at: java.time.Instant): Option[java.time.Instant] =
+        Option.when(friendlyMatches(matchId))(at.plus(java.time.Duration.ofDays(30)))
+
     /** While set, archiving is refused as a matchmaker with no buckets refuses it: 503. */
     @volatile var isArchivingUnavailable: Boolean = false
 
@@ -339,7 +347,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
         if (isArchivingUnavailable) throw AwsError("archiving is not configured on this matchmaker (503)")
         if (isRefusingArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
         archivedAt.get(matchId) match {
-            case Some(at) => Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
+            case Some(at) => Protocol.ArchiveUploadAnswer(archivedAt = Some(at), expiresAt = expiryOf(matchId, at))
             case None =>
                 archiveRequests(matchId) = request
                 Protocol.ArchiveUploadAnswer(upload =
@@ -358,7 +366,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     def confirmArchive(matchmakerUrl: String, matchId: String): Protocol.ArchiveConfirmation = synchronized {
         log(s"POST $matchmakerUrl/matches/$matchId/archive/confirm")
         archivedAt.get(matchId) match {
-            case Some(at) => Protocol.ArchiveConfirmation(at)
+            case Some(at) => Protocol.ArchiveConfirmation(at, expiryOf(matchId, at))
             case None =>
                 val asked = archiveRequests.getOrElse(
                   matchId,
@@ -368,7 +376,7 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
                     case Some(bytes) if ArchiveTransfer.sha256(bytes) == asked.sha256 =>
                         val at = java.time.Instant.now()
                         archivedAt(matchId) = at
-                        Protocol.ArchiveConfirmation(at)
+                        Protocol.ArchiveConfirmation(at, expiryOf(matchId, at))
                     case _ => throw MatchmakerRefusal(409, s"no archive has arrived for match $matchId")
                 }
         }

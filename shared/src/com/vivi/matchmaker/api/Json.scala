@@ -389,12 +389,19 @@ object Json {
     case class ArchiveUpload(url: String, method: String, headers: Map[String, String], expiresAt: Instant)
 
     /** The answer to an [[ArchiveUploadRequest]]: either `upload`, or — for a match already archived — `archivedAt`, in
-      * which case the engine's live copy is redundant and it may drop it.
+      * which case the engine's live copy is redundant and it may drop it. `expiresAt` comes with `archivedAt`, for an
+      * archive in the friendly bucket: when that bucket deletes it.
       */
-    case class ArchiveUploadAnswer(upload: Option[ArchiveUpload] = None, archivedAt: Option[Instant] = None)
+    case class ArchiveUploadAnswer(
+        upload: Option[ArchiveUpload] = None,
+        archivedAt: Option[Instant] = None,
+        expiresAt: Option[Instant] = None
+    )
 
-    /** The archive arrived and is recorded: the engine may drop its live copy. */
-    case class ArchiveConfirmation(archivedAt: Instant)
+    /** The archive arrived and is recorded: the engine may drop its live copy. `expiresAt` is when the friendly bucket
+      * deletes it, for a friendly match; none for an archive kept for good.
+      */
+    case class ArchiveConfirmation(archivedAt: Instant, expiresAt: Option[Instant] = None)
 
     /** Where to read an archive from. For the engine only: it holds what the engine hides from players. */
     case class ArchiveDownload(url: String, expiresAt: Instant)

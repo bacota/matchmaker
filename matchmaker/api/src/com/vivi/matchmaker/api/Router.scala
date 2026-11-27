@@ -855,15 +855,24 @@ object Router {
                                             )
                                           )
                                       )
-                                  case UploadAnswer.AlreadyArchived(at) =>
-                                      Json.ArchiveUploadAnswer(archivedAt = Some(at))
+                                  case UploadAnswer.AlreadyArchived(archived) =>
+                                      Json.ArchiveUploadAnswer(
+                                        archivedAt = Some(archived.at),
+                                        expiresAt = archived.expiresAt
+                                      )
                               }
                         )
                     }
                 )
 
             case ("POST", "matches" :: matchId :: "archive" :: "confirm" :: Nil) =>
-                withMatchId(matchId)(mid => ok(services.archives.confirm(mid, caller).map(Json.ArchiveConfirmation(_))))
+                withMatchId(matchId)(mid =>
+                    ok(
+                      services.archives
+                          .confirm(mid, caller)
+                          .map(archived => Json.ArchiveConfirmation(archived.at, archived.expiresAt))
+                    )
+                )
 
             // A POST, not a GET: finding a friendly archive gone is recorded.
             case ("POST", "matches" :: matchId :: "archive" :: "read" :: Nil) =>

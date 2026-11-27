@@ -5,6 +5,8 @@
 #   ./init-games.sh local          # the local database and the engines' LocalServers
 #   ./init-games.sh dev            # dev's database and its deployed engines
 #   ./init-games.sh prod --yes     # skip the confirmation
+#   ./init-games.sh dev --manifest FILE [--only-manifest]
+#                                  # also, or only, the engines another repository lists
 #
 # Each engine's game is defined once, in engines/<engine>/game.json: its name, roles, parameters,
 # how its players move. What differs between instances is supplied here, per environment:
@@ -27,10 +29,19 @@
 # Safe to run again. A game whose engine identity is already registered is skipped, never saved a
 # second time; to point registered games at moved urls, use update-engine-urls.sh.
 #
+# --manifest FILE adds the entries of a RegisterGames manifest made elsewhere, for an engine that is
+# not bundled here (vascala's infra/matchmaker-register.sh writes one): a JSON list of
+# {definition, url, externalId, characterUrl?, apiKey?}, each definition an absolute path to its
+# game.json. They come after the bundled engines', or in their place with --only-manifest, in the
+# same summary and behind the same confirmation. The file is read once and never printed.
+#
 # The API keys pass from terraform to RegisterGames in a file only its owner can read, deleted on
 # exit, and are never printed.
 
 set -euo pipefail
+
+# Where the script was run from, which a relative --manifest is read from.
+readonly START_DIR=$PWD
 
 cd "$(dirname "$0")"
 
@@ -41,9 +52,11 @@ readonly ENGINES=(tictactoe:8090 rps:8091 boxing:8092 stratego:8093 wavinghands:
 
 usage() {
   cat >&2 <<EOF
-usage: $0 <local|dev|prod> [--yes]
+usage: $0 <local|dev|prod> [--yes] [--manifest FILE [--only-manifest]]
 
-  --yes   register without asking for confirmation
+  --yes             register without asking for confirmation
+  --manifest FILE   also register the engines of this RegisterGames manifest
+  --only-manifest   register those alone, not the bundled engines
 EOF
   exit 2
 }
@@ -61,13 +74,36 @@ case "$env" in
 esac
 
 assume_yes=false
+extra_manifest=""
+only_manifest=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes | -y) assume_yes=true ;;
+    --manifest)
+      [ $# -ge 2 ] || usage
+      extra_manifest=$2
+      shift
+      ;;
+    --only-manifest) only_manifest=true ;;
     *) usage ;;
   esac
   shift
 done
+
+if [ "$only_manifest" = true ] && [ -z "$extra_manifest" ]; then
+  echo "--only-manifest needs --manifest FILE" >&2
+  exit 2
+fi
+if [ -n "$extra_manifest" ]; then
+  case "$extra_manifest" in
+    /*) ;;
+    *) extra_manifest="$START_DIR/$extra_manifest" ;;
+  esac
+  [ -r "$extra_manifest" ] || {
+    echo "can't read the manifest $extra_manifest" >&2
+    exit 1
+  }
+fi
 
 for tool in jq psql mill; do
   command -v "$tool" >/dev/null || {
@@ -115,6 +151,7 @@ if [ "$env" = local ]; then
   host=localhost port=5432 database=${DB_NAME:-matchmaker} user=matchmaker password=matchmaker
 
   for engine_port in "${ENGINES[@]}"; do
+    [ "$only_manifest" = true ] && break
     engine=${engine_port%%:*} engine_port=${engine_port##*:}
     url="http://localhost:$engine_port/games"
     character_url=""
@@ -172,6 +209,7 @@ else
   fi
 
   for engine_port in "${ENGINES[@]}"; do
+    [ "$only_manifest" = true ] && break
     engine=${engine_port%%:*}
     url=$(output "${engine}_create_game_url")
     external_id=$(output "${engine}_external_id")
@@ -184,6 +222,24 @@ else
     entries+=("$(entry "$engine" "$url" "$external_id" "$character_url" "$api_key")")
     summary+=("$engine|$url|$external_id|${character_url:--}|$([ -n "$api_key" ] && echo set || echo none)")
   done
+fi
+
+# The other repository's engines: read once, kept in this variable (it holds their API keys), and
+# never printed. Each is named in the summary by its definition's file name.
+if [ -n "$extra_manifest" ]; then
+  extra=$(cat "$extra_manifest")
+  jq -e 'type == "array" and all(.[]; (.definition | type == "string" and startswith("/"))
+           and (.url | type == "string") and (.externalId | type == "string"))' <<<"$extra" >/dev/null || {
+    echo "$extra_manifest is not a list of {definition (an absolute path), url, externalId, ...}" >&2
+    exit 1
+  }
+  while IFS= read -r i; do
+    entries+=("$(jq -c --argjson i "$i" '.[$i]' <<<"$extra")")
+    summary+=("$(jq -r --argjson i "$i" '.[$i]
+      | [(.definition | split("/") | last | sub("\\.json$"; "")), .url, .externalId, (.characterUrl // "-"),
+         (if (.apiKey // "") == "" then "none" else "set" end)]
+      | join("|")' <<<"$extra")")
+  done < <(jq -r 'keys[]' <<<"$extra")
 fi
 
 if [ ${#entries[@]} -eq 0 ]; then
