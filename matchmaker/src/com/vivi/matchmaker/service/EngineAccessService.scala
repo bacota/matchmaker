@@ -229,9 +229,11 @@ object EngineAccessService {
       * makes, inside its own transaction.
       *
       * Passes for an engine that is not restricted, an overall admin, an admin of the game, and a listed player. The
-      * restriction and the listing are both held FOR SHARE, so that opening the engine waits for nothing but taking the
-      * player off the list waits for the entry this permits. An engine restricted while this runs is restricted after
-      * it, which leaves the entry standing as any entry made before a restriction stands.
+      * restriction and the listing are both held FOR SHARE, so that opening the engine and taking the player off the
+      * list both wait for the entry this decides. Only the second needs to: an engine opened partway through an entry
+      * may let it in or refuse it, as either serial order would, so holding the restriction costs opening it a short
+      * wait and nothing more. An engine restricted while this runs is restricted after it, which leaves the entry
+      * standing as any entry made before a restriction stands.
       */
     def requireAllowed(repos: Repos, game: Game, player: Player, refusal: => String): IO[Unit] = {
         val engine = EngineId(game.externalId)
