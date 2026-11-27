@@ -791,7 +791,10 @@ object Tournaments {
                     characterId = chosen.now()
                   )
                 ),
-                busy
+                busy,
+                // A refusal may be the engine restricted since the barred games were read: read them again, so the
+                // code box replaces an Enter that would be refused every time.
+                onFailure = _ => { Store.refreshBarredGames(); () }
               )(_ => reload(d))
           ),
           declineButton(d, me)
