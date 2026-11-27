@@ -8,7 +8,7 @@ import java.time.Instant
 import java.util.Base64
 import munit.FunSuite
 import skunk.implicits._
-import skunk.codec.all.{bool, bytea, int8}
+import skunk.codec.all.{bool, bytea, int4, int8}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.model._
@@ -152,12 +152,11 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
               idToken = idTokenOf(sub),
               refreshToken = None
             )
+            // Searched for as bytes: converting a stored hash to text fails on any hash with a zero byte in it.
             asText <- TestSession.resource.use(
               _.unique(
-                sql"""SELECT count(*) FROM sign_in_handoff
-                      WHERE convert_from(code_hash, 'LATIN1') LIKE ${skunk.codec.all.text}"""
-                    .query(int8)
-              )("%" + made.code + "%")
+                sql"""SELECT count(*) FROM sign_in_handoff WHERE position($bytea IN code_hash) > 0""".query(int8)
+              )(made.code.getBytes(UTF_8))
             )
             stored <- isStored(made.code)
         } yield {
@@ -339,6 +338,39 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
         } yield {
             assert(!isOldStored)
             assert(isFreshStored)
+        }
+    }
+
+    // A redeem keeps the row it took locked while it sweeps. A sweep that waited on such a row could deadlock with that
+    // redeem's own sweep, so it passes over it instead.
+    check("a sweep passes over an expired row another transaction holds, rather than waiting for it") {
+        var at = Instant.parse("2030-01-01T00:00:00Z")
+        val handOffs = service(Logged(), () => at)
+        val sub = unique("sub")
+        for {
+            (gameId, _) <- game(isTrusted = true)
+            held <- handOffs.create(cognitoId = sub, gameId = gameId, idToken = idTokenOf(sub), refreshToken = None)
+            free <- handOffs.create(cognitoId = sub, gameId = gameId, idToken = idTokenOf(sub), refreshToken = None)
+            _ = at = at.plusSeconds(61)
+            _ <- TestSession.resource.use { holder =>
+                holder.transaction.use { xa =>
+                    holder.execute(sql"SELECT 1 FROM sign_in_handoff WHERE code_hash = $bytea FOR UPDATE".query(int4))(
+                      HandOffService.hashOf(held.code)
+                    ) >>
+                        // A sweep that waited for the held row fails here with a lock timeout, rather than hanging
+                        // until the holder lets go.
+                        TestSession.resource.use { sweeper =>
+                            sweeper.execute(sql"SET lock_timeout = '10s'".command) >>
+                                new HandOffRepo(sweeper).deleteExpired(at)
+                        } >>
+                        xa.rollback.void
+                }
+            }
+            isHeldStored <- isStored(held.code)
+            isFreeStored <- isStored(free.code)
+        } yield {
+            assert(isHeldStored, "the held row was not passed over")
+            assert(!isFreeStored, "the row nobody held was not swept")
         }
     }
 

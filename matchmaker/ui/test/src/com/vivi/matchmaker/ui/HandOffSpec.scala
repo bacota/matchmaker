@@ -5,7 +5,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import munit.FunSuite
 import org.scalajs.dom.URLSearchParams
 import com.vivi.matchmaker.api.Json
-import com.vivi.matchmaker.model.GameId
+import com.vivi.matchmaker.model.{GameId, WebUrl}
 
 /** Handing the session to a game engine's page by a one-time code in the url's fragment — `Auth.handOff`
   * (design/sign-in-handoff.md).
@@ -120,6 +120,26 @@ class HandOffSpec extends FunSuite {
           fresh = noRefresh,
           create = Codes().create
         ).map(handedUrl => assert(handedUrl.startsWith(local + "#handoff="), handedUrl))
+    }
+
+    // `WebUrl.isSecure` ignores case with `toLowerCase` and a `(?i)` regex, which Scala.js compiles to JavaScript's
+    // own: this pins it down in the browser build, where the server's `WebUrlSpec` does not run.
+    test("the scheme and host are matched whatever their case, as on the server") {
+        val upper = "HTTP://LOCALHOST:8081/matches/m-1/play"
+        Auth.handOff(
+          url = upper,
+          gameId = game,
+          isTrusted = true,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh,
+          create = Codes().create
+        ).map { handedUrl =>
+            assert(handedUrl.startsWith(upper + "#handoff="), handedUrl)
+            assert(WebUrl.isSecure("HTTPS://engine.example/"))
+            assert(!WebUrl.isSecure("HTTP://ENGINE.EXAMPLE/"))
+            assert(!WebUrl.isSecure("HTTP://LOCALHOST.EVIL.EXAMPLE/"))
+        }
     }
 
     // Also what a refresh Cognito refused ends with: `freshIdToken` has cleared the session by then.

@@ -68,10 +68,16 @@ class HandOffRepo(session: Session[IO]) {
               )
             )
 
+    /* Rows another transaction holds are skipped, not waited for. A redeem holds the row it took until it commits, and
+     * sweeps in the same transaction: if that row had expired, two sweeps waiting on each other's taken rows would be
+     * a deadlock, and Postgres would abort one of them. A skipped row is left for the next sweep, if its holder rolls
+     * back rather than deleting it. */
     private val deleteExpiredRows: Command[Instant] =
-        sql"""DELETE FROM sign_in_handoff WHERE expires_at < $instant""".command
+        sql"""DELETE FROM sign_in_handoff WHERE code_hash IN (
+            SELECT code_hash FROM sign_in_handoff WHERE expires_at < $instant FOR UPDATE SKIP LOCKED
+          )""".command
 
-    /** Deletes every hand-off that expired before `now`. */
+    /** Deletes every hand-off that expired before `now`, but for any another transaction holds. */
     def deleteExpired(now: Instant): IO[Unit] = session.execute(deleteExpiredRows)(now).void
 
     private val selectTrust: Query[GameId, Boolean] =
