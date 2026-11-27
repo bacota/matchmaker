@@ -92,17 +92,21 @@ class HandOffService(
       * a made-up one look alike to the caller.
       *
       * Rows already expired are deleted here too, not only by [[create]], so a code nobody redeemed does not keep its
-      * row until the next one is made: on a quiet day that could be long enough to reach a snapshot.
+      * row until the next one is made: on a quiet day that could be long enough to reach a snapshot. The take and the
+      * sweep are one transaction, so a sweep that fails rolls the take back and the code can still be redeemed, rather
+      * than being spent on an answer the engine never got.
       */
     def redeem(code: String, callerExternalId: String): IO[HandedOff] =
         for {
             takenAt <- sessionPool.use { session =>
                 val handOffs = Repos(session).handOffs
-                for {
-                    taken <- handOffs.take(hashOf(code))
-                    at <- IO(now())
-                    _ <- handOffs.deleteExpired(at)
-                } yield (taken, at)
+                session.transaction.use { _ =>
+                    for {
+                        taken <- handOffs.take(hashOf(code))
+                        at <- IO(now())
+                        _ <- handOffs.deleteExpired(at)
+                    } yield (taken, at)
+                }
             }
             (taken, at) = takenAt
             answer <- taken match {
