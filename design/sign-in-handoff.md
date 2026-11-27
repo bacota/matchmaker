@@ -65,6 +65,9 @@ engine page   ◀── {idToken, refreshToken?} ── stored as a sign-in, as 
   popup opened later and the code takes a request, clears the tab's `opener` by hand (`noopener` would make
   `window.open` answer `null`), and sends the tab to `PLAY_URL#handoff=CODE` once the code is made. With no session, or
   a code that could not be made, it sends the tab to the bare url, and the engine's page asks the player to sign in.
+  It makes a code only for an https url, or plain http to `localhost`, `127.0.0.1` or `[::1]` for local runs
+  (`WebUrl.isSecure`). Someone in the network path of a plain-http page could inject a script that reads the code from
+  `location.hash` and spends it at the engine's open `POST /api/handoff`. Any other http url gets the bare url.
 - An engine's page (`SignIn.takeHandOff`, the script `engines/common` writes) reads `#handoff=`, clears the fragment at
   once with `history.replaceState`, and posts the code to its engine's `POST /api/handoff` (`EngineRoutes`, through
   `HandOffs` and `Matchmaker.redeemHandOff`). Until the answer comes the tab counts as signed in and asking for a token

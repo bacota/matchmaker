@@ -8,7 +8,7 @@ import scala.util.{Failure, Success, Try}
 import org.scalajs.dom
 import org.scalajs.dom.{HttpMethod, RequestInit, URLSearchParams}
 import com.vivi.matchmaker.api.Json
-import com.vivi.matchmaker.model.GameId
+import com.vivi.matchmaker.model.{GameId, WebUrl}
 
 /** Sign-in against the Cognito user pools API, with the hosted pages kept for sign-up and reset.
   *
@@ -220,6 +220,10 @@ object Auth {
       * too. It lasts as long as the session does, where the ID token runs out within the hour, so an engine nobody has
       * vouched for is handed the ID token alone, and asks the player to sign in again once it expires.
       *
+      * A code goes only to a page the network cannot rewrite on the way (`WebUrl.isSecure`): https, or http to this
+      * machine for local runs. A script injected into a plain-http page could read the code from its fragment and spend
+      * it at the engine, where the code alone signs the player in. Any other url is answered as it is.
+      *
       * A url that already carries a fragment is the engine's own business and is left alone. With no session, or a
       * session that could not be refreshed, or a code that could not be made, the url is answered as it is: the
       * engine's page then asks the player to sign in.
@@ -248,7 +252,7 @@ object Auth {
         fresh: () => Future[Option[String]],
         create: Json.HandOffRequest => Future[Json.HandOff]
     ): Future[String] =
-        if (url.contains("#")) Future.successful(url)
+        if (url.contains("#") || !WebUrl.isSecure(url)) Future.successful(url)
         else
             current
                 .fold(fresh())(id => Future.successful(Some(id)))

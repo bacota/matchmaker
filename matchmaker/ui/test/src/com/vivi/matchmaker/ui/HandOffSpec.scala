@@ -96,6 +96,32 @@ class HandOffSpec extends FunSuite {
         ).map(assertEquals(_, own))
     }
 
+    test("a plain-http url is opened as it is, and no code is made for it") {
+        val plain = "http://engine.example/matches/m-1/play"
+        Auth.handOff(
+          url = plain,
+          gameId = game,
+          isTrusted = true,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh,
+          create = noCode
+        ).map(assertEquals(_, plain))
+    }
+
+    test("an http url to this machine, as local runs use, is handed a code") {
+        val local = "http://localhost:8081/matches/m-1/play"
+        Auth.handOff(
+          url = local,
+          gameId = game,
+          isTrusted = true,
+          current = Some("id-1"),
+          refresh = () => Some("r-1"),
+          fresh = noRefresh,
+          create = Codes().create
+        ).map(handedUrl => assert(handedUrl.startsWith(local + "#handoff="), handedUrl))
+    }
+
     // Also what a refresh Cognito refused ends with: `freshIdToken` has cleared the session by then.
     test("with no session at all, the url is opened as it is") {
         Auth.handOff(
