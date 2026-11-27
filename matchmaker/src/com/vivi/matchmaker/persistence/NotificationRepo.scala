@@ -26,9 +26,11 @@ case class Seat(participantId: ParticipantId, player: Player, preferences: SeatN
   * have no business naming that. Its name is the one fact about a game that writing to its players actually uses.
   */
 /** What writing to a game's players needs to know about the game: `name` is what players call it (`display_name`), and
-  * `handle` its fixed short name (`Game.name`), by which a game site lists it.
+  * `handle` its fixed short name (`Game.name`), by which a game site lists it. `siteOrigin` is the game site the
+  * tournament written about was made on (`tournament.site_origin`), read in the same query so that choosing where mail
+  * sends people costs no read of its own.
   */
-case class GameNotice(gameId: GameId, name: String, handle: String)
+case class GameNotice(gameId: GameId, name: String, handle: String, siteOrigin: Option[String])
 
 /** The `notify_*` columns of `player`, `participant` and `player_game`.
   *
@@ -47,6 +49,7 @@ class NotificationRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
+    private val tournamentId = SkunkIdCodecs.tournamentId
     private val participantId = SkunkIdCodecs.participantId
     private val preferences = SkunkCodecs.notificationPreferences
     private val seatAnswers = SkunkCodecs.seatNotifications
@@ -305,16 +308,24 @@ class NotificationRepo(session: Session[IO]) {
     def gameExists(id: GameId): IO[Boolean] = session.option(selectGameExists)(id).map(_.isDefined)
 
     /* A game's name as players see it, for the same reason as above: the notification path needs
-     * a game, and `GameRepo` cannot be built without naming the type of its parameter values. */
-    private val selectGameNotice: Query[GameId, GameNotice] =
-        sql"""SELECT game_id, display_name, name
-          FROM game
-          WHERE game_id = $gameId"""
-            .query(gameId *: text *: text)
-            .map { case (id, name, handle) => GameNotice(gameId = id, name = name, handle = handle) }
+     * a game, and `GameRepo` cannot be built without naming the type of its parameter values. With
+     * the site its tournament was made on, joined rather than read apart: a match's mail is sent on
+     * every move. LEFT, so that a game is found even if the tournament is not. */
+    private val selectGameNotice: Query[(GameId, TournamentId), GameNotice] =
+        sql"""SELECT g.game_id, g.display_name, g.name, t.site_origin
+          FROM game g
+          LEFT JOIN tournament t ON t.game_id = g.game_id AND t.tournament_id = $tournamentId
+          WHERE g.game_id = $gameId"""
+            .query(gameId *: text *: text *: text.opt)
+            .contramap[(GameId, TournamentId)]((game, tournament) => (tournament, game))
+            .map { case (id, name, handle, origin) =>
+                GameNotice(gameId = id, name = name, handle = handle, siteOrigin = origin)
+            }
 
-    /** What writing to a game's players needs to know about the game. */
-    def gameNotice(id: GameId): IO[Option[GameNotice]] = session.option(selectGameNotice)(id)
+    /** What writing to a game's players about one of its tournaments needs to know about the game and the tournament.
+      */
+    def gameNotice(gameId: GameId, tournamentId: TournamentId): IO[Option[GameNotice]] =
+        session.option(selectGameNotice)((gameId, tournamentId))
 
     /** What this player has said about notifications in general. A row of NULLs reads as `unset`, which is a player who
       * has never opened the form — indistinguishable from one who opened it and chose "Use Default" for everything, and
