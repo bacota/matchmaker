@@ -8,7 +8,11 @@ import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{Generators, TestSession}
+import com.vivi.matchmaker.persistence.{GameRepo, Generators, TestSession}
+import scala.concurrent.duration._
+import skunk._
+import skunk.codec.all.{bool, int4, text}
+import skunk.implicits._
 import com.vivi.matchmaker.util.Site
 
 class GameServiceSpec extends PropertySuite {
@@ -355,6 +359,46 @@ class GameServiceSpec extends PropertySuite {
             case other                                     => fail(s"expected the game already registered, got $other")
         }
         assertEquals(listed, 1)
+    }
+
+    // An edit that moves a game to another engine identity takes that identity's lock, as a new game does: otherwise
+    // registerUnlessPresent could find no game with it just before the edit commits, and insert a second one. The
+    // lock is held here in a transaction of the test's own, and the edit must be seen queued behind it in pg_locks
+    // rather than finishing while it is held.
+    test("an edit that changes a game's engine identity waits for that identity's lock") {
+        val queuedQuery: Query[(Int, String), Boolean] =
+            sql"""SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+                  AND classid = ${int4}::oid AND objid = hashtext($text)::oid AND objsubid = 2)""".query(bool)
+
+        val result = for {
+            admin <- makeAdmin()
+            made <- gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = Generators.genGameWithRole.sample.get
+            )
+            identity = genUniqueString.sample.get
+            edit = gameService.createOrUpdate(
+              externalUserId = admin.externalId,
+              game = made.copy(externalId = identity)
+            )
+            held <- TestSession.resource.use { holder =>
+                holder.transaction.use { _ =>
+                    val queued = holder.unique(queuedQuery)((GameRepo.IdentityLockSpace, identity))
+                    lazy val untilQueued: IO[Unit] =
+                        queued.flatMap(isQueued => if (isQueued) IO.unit else IO.sleep(50.millis) *> untilQueued)
+                    for {
+                        _ <- new GameRepo[String](holder).lockIdentity(identity)
+                        editing <- edit.start
+                        // A ceiling for a hung wait, not a budget.
+                        waited <- IO.race(editing.join, untilQueued).timeout(30.seconds)
+                    } yield (waited.isRight, editing)
+                }
+            }
+            (isQueued, editing) = held
+            edited <- editing.joinWithNever
+        } yield (isQueued, edited.externalId == identity)
+
+        assertEquals(result.unsafeRunSync(), (true, true))
     }
 
     // A site's games are kept, not asked for on every list: a game of its name registered after the first look

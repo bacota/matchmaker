@@ -97,9 +97,15 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     repos
                         .games[T]
                         .lockForUpdate(trimmed.gameId) *> repos.games[T].read(trimmed.gameId).flatMap {
-                        case None => IO.raiseError(NotFoundError(ErrorText.game.notFound))
+                        case None           => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                         case Some(existing) =>
-                            checkRoles(
+                            // An edit that moves the game to another engine identity takes that identity's lock, as a
+                            // new game does: otherwise `registerUnlessPresent` could find no game with it, this edit
+                            // commit, and the registration insert a second game for the same engine. After the row
+                            // lock, never before it; nothing takes an identity lock and then a game's row lock.
+                            IO.whenA(existing.externalId != trimmed.externalId)(
+                              repos.games[T].lockIdentity(trimmed.externalId)
+                            ) *> checkRoles(
                               existing = existing,
                               incoming = trimmed,
                               tournaments = repos.tournaments
