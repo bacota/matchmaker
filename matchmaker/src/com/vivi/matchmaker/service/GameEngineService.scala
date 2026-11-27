@@ -119,7 +119,10 @@ class GameEngineService[T](
               ),
               canTie = Option.when(!tiesAllowed)(false)
             )
-            response <- engine.createGame(gameUrl = game.url, apiKey = apiKey, request = request).onError(_ => undo)
+            response <- engine
+                .createGame(gameUrl = game.url, apiKey = apiKey, request = request)
+                .flatTap(requireWebUrls(game, _))
+                .onError(_ => undo)
             withUrls = saved.copy(
               statusUrl = Some(response.statusUrl),
               playUrl = Some(response.playUrl),
@@ -389,6 +392,22 @@ class GameEngineService[T](
         if (m.timeLimit.isDefined && m.timeLimitKind == TimeLimitKind.Total)
             repos.turns.timeUsed(m.gameId, m.matchId)
         else IO.pure(Map.empty)
+
+    /* Every url the engine answered with, refused unless it is an http or https one (`WebUrl`): the play and public
+     * urls are opened in a tab from matchmaker's own page and put in mail, where a `javascript:` url would run with the
+     * player's session to hand. A GameEngineError, as any other answer from the engine that cannot be used. */
+    private def requireWebUrls(game: Game, response: CreateGameResponse): IO[Unit] = {
+        val urls = List("statusUrl" -> Some(response.statusUrl), "playUrl" -> Some(response.playUrl)) ++
+            List("publicUrl" -> response.publicUrl, "cancelUrl" -> response.cancelUrl)
+        urls.collect { case (name, Some(url)) if !WebUrl.isWeb(url) => name } match {
+            case Nil => IO.unit
+            case bad =>
+                IO.raiseError(
+                  GameEngineError(s"the engine of game ${game.name} answered create-game with ${bad
+                          .mkString(", ")} not an http or https url")
+                )
+        }
+    }
 
     /* The last step of a start: record the urls the engine gave back, and answer the match as it
      * stands now, with them. The urls only: `withUrls` is the match as it was written before the

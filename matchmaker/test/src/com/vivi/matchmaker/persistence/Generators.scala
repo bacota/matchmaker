@@ -58,7 +58,7 @@ object Generators {
             url <- genString
             active <- Gen.oneOf(true, false)
             externalId <- genUniqueString
-            characterUrl <- Gen.option(genString)
+            characterUrl <- Gen.option(genString.map(path => s"https://characters.example.com/$path"))
             trusted <- Gen.oneOf(true, false)
             // Two required roles, always, so that every seat names one. Two rather than one because two
             // players in one match may not share a role.

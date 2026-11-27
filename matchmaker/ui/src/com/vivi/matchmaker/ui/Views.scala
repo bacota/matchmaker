@@ -501,8 +501,16 @@ object Views {
       * once its one-time code has been made, which takes a request. `noopener` cannot be asked of `window.open` here,
       * since it would answer `null` and leave nothing to send there later, so the new tab's `opener` is cleared by
       * hand, which keeps the engine's page from reaching back into this one all the same.
+      *
+      * That blank tab is of this origin and was given a copy of this tab's `sessionStorage`, tokens and all, so it is
+      * sent only to an http or https url (`WebUrl`): a `javascript:` url from an engine would run there with them. The
+      * server refuses one where it comes in; this is the check at the point it would do harm.
       */
-    private[ui] def openSignedIn(url: String, gameId: GameId, isTrusted: Boolean): Unit = {
+    private[ui] def openSignedIn(url: String, gameId: GameId, isTrusted: Boolean): Unit =
+        if (!WebUrl.isWeb(url)) Store.reportProblem(ErrorText.matchView.notWebUrl)
+        else openWebSignedIn(url = url, gameId = gameId, isTrusted = isTrusted)
+
+    private def openWebSignedIn(url: String, gameId: GameId, isTrusted: Boolean): Unit = {
         val tab = Option(dom.window.open("", "_blank"))
         tab.foreach { t =>
             t.asInstanceOf[scala.scalajs.js.Dynamic].opener = null
@@ -514,7 +522,10 @@ object Views {
         }
         Auth.handOff(url = url, gameId = gameId, isTrusted = isTrusted).foreach { target =>
             tab match {
-                case Some(t) => t.location.href = target
+                // `target` is `url` with a fragment added, so it is a web url too; checked again all the same, since a
+                // tab of this origin sent anywhere else hands over the session.
+                case Some(t) if WebUrl.isWeb(target) => t.location.href = target
+                case Some(t)                         => t.close()
                 // The browser refused the blank tab: try once more with the page itself.
                 case None => dom.window.open(target, "_blank", "noopener,noreferrer")
             }

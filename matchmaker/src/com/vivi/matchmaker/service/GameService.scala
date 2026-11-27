@@ -300,6 +300,10 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             // Its display name falls back to it, and a blank one is a constraint violation rather
             // than an explanation.
             _ <- IO.raiseWhen(game.name.isEmpty)(ValidationError(ErrorText.game.blankName))
+            // Opened in a tab from matchmaker's own page: a `javascript:` url would run there (`WebUrl`).
+            _ <- IO.raiseWhen(game.characterUrl.exists(url => !WebUrl.isWeb(url)))(
+              ValidationError(ErrorText.game.characterUrlNotWeb(game.name))
+            )
             // The engine's identity: what its callbacks are matched against. A game without one can be
             // started but never heard from again.
             _ <- IO.raiseWhen(game.externalId.isEmpty)(

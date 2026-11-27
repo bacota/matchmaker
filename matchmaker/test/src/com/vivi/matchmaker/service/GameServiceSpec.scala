@@ -187,6 +187,22 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    // Opened in a tab of matchmaker's own origin, where a `javascript:` url would run with the player's session.
+    test("createOrUpdate refuses a character url that is not http or https") {
+        val result = for {
+            admin <- makeAdmin()
+            game <- IO(Generators.genGameWithRole.sample.get)
+            attempt <- gameService
+                .createOrUpdate(
+                  externalUserId = admin.externalId,
+                  game = game.copy(characterUrl = Some("javascript:alert(document.cookie)"))
+                )
+                .attempt
+        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+        assert(result.unsafeRunSync())
+    }
+
     test("createOrUpdate stores a game's display name trimmed, and a blank one as the name") {
         val result = for {
             admin <- makeAdmin()
