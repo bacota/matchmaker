@@ -31,9 +31,10 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         sessionPool.use { session =>
             // A game is its rows plus its roles, parameters and parameter values; the repo writes
             // them as separate statements, so the transaction that makes them one change lives here.
-            session.transaction.use(_ =>
-                save(repos = Repos(session), externalUserId = externalUserId, game = game, apiKey = apiKey)
-            )
+            session.transaction.use { _ =>
+                val repos = Repos(session)
+                authorize(repos.players, externalUserId) *> save(repos = repos, game = game, apiKey = apiKey)
+            }
         }
 
     /** Creates `game` unless a game with its engine identity (`externalId`) is already registered, which is left as it
@@ -59,20 +60,18 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                 case None        => IO.raiseError(NotFoundError(ErrorText.game.notFound))
                             }
                         case None =>
-                            save(repos = repos, externalUserId = externalUserId, game = game, apiKey = apiKey)
-                                .map(GameRegistration.Registered(_))
+                            save(repos = repos, game = game, apiKey = apiKey).map(GameRegistration.Registered(_))
                     }
                 } yield registered
             }
         }
 
-    /** [[createOrUpdate]]'s work, inside the caller's transaction. */
-    private def save(repos: Repos, externalUserId: String, game: Game, apiKey: Option[String]): IO[Game] =
+    /** [[createOrUpdate]]'s work, inside the caller's transaction, once the caller has been authorized. */
+    private def save(repos: Repos, game: Game, apiKey: Option[String]): IO[Game] = {
+        // Trimmed before it is checked, so that "  attacker  " and "attacker" are refused as the
+        // duplicate they are rather than stored as two roles that read identically.
+        val trimmed = normalize(game)
         for {
-            _ <- authorize(repos.players, externalUserId)
-            // Trimmed before it is checked, so that "  attacker  " and "attacker" are refused as the
-            // duplicate they are rather than stored as two roles that read identically.
-            trimmed = normalize(game)
             _ <- validate(trimmed)
             newKey = apiKey.map(_.trim).filter(_.nonEmpty)
             // The same floor the engine module puts on the key it is given: this is the only thing
@@ -123,6 +122,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 }
             )
         } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
+    }
 
     /** Every stored engine key, filed under the engine identity of its game: what a game engine's callback is
       * authenticated against. Asked by the authenticator before there is any caller to authorize, which is why it takes
