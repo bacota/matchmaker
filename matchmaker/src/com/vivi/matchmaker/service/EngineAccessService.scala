@@ -154,9 +154,9 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                           code = Some(found.code.codeId)
                         )
                         _ <- IO.whenA(isNew)(repos.engineAccess.countUse(found.code.codeId))
-                        ids <- repos.games[T].readIdsByExternalId(found.engine.value)
-                        games <- ids.traverse(repos.games[T].read)
-                    } yield RedeemedAccess(games.flatten.map(_.displayName))
+                        // Plainly: the names are only for telling the caller, not for deciding the write.
+                        names <- repos.games[T].readDisplayNamesByExternalId(found.engine.value)
+                    } yield RedeemedAccess(names)
                 }
             }
     }
