@@ -739,13 +739,21 @@ object Tournaments {
           else
               // A restricted engine's game the caller has not been let into: the code that lets them in, where the
               // entry would be. Redrawn only when that answer changes. A code redeemed here takes the form, and the
-              // focus on its button, away: the focus goes to the entry row's first control instead.
+              // focus on its button, away: the focus goes to the entry row's first control instead, if it fell.
               {
                   lazy val entry: HtmlElement = div(child <-- Store.isBarred(t.gameId).map { isBarred =>
                       if (isBarred)
                           div(
                             p(cls := "detail", ErrorText.engineAccess.notAllowed(game = d.summary.gameName)),
-                            EngineAccessViews.redeemForm(replacedBy = Some(() => focusFirstControl(entry)))
+                            EngineAccessViews.redeemForm(replacedBy =
+                                Some(() =>
+                                    // Only if the redeem did take the form away, and the focus with it: the code may
+                                    // have let them into another game, or the re-read failed, and the player may have
+                                    // moved on meanwhile.
+                                    if (!Store.barredGames.now().contains(t.gameId) && Views.hasFocusFallen)
+                                        focusFirstControl(entry)
+                                )
+                            )
                           )
                       else
                           enterRow(
