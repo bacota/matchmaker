@@ -105,6 +105,7 @@ object Store {
         gameAdminsByGame.set(Map.empty)
         barredGames.set(Set.empty)
         engineAccessByGame.set(Map.empty)
+        freshAccessCodes.set(Map.empty)
         myTournaments.set(Seq.empty)
         myEndedTournaments.set(Seq.empty)
         endedFrame.set(CompletedFrame.Day)
@@ -411,6 +412,13 @@ object Store {
         reload(ApiClient.engineAccess(gameId), Fetch.EngineAccess(gameId))(a =>
             engineAccessByGame.update(_.updated(gameId, a))
         )
+
+    /** The access code each game's admin made last, kept here rather than in the form: the server holds only its hash,
+      * so it is shown until another is made or the session ends, even if the section is rebuilt or the answer lands
+      * after the admin has moved to another screen. Written through `runSignedIn`, so a late answer is dropped after a
+      * sign-out.
+      */
+    val freshAccessCodes: Var[Map[GameId, String]] = Var(Map.empty)
 
     private def isAdminIn(byGame: Map[GameId, Seq[GameAdmin]], gameId: GameId, player: Player): Boolean =
         player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId))

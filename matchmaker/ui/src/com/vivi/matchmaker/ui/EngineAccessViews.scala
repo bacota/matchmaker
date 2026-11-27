@@ -211,8 +211,8 @@ object EngineAccessViews {
         val labelText = Var("")
         val maxUses = Var("")
         val days = Var("")
-        // The code just made, shown once: it is stored only as a hash, and nobody can see it again.
-        val made = Var(Option.empty[String])
+        // The code just made: it is stored only as a hash, and nobody can see it again.
+        val made = Store.freshAccessCodes.signal.map(_.get(gameId)).distinct
         val codeTag = com.raquo.laminar.api.L.code
         def numberBox(v: Var[String]): HtmlElement =
             input(
@@ -243,8 +243,10 @@ object EngineAccessViews {
                         days.now().trim.toIntOption.map(d => java.time.Instant.now().plusSeconds(d.toLong * 86400))
                   )
                   Store.runSignedIn(ApiClient.createAccessCode(gameId, request), busy) { answer =>
-                      made.set(Some(answer.code))
-                      said.set(s"Code “${answer.access.label}” made. Copy it now: it will not be shown again.")
+                      Store.freshAccessCodes.update(_.updated(gameId, answer.code))
+                      said.set(
+                        s"Code “${answer.access.label}” made. Copy it now: it is shown only until you make another or sign out."
+                      )
                       labelText.set("")
                       maxUses.set("")
                       days.set("")
@@ -254,7 +256,7 @@ object EngineAccessViews {
           ),
           div(
             aria.live := "polite",
-            child <-- made.signal.map {
+            child <-- made.map {
                 case None => emptyNode
                 case Some(fresh) =>
                     p(

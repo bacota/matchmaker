@@ -83,8 +83,9 @@ object Tournaments {
                   Store.administers(game.gameId, player).map(if (_) formatsSection(game, player) else emptyNode)
               case None => Val(emptyNode)
           },
-          // Who may play the game's engine, for whoever administers it.
-          child <-- Store.currentPlayer.flatMapSwitch {
+          // Who may play the game's engine, for whoever administers it. Rebuilt only when who that is changes, not on
+          // every change to the player (a rename), which would close the section and drop what it holds.
+          child <-- Store.currentPlayer.distinctBy(_.map(p => (p.playerId, p.isAdmin))).flatMapSwitch {
               case Some(player) =>
                   Store
                       .administers(game.gameId, player)
