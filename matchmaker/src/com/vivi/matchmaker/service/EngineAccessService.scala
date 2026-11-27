@@ -31,7 +31,8 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                 engine = EngineId(game.externalId)
                 isRestricted <- repos.engineAccess.isRestricted(engine)
                 players <- repos.engineAccess.listPlayers(engine)
-                codes <- repos.engineAccess.listCodes(engine)
+                now <- IO.realTimeInstant
+                codes <- repos.engineAccess.listCodes(engine, now)
             } yield EngineAccess(isRestricted = isRestricted, players = players, codes = codes)
         }
 

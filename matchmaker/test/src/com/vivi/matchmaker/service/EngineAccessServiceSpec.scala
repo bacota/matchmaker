@@ -2,13 +2,14 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.Instant
 import skunk.implicits._
 import skunk.codec.all._
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo, Repos, TestSession}
+import com.vivi.matchmaker.persistence.{EngineAccessRepo, GameRepo, PlayerRepo, Repos, TestSession}
 
 class EngineAccessServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -200,6 +201,26 @@ class EngineAccessServiceSpec extends PropertySuite {
         } yield (seen.codes.map(_.uses), refused))
         assertEquals(uses, List(1))
         assert(refused.isInstanceOf[ValidationError], refused)
+    }
+
+    test("the code list keeps every live code and only the newest dead ones") {
+        val dead = EngineAccessRepo.DeadCodesListed + 1
+        def make(f: Fixture, label: String) =
+            access.createCode(
+              gameId = f.game.gameId,
+              label = label,
+              maxUses = None,
+              expiresAt = None,
+              callerExternalId = f.host.externalId
+            )
+        val (live, deadLabels, listed) = run(for {
+            f <- fixture()
+            live <- make(f, "still open")
+            revoked <- (1 to dead).toList.traverse(n => make(f, s"spent $n"))
+            _ <- revoked.traverse(r => access.revokeCode(f.game.gameId, r.access.codeId, f.host.externalId))
+            seen <- access.access(f.game.gameId, f.host.externalId)
+        } yield (live, revoked.map(_.access.label), seen.codes.map(_.label)))
+        assertEquals(listed, deadLabels.drop(1).reverse :+ live.access.label)
     }
 
     test("a revoked, an expired and an unknown code are refused alike") {
