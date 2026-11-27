@@ -61,11 +61,17 @@ locals {
   #
   # The public board is open in the same way, and discloses no more than a watcher may know: that
   # a player has moved, never what, while the move is still to be answered.
+  #
+  # The sign-in hand-off (design/sign-in-handoff.md) is open too: the page posts the one-time code
+  # matchmaker put in its url before it has any token, so the code is the credential. The engine
+  # redeems it with matchmaker under the game's API key, and a code is single-use and lives a
+  # minute.
   open_routes = concat([
     "GET /matches/{matchId}/play",
     "GET /matches/{matchId}/board",
     "GET /matches/{matchId}/board/state",
     "GET /auth/callback",
+    "POST /api/handoff",
     "GET /health",
   ], var.extra_open_routes)
 
