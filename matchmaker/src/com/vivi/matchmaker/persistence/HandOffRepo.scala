@@ -16,11 +16,12 @@ class HandOffRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val instant = SkunkCodecs.instant
 
-    /* The tokens are redacted: a refused insert (the game deleted since its trust was read, say) raises an error whose
-     * message lists every argument not redacted, and that message is logged. Nothing logs a token. */
-    private val insertRow: Command[(Array[Byte], GameId, String, String, Option[String], Instant)] =
-        sql"""INSERT INTO sign_in_handoff (code_hash, game_id, cognito_id, id_token, refresh_token, expires_at)
-          VALUES ($bytea, $gameId, $text, ${text.redacted}, ${text.opt.redacted}, $instant)""".command
+    /* The sealed tokens are redacted all the same: a refused insert (the game deleted since its trust was read, say)
+     * raises an error whose message lists every argument not redacted, and that message is logged. */
+    private val insertRow: Command[(Array[Byte], GameId, String, Array[Byte], Option[Array[Byte]], Instant)] =
+        sql"""INSERT INTO sign_in_handoff
+            (code_hash, game_id, cognito_id, id_token_sealed, refresh_token_sealed, expires_at)
+          VALUES ($bytea, $gameId, $text, ${bytea.redacted}, ${bytea.opt.redacted}, $instant)""".command
 
     def insert(handOff: NewHandOff): IO[Unit] =
         session
@@ -29,8 +30,8 @@ class HandOffRepo(session: Session[IO]) {
                 handOff.codeHash,
                 handOff.gameId,
                 handOff.cognitoId,
-                handOff.idToken,
-                handOff.refreshToken,
+                handOff.idTokenSealed,
+                handOff.refreshTokenSealed,
                 handOff.expiresAt
               )
             )
@@ -39,26 +40,27 @@ class HandOffRepo(session: Session[IO]) {
     /* Deleted and read in one statement, so that of any number of calls racing for one code exactly one gets its row.
      * The game's engine identity comes along, for the caller to be checked against, and its trust as it is now. */
     private val deleteReturning
-        : Query[Array[Byte], (GameId, String, String, Option[String], Instant, String, Boolean)] =
+        : Query[Array[Byte], (GameId, String, Array[Byte], Option[Array[Byte]], Instant, String, Boolean)] =
         sql"""WITH taken AS (
             DELETE FROM sign_in_handoff WHERE code_hash = $bytea
-            RETURNING game_id, cognito_id, id_token, refresh_token, expires_at
+            RETURNING game_id, cognito_id, id_token_sealed, refresh_token_sealed, expires_at
           )
-          SELECT t.game_id, t.cognito_id, t.id_token, t.refresh_token, t.expires_at, g.external_id, g.is_trusted
+          SELECT t.game_id, t.cognito_id, t.id_token_sealed, t.refresh_token_sealed, t.expires_at, g.external_id,
+            g.is_trusted
           FROM taken t JOIN game g ON g.game_id = t.game_id"""
-            .query(gameId *: text *: text *: text.opt *: instant *: text *: bool)
+            .query(gameId *: text *: bytea *: bytea.opt *: instant *: text *: bool)
 
     /** The hand-off whose code hashes to `codeHash`, deleted as it is read: a code is taken at most once. */
     def take(codeHash: Array[Byte]): IO[Option[TakenHandOff]] =
         session
             .option(deleteReturning)(codeHash)
             .map(
-              _.map((game, cognitoId, idToken, refreshToken, expiresAt, externalId, isTrusted) =>
+              _.map((game, cognitoId, idTokenSealed, refreshTokenSealed, expiresAt, externalId, isTrusted) =>
                   TakenHandOff(
                     gameId = game,
                     cognitoId = cognitoId,
-                    idToken = idToken,
-                    refreshToken = refreshToken,
+                    idTokenSealed = idTokenSealed,
+                    refreshTokenSealed = refreshTokenSealed,
                     expiresAt = expiresAt,
                     engineExternalId = externalId,
                     isGameTrusted = isTrusted
@@ -83,12 +85,15 @@ class HandOffRepo(session: Session[IO]) {
 
 object HandOffRepo {
 
+    /** A hand-off to store. Its tokens come sealed, under a key derived from the code (`HandOffService.seal`): this
+      * repo never sees them as they are.
+      */
     case class NewHandOff(
         codeHash: Array[Byte],
         gameId: GameId,
         cognitoId: String,
-        idToken: String,
-        refreshToken: Option[String],
+        idTokenSealed: Array[Byte],
+        refreshTokenSealed: Option[Array[Byte]],
         expiresAt: Instant
     )
 
@@ -98,8 +103,8 @@ object HandOffRepo {
     case class TakenHandOff(
         gameId: GameId,
         cognitoId: String,
-        idToken: String,
-        refreshToken: Option[String],
+        idTokenSealed: Array[Byte],
+        refreshTokenSealed: Option[Array[Byte]],
         expiresAt: Instant,
         engineExternalId: String,
         isGameTrusted: Boolean

@@ -81,13 +81,30 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
           )
         )
 
-    private def storedRefreshToken(code: String): IO[Option[Option[String]]] =
+    /** Whether `code`'s row holds a refresh token, or `None` if there is no row. */
+    private def hasStoredRefreshToken(code: String): IO[Option[Boolean]] =
         TestSession.resource.use(
           _.option(
-            sql"SELECT refresh_token FROM sign_in_handoff WHERE code_hash = $bytea"
-                .query(skunk.codec.all.text.opt)
+            sql"SELECT refresh_token_sealed IS NOT NULL FROM sign_in_handoff WHERE code_hash = $bytea".query(bool)
           )(HandOffService.hashOf(code))
         )
+
+    /** `code`'s row as Postgres writes it out as text, with its sealed columns read byte for byte as well. */
+    private def storedRowText(code: String): IO[String] =
+        TestSession.resource
+            .use(
+              _.unique(
+                sql"""SELECT h::text, id_token_sealed, refresh_token_sealed
+                      FROM sign_in_handoff h WHERE code_hash = $bytea"""
+                    .query(skunk.codec.all.text *: bytea *: bytea.opt)
+              )(HandOffService.hashOf(code))
+            )
+            .map((row, id, refresh) =>
+                row + new String(
+                  id ++ refresh.getOrElse(Array.empty[Byte]),
+                  java.nio.charset.StandardCharsets.ISO_8859_1
+                )
+            )
 
     private def refused[A](io: IO[A]): IO[Unit] =
         io.attempt.map {
@@ -149,6 +166,59 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
         }
     }
 
+    // Only the code's hash is stored, so the tokens beside it must be of no use without the code either.
+    check("the tokens are not stored as they are") {
+        val handOffs = service(Logged())
+        val sub = unique("sub")
+        val token = idTokenOf(sub)
+        for {
+            (gameId, _) <- game(isTrusted = true)
+            made <- handOffs.create(cognitoId = sub, gameId = gameId, idToken = token, refreshToken = Some("r-secret"))
+            text <- storedRowText(made.code)
+            hasRefresh <- hasStoredRefreshToken(made.code)
+        } yield {
+            assertEquals(hasRefresh, Some(true))
+            assert(!text.contains(token), text)
+            assert(!text.contains(token.split('.')(1)), text)
+            assert(!text.contains("r-secret"), text)
+        }
+    }
+
+    test("a seal opens only with the code and the purpose it was made with") {
+        val sealedId = HandOffService.seal(code = "c0de", purpose = HandOffService.IdTokenPurpose, token = "id-1")
+        assertEquals(
+          HandOffService.open(code = "c0de", purpose = HandOffService.IdTokenPurpose, sealedToken = sealedId),
+          "id-1"
+        )
+        intercept[javax.crypto.AEADBadTagException](
+          HandOffService.open(code = "other", purpose = HandOffService.IdTokenPurpose, sealedToken = sealedId)
+        )
+        intercept[javax.crypto.AEADBadTagException](
+          HandOffService.open(code = "c0de", purpose = HandOffService.RefreshTokenPurpose, sealedToken = sealedId)
+        )
+        // A fresh nonce each time: the same token sealed twice does not look the same.
+        assert(
+          !HandOffService
+              .seal(code = "c0de", purpose = HandOffService.IdTokenPurpose, token = "id-1")
+              .sameElements(sealedId)
+        )
+    }
+
+    check("redeeming a code deletes those already expired") {
+        var at = Instant.parse("2030-01-01T00:00:00Z")
+        val handOffs = service(Logged(), () => at)
+        val sub = unique("sub")
+        for {
+            (gameId, engine) <- game(isTrusted = true)
+            old <- handOffs.create(cognitoId = sub, gameId = gameId, idToken = idTokenOf(sub), refreshToken = None)
+            _ = at = at.plusSeconds(30)
+            fresh <- handOffs.create(cognitoId = sub, gameId = gameId, idToken = idTokenOf(sub), refreshToken = None)
+            _ = at = at.plusSeconds(31)
+            _ <- handOffs.redeem(fresh.code, engine)
+            isOldStored <- isStored(old.code)
+        } yield assert(!isOldStored)
+    }
+
     check("an expired code is refused, and leaves no row".tag(Quiet)) {
         var at = Instant.parse("2030-01-01T00:00:00Z")
         val handOffs = service(Logged(), () => at)
@@ -194,8 +264,8 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
               idToken = idTokenOf(sub),
               refreshToken = Some("r-1")
             )
-            stored <- storedRefreshToken(made.code)
-            _ = assertEquals(stored, Some(None))
+            stored <- hasStoredRefreshToken(made.code)
+            _ = assertEquals(stored, Some(false))
             handed <- handOffs.redeem(made.code, engine)
         } yield assertEquals(handed.refreshToken, None)
     }
@@ -289,7 +359,10 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
     // with it. The tokens must not be among them.
     check("a refused insert's error does not carry the tokens") {
         val sub = unique("sub")
-        val token = idTokenOf(sub)
+        val sealedId = HandOffService.seal(code = "c0de", purpose = HandOffService.IdTokenPurpose, token = "id")
+        val sealedRefresh =
+            HandOffService.seal(code = "c0de", purpose = HandOffService.RefreshTokenPurpose, token = "r-secret")
+        def hex(bytes: Array[Byte]) = bytes.map(b => f"$b%02x").mkString
         TestSession.resource
             .use(session =>
                 new HandOffRepo(session)
@@ -298,8 +371,8 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
                         codeHash = HandOffService.hashOf("c0de"),
                         gameId = GameId(Int.MaxValue),
                         cognitoId = sub,
-                        idToken = token,
-                        refreshToken = Some("r-secret"),
+                        idTokenSealed = sealedId,
+                        refreshTokenSealed = Some(sealedRefresh),
                         expiresAt = Instant.now()
                       )
                     )
@@ -307,8 +380,8 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
             )
             .map {
                 case Left(e) =>
-                    assert(!e.getMessage.contains(token), e.getMessage)
-                    assert(!e.getMessage.contains("r-secret"), e.getMessage)
+                    assert(!e.getMessage.contains(hex(sealedId)), e.getMessage)
+                    assert(!e.getMessage.contains(hex(sealedRefresh)), e.getMessage)
                 case Right(_) => fail("a hand-off for no game was stored")
             }
     }

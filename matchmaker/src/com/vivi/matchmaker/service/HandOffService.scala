@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets
 import java.security.{MessageDigest, SecureRandom}
 import java.time.{Duration, Instant}
 import java.util.Base64
+import javax.crypto.{Cipher, Mac}
+import javax.crypto.spec.{GCMParameterSpec, SecretKeySpec}
 import com.vivi.matchmaker.ErrorText
 import com.vivi.matchmaker.model.GameId
 import com.vivi.matchmaker.persistence.Repos
@@ -41,7 +43,9 @@ class HandOffService(
       * `cognitoId`. Otherwise a player could make a code that signs someone else in. The token's signature is not
       * checked here: the engine verifies it on every request.
       *
-      * Rows already expired are deleted first, so the table holds only the last minute's and needs no scheduled job.
+      * The tokens are stored sealed under a key derived from the code ([[seal]]), and the code only as its hash, so the
+      * row signs nobody in without the code. Rows already expired are deleted first, so the table holds only the last
+      * minute's and needs no scheduled job.
       */
     def create(cognitoId: String, gameId: GameId, idToken: String, refreshToken: Option[String]): IO[HandOff] =
         for {
@@ -66,8 +70,10 @@ class HandOffService(
                             codeHash = hashOf(code),
                             gameId = gameId,
                             cognitoId = cognitoId,
-                            idToken = idToken,
-                            refreshToken = refreshToken.filter(_ => isTrusted),
+                            idTokenSealed = seal(code = code, purpose = IdTokenPurpose, token = idToken),
+                            refreshTokenSealed = refreshToken
+                                .filter(_ => isTrusted)
+                                .map(seal(code = code, purpose = RefreshTokenPurpose, _)),
                             expiresAt = expiresAt
                           )
                         )
@@ -83,17 +89,34 @@ class HandOffService(
       * The code's row is deleted whatever the answer, so a code is redeemed at most once, and a wrong engine trying it
       * leaves nothing for a right one. Every refusal is the same 404: a spent code, an expired one, another game's and
       * a made-up one look alike to the caller.
+      *
+      * Rows already expired are deleted here too, not only by [[create]], so a code nobody redeemed does not keep its
+      * row until the next one is made: on a quiet day that could be long enough to reach a snapshot.
       */
     def redeem(code: String, callerExternalId: String): IO[HandedOff] =
         for {
-            taken <- sessionPool.use(session => Repos(session).handOffs.take(hashOf(code)))
-            at <- IO(now())
+            takenAt <- sessionPool.use { session =>
+                val handOffs = Repos(session).handOffs
+                for {
+                    taken <- handOffs.take(hashOf(code))
+                    at <- IO(now())
+                    _ <- handOffs.deleteExpired(at)
+                } yield (taken, at)
+            }
+            (taken, at) = takenAt
             answer <- taken match {
                 case Some(t) if t.engineExternalId == callerExternalId && t.expiresAt.isAfter(at) =>
                     // The refresh token again only if the game is still trusted: an admin may have withdrawn its
                     // trust in the minute since the code was made, perhaps for the very reason of this engine.
-                    log(s"sign-in hand-off redeemed for game ${t.gameId.value} by ${t.cognitoId}")
-                        .as(HandedOff(idToken = t.idToken, refreshToken = t.refreshToken.filter(_ => t.isGameTrusted)))
+                    for {
+                        idToken <- IO(open(code = code, purpose = IdTokenPurpose, sealedToken = t.idTokenSealed))
+                        refreshToken <- IO(
+                          t.refreshTokenSealed
+                              .filter(_ => t.isGameTrusted)
+                              .map(open(code = code, purpose = RefreshTokenPurpose, _))
+                        )
+                        _ <- log(s"sign-in hand-off redeemed for game ${t.gameId.value} by ${t.cognitoId}")
+                    } yield HandedOff(idToken = idToken, refreshToken = refreshToken)
                 case Some(t) =>
                     val why = if (t.engineExternalId != callerExternalId) "another engine" else "expired"
                     log(s"sign-in hand-off for game ${t.gameId.value} by ${t.cognitoId} refused: $why") >>
@@ -120,9 +143,50 @@ object HandOffService {
         Base64.getUrlEncoder.withoutPadding.encodeToString(bytes)
     }
 
-    /** The SHA-256 of `code`: what is stored, so a copy of the table cannot be redeemed. */
+    /** The SHA-256 of `code`: what it is stored by, so a copy of the table cannot be redeemed. */
     def hashOf(code: String): Array[Byte] =
         MessageDigest.getInstance("SHA-256").digest(code.getBytes(StandardCharsets.UTF_8))
+
+    /** What a sealed token is, bound into its seal as associated data, so the ID token's seal cannot be passed off as
+      * the refresh token's or the other way round.
+      */
+    private[service] val IdTokenPurpose = "id-token"
+    private[service] val RefreshTokenPurpose = "refresh-token"
+
+    private val NonceLength = 12
+    private val TagBits = 128
+
+    /** `token` sealed with AES-256-GCM under a key derived from `code` ([[keyOf]]): a fresh 12-byte nonce, then the
+      * ciphertext and its tag. Only the code's hash is stored beside it, and the code is 32 random bytes, so the row
+      * holds nothing that signs anyone in without the code itself, which only the url it was put in ever held.
+      */
+    private[service] def seal(code: String, purpose: String, token: String): Array[Byte] = {
+        val nonce = new Array[Byte](NonceLength)
+        random.nextBytes(nonce)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, keyOf(code), new GCMParameterSpec(TagBits, nonce))
+        cipher.updateAAD(purpose.getBytes(StandardCharsets.UTF_8))
+        nonce ++ cipher.doFinal(token.getBytes(StandardCharsets.UTF_8))
+    }
+
+    /** The token [[seal]] sealed with `code` for `purpose`. Throws if the seal was not made with them, or was altered.
+      */
+    private[service] def open(code: String, purpose: String, sealedToken: Array[Byte]): String = {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, keyOf(code), new GCMParameterSpec(TagBits, sealedToken, 0, NonceLength))
+        cipher.updateAAD(purpose.getBytes(StandardCharsets.UTF_8))
+        new String(cipher.doFinal(sealedToken, NonceLength, sealedToken.length - NonceLength), StandardCharsets.UTF_8)
+    }
+
+    /** The sealing key for `code`: HMAC-SHA256 keyed by the code, of a fixed label. The code is 32 uniformly random
+      * bytes, so this is a sound key derivation (in the manner of HKDF's expand step, the code being the pseudorandom
+      * key), and a key apart from the SHA-256 the row is looked up by.
+      */
+    private def keyOf(code: String): SecretKeySpec = {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8), "HmacSHA256"))
+        new SecretKeySpec(mac.doFinal("matchmaker sign-in hand-off key".getBytes(StandardCharsets.UTF_8)), "AES")
+    }
 
     /** The `sub` claim of JWT `token`, read without checking its signature, or `None` if it has none. */
     private[service] def subjectOf(token: String): Option[String] =

@@ -17,7 +17,7 @@ The tokens travel only in request and response bodies, over TLS:
 
 ```
 matchmaker UI ──POST /handoffs (JWT: the player) {gameId, idToken, refreshToken?}──▶ matchmaker API
-              ◀── {code, expiresAt} ─────────────────────────────────────────────── stores sha256(code) → tokens, 60 s
+              ◀── {code, expiresAt} ─────────────────────────────────────────────── stores sha256(code) → sealed tokens, 60 s
 matchmaker UI opens  PLAY_URL#handoff=CODE
 engine page   ──POST /api/handoff {code}──▶ engine server
 engine server ──POST /handoffs/redeem {code} (x-api-key: the game's key)──▶ matchmaker API
@@ -30,8 +30,11 @@ engine page   ◀── {idToken, refreshToken?} ── stored as a sign-in, as 
 
 - 32 bytes from `SecureRandom`, base64url: 43 characters (`HandOffService.newCode`).
 - Only its SHA-256 is stored, in `sign_in_handoff`, with the game, who made it (for logs), the tokens and the expiry.
-- It can be redeemed for 60 seconds (`HandOffService.Lifetime`). Making a code deletes every row already expired, so
-  the table holds only the last minute's rows and needs no scheduled job.
+- The tokens are stored sealed, with AES-256-GCM under a key derived from the code (HMAC-SHA256 keyed by the code,
+  `HandOffService.seal`, V27). With the code stored only as its hash, a copy of the table, a snapshot or a dump holds
+  nothing that signs anyone in.
+- It can be redeemed for 60 seconds (`HandOffService.Lifetime`). Making a code, and redeeming one, deletes every row
+  already expired, so the table holds only the last minute's rows and needs no scheduled job.
 - Redeeming it deletes its row in the same statement that reads it (`HandOffRepo.take`, `DELETE … RETURNING`), so a
   code is redeemed at most once however many calls race for it. A refused redeem deletes it all the same, so a wrong
   engine trying a code leaves nothing for the right one.
