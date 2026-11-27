@@ -326,7 +326,11 @@ ${authScript(Some(login))}
     handingOff = redeemHandOff(code).finally(() => { handingOff = null; renderSignedInAs(); });
   })();
 
+  /* Guarded by `generation` as a refresh is: a hand-off answering after the player pressed Sign
+   * out (whose reload has not yet replaced the page) or signed in on the page's own form stores
+   * nothing, or it would sign the tab back in, as the handed account, after the player left it. */
   async function redeemHandOff(code) {
+    const begun = generation;
     // This engine's root: the page's path less its own part, since behind API Gateway the path
     // carries a stage prefix.
     const root = location.pathname.replace(new RegExp("/(matches|fighters|rules)(/.*)?$$"), "");
@@ -340,6 +344,7 @@ ${authScript(Some(login))}
       });
       if (response.ok) tokens = await response.json();
     } catch (e) { tokens = null; }
+    if (generation !== begun) return;
     if (!tokens || typeof tokens.idToken !== "string") { handOffFailed(); return; }
     if (!isSwitchAgreed(tokens.idToken)) return;
     clearSession();

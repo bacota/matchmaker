@@ -393,6 +393,46 @@ if ($isSignOutPressed) listeners.click();
         assert(after.isReloaded)
     }
 
+    // The same window for a hand-off: Sign out pressed while the code is out, and the engine answering before the
+    // reload replaces the page. Storing the handed tokens then would bring the tab back signed in as that account.
+    test("a hand-off answered after signing out does not sign the tab in") {
+        val mallory = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
+        val after = load(
+          "\"\"",
+          login = Some(login),
+          `then` = s"""
+            let answer;
+            globalThis.fetch = () => new Promise(resolve => { answer = resolve; });
+            handingOff = redeemHandOff("c0de").finally(() => { handingOff = null; renderSignedInAs(); });
+            listeners.click();
+            answer(${tokens(mallory, Some("r-mallory"))});
+            await handingOff;
+          """
+        )
+        assertEquals(after.storage, Map.empty[String, String])
+        assertEquals(after.signedInAs, None)
+        assert(after.isReloaded)
+    }
+
+    test("a hand-off answered after signing in on the page does not replace that sign-in") {
+        val mallory = idToken("email" -> "mallory@example.com", "exp" -> inAnHour)
+        val after = load(
+          "\"\"",
+          login = Some(login),
+          hasForm = true,
+          `then` = s"""
+            let answer;
+            globalThis.fetch = () => new Promise(resolve => { answer = resolve; });
+            handingOff = redeemHandOff("c0de").finally(() => { handingOff = null; renderSignedInAs(); });
+            succeed({ idToken: "$bob", refreshToken: "r-bob" });
+            answer(${tokens(mallory, Some("r-mallory"))});
+            await handingOff;
+          """
+        )
+        assertEquals(after.storage, Map("stratego.idToken" -> bob, "stratego.refreshToken" -> "r-bob"))
+        assertEquals(after.asked, Seq.empty)
+    }
+
     /** A refresh begun with the session held before an on-page sign-in, still out when the player signs in as Bob, and
       * answered with `answer` — a JavaScript `fetch` response — after that.
       */
