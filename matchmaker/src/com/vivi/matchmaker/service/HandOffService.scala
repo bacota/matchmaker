@@ -26,7 +26,8 @@ case class HandedOff(idToken: String, refreshToken: Option[String])
   * can be synced or read by an extension, and a code found there is spent or has expired.
   *
   * The engine's server redeems it, not its page, because the redeem call carries the game's key: a code made for one
-  * game cannot be spent by another game's engine, or by anyone holding the code alone.
+  * game cannot be spent by another game's engine. At its own game's engine the code is the credential, as the page has
+  * no token yet, and what limits it there is that it is single-use and lives a minute.
   *
   * Neither call logs a token or a code: only the game, who made the code, and what became of it.
   */

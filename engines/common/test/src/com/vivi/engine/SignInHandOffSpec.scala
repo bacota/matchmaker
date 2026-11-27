@@ -4,15 +4,15 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 import munit.FunSuite
 
-/** Taking over the session matchmaker's UI hands a play page in its url fragment — `takeHandOff` in
-  * [[SignIn.authScript]].
+/** Taking over the session matchmaker's UI hands a play page by a one-time code in its url fragment — `takeHandOff`
+  * in [[SignIn.authScript]], redeemed through this engine's `POST api/handoff`.
   *
   * The script is the page's own JavaScript, so it is run as it is, in Node, with the address bar, its history and
   * `sessionStorage` stood in for. What is checked is what a mistake here would quietly do: leave the credential in the
   * address bar, store something other than the token handed over, keep a session that the link said to replace, or
   * touch a fragment that was never a hand-off. Then the line that says whose account the tab is signed in to, which is
   * what lets a player notice a hand-off made with someone else's tokens. Matchmaker's half — what it puts there — is
-  * `HandOffSpec` in the UI's tests, which writes the same two names, `idToken` and `refreshToken`.
+  * `HandOffSpec` in the UI's tests, which writes the same name, `handoff`.
   *
   * Node is what the UI's own tests already run in. A machine without it fails here rather than skipping, since a
   * skipped check of a credential's handling is one nobody notices is missing.

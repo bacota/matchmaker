@@ -21,7 +21,8 @@ enum HandOffAnswer {
   * (design/sign-in-handoff.md in matchmaker).
   *
   * The engine's server redeems it, not its page, because the call carries the game's API key: a code made for one game
-  * cannot be spent by another game's engine, or by anyone holding the code alone. The tokens travel only in request and
+  * cannot be spent by another game's engine. Here, at its own game's engine, the code is the credential, since the page
+  * has no token yet; what limits it is that it is single-use and lives a minute. The tokens travel only in request and
   * response bodies, never in a url.
   *
   * `clients` are matchmaker's clients and the urls they call, tried in turn until one redeems the code. An engine has

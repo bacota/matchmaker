@@ -53,7 +53,9 @@ engine page   ◀── {idToken, refreshToken?} ── stored as a sign-in, as 
 - `POST /handoffs/redeem` is an engine's route (`local.engine_routes`), authorized by the game's API key like the
   archive routes. The code is redeemed only if its game's `external_id` is the identity the key names. That is why the
   engine's server redeems the code and not its page: the key ties the code to the one engine it was made for, so a
-  code copied from one engine's url can't be spent by another engine, or by anyone holding just the code. It also
+  code copied from one engine's url can't be spent at another engine. It does not stop someone who holds a live code
+  spending it at that game's own engine, whose `POST /api/handoff` is open on purpose since the page has no token
+  yet: there the code is the credential, and what limits it is that it is single-use and lives a minute. It also
   needs no CORS between an engine's site and matchmaker's API.
 - Both answers carry `cache-control: no-store`.
 
