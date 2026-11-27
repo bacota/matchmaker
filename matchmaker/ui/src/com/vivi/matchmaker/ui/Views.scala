@@ -25,6 +25,15 @@ object Views {
 
     private val announcement = Var("")
 
+    /** Whether the keyboard's focus has fallen: onto nothing, the page itself, or an element no longer in it, as
+      * happens when the focused control is redrawn away. A view that moves focus after such a redraw asks this first,
+      * so as not to pull it back from wherever the player has since put it.
+      */
+    private[ui] def hasFocusFallen: Boolean = {
+        val active = dom.document.activeElement
+        active == null || active == dom.document.body || !active.isConnected
+    }
+
     /** Says out loud how an action went whose own control is gone with what it acted on: a row's Cancel that removes
       * the row, a Stop that removes the button. The row going is what a sighted player sees; this is what everyone else
       * is told. Cleared first and set a turn later, so the same words said twice are read out twice.

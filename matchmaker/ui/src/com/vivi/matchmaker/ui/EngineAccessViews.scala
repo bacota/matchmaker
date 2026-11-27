@@ -144,8 +144,7 @@ object EngineAccessViews {
         def buttons = list.ref.querySelectorAll("button").toList.map(_.asInstanceOf[dom.html.Element])
         val place = buttons.indexWhere(_ == dom.document.activeElement)
         Store.refreshEngineAccess(gameId).foreach { _ =>
-            val active = dom.document.activeElement
-            if (place >= 0 && (active == null || active == dom.document.body || !active.isConnected)) {
+            if (place >= 0 && Views.hasFocusFallen) {
                 val now = buttons
                 now.lift(place)
                     .orElse(now.lastOption)

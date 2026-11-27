@@ -747,7 +747,18 @@ object Tournaments {
                             p(cls := "detail", ErrorText.engineAccess.notAllowed(game = d.summary.gameName)),
                             EngineAccessViews.redeemForm(replacedBy = Some(() => focusFirstControl(entry)))
                           )
-                      else enterRow(d, t, mine, characterGame, chosen, me)
+                      else
+                          enterRow(
+                            d = d,
+                            t = t,
+                            mine = mine,
+                            characterGame = characterGame,
+                            chosen = chosen,
+                            me = me,
+                            // A refused entry that turns out to be a barred one swaps the code box in for the
+                            // focused Enter: the focus goes to its field, if it fell.
+                            onBarred = () => if (Views.hasFocusFallen) focusFirst(entry, "input")
+                          )
                   })
                   entry
               }
@@ -755,8 +766,11 @@ object Tournaments {
     }
 
     /* Focus on the first select or button inside `within`, if it has one. */
-    private def focusFirstControl(within: HtmlElement): Unit =
-        Option(within.ref.querySelector("select, button")).foreach(_.asInstanceOf[dom.html.Element].focus())
+    private def focusFirstControl(within: HtmlElement): Unit = focusFirst(within, "select, button")
+
+    /* Focus on the first element inside `within` that `selector` matches, if there is one. */
+    private def focusFirst(within: HtmlElement, selector: String): Unit =
+        Option(within.ref.querySelector(selector)).foreach(_.asInstanceOf[dom.html.Element].focus())
 
     /* The caller's entry: a character to enter with, in a character game, the Enter button, and Decline. */
     private def enterRow(
@@ -765,7 +779,8 @@ object Tournaments {
         mine: Seq[Entrant],
         characterGame: Boolean,
         chosen: Var[Option[CharacterId]],
-        me: Option[Player]
+        me: Option[Player],
+        onBarred: () => Unit
     ): HtmlElement =
         div(
           cls := "row",
@@ -803,7 +818,8 @@ object Tournaments {
                 busy,
                 // A refusal may be the engine restricted since the barred games were read: read them again, so the
                 // code box replaces an Enter that would be refused every time.
-                onFailure = _ => { Store.refreshBarredGames(); () }
+                onFailure = _ =>
+                    Store.refreshBarredGames().foreach(_ => if (Store.barredGames.now().contains(t.gameId)) onBarred())
               )(_ => reload(d))
           ),
           declineButton(d, me)
