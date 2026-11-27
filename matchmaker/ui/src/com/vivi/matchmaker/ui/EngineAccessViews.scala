@@ -108,9 +108,15 @@ object EngineAccessViews {
             onClick --> { _ =>
                 val opening = !isOpen.now()
                 isOpen.set(opening)
-                // Said once the lists have come, since they arrive after the panel opens with "Loading…" in it.
-                if (opening) Store.refreshEngineAccess(gameId).foreach { _ =>
-                    if (isOpen.now()) Store.engineAccessByGame.now().get(gameId).foreach(a => said.set(summary(a)))
+                // Said once the lists have come, since they arrive after the panel opens with "Loading…" in it -- but
+                // only if nothing has been said since it opened: an action taken meanwhile ("Copy it now") is news
+                // the summary must not replace. Cleared at the opening so that this can tell.
+                if (opening) {
+                    said.set("")
+                    Store.refreshEngineAccess(gameId).foreach { _ =>
+                        if (isOpen.now() && said.now().isEmpty)
+                            Store.engineAccessByGame.now().get(gameId).foreach(a => said.set(summary(a)))
+                    }
                 }
             }
           ),
