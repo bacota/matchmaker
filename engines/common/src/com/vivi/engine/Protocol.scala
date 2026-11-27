@@ -227,12 +227,19 @@ object Protocol {
     case class ArchiveUpload(url: String, method: String, headers: Map[String, String], expiresAt: Instant)
 
     /** Matchmaker's answer: an `upload` to make, or — for a match it already has — `archivedAt`, which is the engine's
-      * permission to drop its live copy.
+      * permission to drop its live copy. `expiresAt` comes with `archivedAt`, for a friendly match's archive: when it
+      * will be deleted.
       */
-    case class ArchiveUploadAnswer(upload: Option[ArchiveUpload] = None, archivedAt: Option[Instant] = None)
+    case class ArchiveUploadAnswer(
+        upload: Option[ArchiveUpload] = None,
+        archivedAt: Option[Instant] = None,
+        expiresAt: Option[Instant] = None
+    )
 
-    /** `POST /matches/{matchId}/archive/confirm`'s answer: the archive arrived, and the live copy may go. */
-    case class ArchiveConfirmation(archivedAt: Instant)
+    /** `POST /matches/{matchId}/archive/confirm`'s answer: the archive arrived, and the live copy may go. `expiresAt`
+      * is when a friendly match's archive will be deleted; none for one kept for good.
+      */
+    case class ArchiveConfirmation(archivedAt: Instant, expiresAt: Option[Instant] = None)
 
     /** `POST /matches/{matchId}/archive/read`'s answer: where to read the archive from, for this engine alone. */
     case class ArchiveDownload(url: String, expiresAt: Instant)

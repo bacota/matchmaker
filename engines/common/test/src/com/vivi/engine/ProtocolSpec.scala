@@ -395,6 +395,11 @@ class ProtocolSpec extends FunSuite {
           read[Protocol.ArchiveUploadAnswer](write(already)(using Json.given_ReadWriter_ArchiveUploadAnswer)),
           Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
         )
+        val expiring = Json.ArchiveUploadAnswer(archivedAt = Some(at), expiresAt = Some(at.plusSeconds(60)))
+        assertEquals(
+          read[Protocol.ArchiveUploadAnswer](write(expiring)(using Json.given_ReadWriter_ArchiveUploadAnswer)),
+          Protocol.ArchiveUploadAnswer(archivedAt = Some(at), expiresAt = Some(at.plusSeconds(60)))
+        )
     }
 
     test("matchmaker's archive confirmation and download read as the engine's") {
@@ -404,6 +409,14 @@ class ProtocolSpec extends FunSuite {
             write(Json.ArchiveConfirmation(at))(using Json.given_ReadWriter_ArchiveConfirmation)
           ),
           Protocol.ArchiveConfirmation(at)
+        )
+        assertEquals(
+          read[Protocol.ArchiveConfirmation](
+            write(Json.ArchiveConfirmation(at, Some(at.plusSeconds(60))))(using
+              Json.given_ReadWriter_ArchiveConfirmation
+            )
+          ),
+          Protocol.ArchiveConfirmation(at, Some(at.plusSeconds(60)))
         )
         assertEquals(
           read[Protocol.ArchiveDownload](

@@ -23,8 +23,14 @@ case class PreparedMove(gameId: GameId, matchId: MatchId, key: String)
   */
 enum UploadAnswer {
     case Upload(signed: SignedUpload)
-    case AlreadyArchived(archivedAt: Instant)
+    case AlreadyArchived(archived: Archived)
 }
+
+/** A match's archive as recorded: when it was archived, and, for one in the friendly bucket, when that bucket deletes
+  * it ([[ArchiveService.FriendlyRetention]] later). `expiresAt` is what the archive's bucket says now: an admin saying
+  * the match was not friendly after all moves it to the permanent bucket, where it never expires.
+  */
+case class Archived(at: Instant, expiresAt: Option[Instant])
 
 /** Completed matches' archives in S3 (archiving-matches-plan.md).
   *
@@ -90,7 +96,7 @@ class ArchiveService(
                           ConflictError(ErrorText.archive.notOver)
                         )
                         answer <- row.archivedAt match {
-                            case Some(at) => IO.pure(Left(at))
+                            case Some(at) => IO.pure(Left(archivedOf(row, at)))
                             case None     =>
                                 // The key is fixed the first time it is chosen: a game renamed meanwhile does
                                 // not move an archive half-way through being made.
@@ -113,7 +119,7 @@ class ArchiveService(
                 }
             }
             answer <- decided match {
-                case Left(at) => IO.pure(UploadAnswer.AlreadyArchived(at))
+                case Left(archived) => IO.pure(UploadAnswer.AlreadyArchived(archived))
                 // Signed after the commit: signing is not a network call, but nothing outside the
                 // database belongs inside one of its transactions.
                 case Right((row, key)) =>
@@ -142,14 +148,14 @@ class ArchiveService(
       * Three borrowings of the pool rather than one: no connection is held while S3 answers, so a slow check cannot tie
       * up the connections the API's other requests need.
       */
-    def confirm(matchId: MatchId, callerExternalId: String): IO[Instant] =
+    def confirm(matchId: MatchId, callerExternalId: String): IO[Archived] =
         sessionPool
             .use(session =>
                 require(repo = Repos(session).archives, matchId = matchId, callerExternalId = callerExternalId)
             )
             .flatMap { before =>
                 before.archivedAt match {
-                    case Some(at) => IO.pure(at)
+                    case Some(at) => IO.pure(archivedOf(before, at))
                     case None =>
                         for {
                             key <- IO.fromOption(before.key)(
@@ -165,8 +171,8 @@ class ArchiveService(
                                           matchId = matchId,
                                           callerExternalId = callerExternalId
                                         )
-                                        at <- row.archivedAt match {
-                                            case Some(at) => IO.pure(at)
+                                        archived <- row.archivedAt match {
+                                            case Some(at) => IO.pure(archivedOf(row, at))
                                             case None =>
                                                 for {
                                                     _ <- IO.raiseUnless(row.key.contains(key))(
@@ -187,9 +193,9 @@ class ArchiveService(
                                                       ConflictError(ErrorText.archive.wrongArrival)
                                                     )
                                                     at <- repos.archives.recordArchived(row.gameId, matchId)
-                                                } yield at
+                                                } yield archivedOf(row, at)
                                         }
-                                    } yield at
+                                    } yield archived
                                 }
                             }
                         } yield at
@@ -402,6 +408,12 @@ object ArchiveService {
 
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)
+
+    /** The archive of `row`, archived at `at`, as an engine is told of it: when it expires, if it is in the friendly
+      * bucket — the same moment [[canHaveExpired]] counts from.
+      */
+    def archivedOf(row: ArchiveRow, at: Instant): Archived =
+        Archived(at = at, expiresAt = Option.when(bucketOf(row).isFriendly)(at.plus(FriendlyRetention)))
 
     /** How many possibly expired archives one list checks in S3, and how many of those checks run at once. */
     val ChecksPerRequest: Int = 25

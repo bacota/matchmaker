@@ -219,7 +219,9 @@ class ArchiveServiceSpec extends FunSuite {
         run(upload(f))
         val confirmed = run(archives.confirm(f.matchId, f.game.externalId))
         val stored = run(row(f)).get
-        assertEquals(stored.archivedAt, Some(confirmed))
+        assertEquals(stored.archivedAt, Some(confirmed.at))
+        // A friendly match's archive: the engine is told when the friendly bucket deletes it.
+        assertEquals(confirmed.expiresAt, Some(confirmed.at.plus(ArchiveService.FriendlyRetention)))
         assertEquals(stored.key, Some(s"stratego/2026-10-03/${f.matchId.value}.json"))
 
         val download = run(archives.download(f.matchId, f.game.externalId))
@@ -248,6 +250,10 @@ class ArchiveServiceSpec extends FunSuite {
         assert(run(store.head(ArchiveBucket.Friendly, key(friendly))).isDefined)
         assert(run(store.head(ArchiveBucket.Permanent, key(friendly))).isEmpty)
         assert(run(store.head(ArchiveBucket.Permanent, key(permanent))).isDefined)
+        // Only the friendly one is said to expire.
+        val confirmed = (f: Fixture) => run(archives.confirm(f.matchId, f.game.externalId))
+        assert(confirmed(friendly).expiresAt.isDefined)
+        assertEquals(confirmed(permanent).expiresAt, None)
     }
 
     test("only a completed match of the caller's own game is archived") {
@@ -369,6 +375,8 @@ class ArchiveServiceSpec extends FunSuite {
         run(notFriendly(f))
         assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
+        // Kept for good now: the engine asking again is told it no longer expires.
+        assertEquals(run(archives.confirm(f.matchId, f.game.externalId)).expiresAt, None)
         val download = run(archives.download(f.matchId, f.game.externalId))
         assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
     }
