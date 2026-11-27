@@ -1,6 +1,8 @@
 package com.vivi.matchmaker.service
 
 import com.vivi.matchmaker.ErrorText
+import java.util.concurrent.ConcurrentHashMap
+import scala.concurrent.duration._
 import cats.effect.IO
 import cats.syntax.all._
 import skunk.SqlState
@@ -148,11 +150,30 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             } yield listed
         }
 
+    /* Each site's scope as last looked up, and when. */
+    private val siteScopes = new ConcurrentHashMap[Site, GameService.SiteScope]()
+
     /** The games a game site shows, by its games' names: a name that matches no game is skipped, and a site none of
       * whose games are registered shows nothing. See design/game-sites-plan.md.
+      *
+      * Asked on every list a site's page makes, so a process keeps each site's answer for
+      * [[GameService.SiteScopeLifetime]] rather than asking the database each time. The names resolve to ids that
+      * change only when a game of that name is registered or renamed, which is rare; the cost is that such a game
+      * reaches a site's lists up to that long after it is saved.
       */
     def scopeFor(site: Site): IO[GameScope] =
-        sessionPool.use(session => Repos(session).games[T].idsNamed(site.games).map(ids => GameScope.Only(ids.toSet)))
+        IO.monotonic.flatMap { now =>
+            Option(siteScopes.get(site)).filter(kept => now - kept.lookedUpAt < GameService.SiteScopeLifetime) match {
+                case Some(kept) => IO.pure(kept.scope)
+                case None =>
+                    sessionPool
+                        .use(session => Repos(session).games[T].idsNamed(site.games))
+                        .map(ids => GameScope.Only(ids.toSet))
+                        .flatTap(scope =>
+                            IO(siteScopes.put(site, GameService.SiteScope(scope = scope, lookedUpAt = now))).void
+                        )
+            }
+        }
 
     /** What an update may do to a game's roles: rename them, make them optional or not, and add new ones. Not remove
       * one — except by doing without roles altogether.
@@ -329,6 +350,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 }
 
 object GameService {
+
+    /** How long a process keeps a game site's games before looking them up again: see [[GameService.scopeFor]]. */
+    val SiteScopeLifetime: FiniteDuration = 5.minutes
+
+    /** A site's games as [[GameService.scopeFor]] last looked them up, and when, on the monotonic clock. */
+    private case class SiteScope(scope: GameScope, lookedUpAt: FiniteDuration)
 
     /** The shortest engine API key a game may be given — the minimum `terraform/modules/engine` enforces on the key it
       * deploys an engine with, so any key that engine could have been given passes.

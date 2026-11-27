@@ -218,7 +218,9 @@ decides activeness as it does now.
 
 **In `GameService`**: `def scopeFor(site: Site): IO[GameScope]` — `GameScope.Only(ids.toSet)` from
 `idsNamed(site.games)`. A name that matches no game is skipped; if none match, the scope is empty
-and the site shows nothing, which is right.
+and the site shows nothing, which is right. Every list a site's page makes asks for it, so a process
+keeps each site's answer for `GameService.SiteScopeLifetime` (five minutes): a game of a site's name
+registered or renamed reaches that site's lists up to that long after it is saved.
 
 **Tests**: `SitesSpec` (no database): parse, `forOrigin` with and without a trailing slash, an
 unknown origin, `None`; `at` for a configured and an unconfigured origin. `GameRepoSpec`: `idsNamed`.

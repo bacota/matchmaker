@@ -9,6 +9,7 @@ import org.scalacheck.Gen
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{Generators, TestSession}
+import com.vivi.matchmaker.util.Site
 
 class GameServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -354,6 +355,25 @@ class GameServiceSpec extends PropertySuite {
             case other                                     => fail(s"expected the game already registered, got $other")
         }
         assertEquals(listed, 1)
+    }
+
+    // A site's games are kept, not asked for on every list: a game of its name registered after the first look
+    // reaches the site only once the kept answer runs out.
+    test("scopeFor keeps a site's games rather than looking them up on every call") {
+        val result = for {
+            admin <- makeAdmin()
+            game = Generators.genGameWithRole.sample.get
+            site = Site(
+              origin = s"https://${java.util.UUID.randomUUID()}.example",
+              heading = "Kept",
+              games = List(game.name)
+            )
+            before <- gameService.scopeFor(site)
+            _ <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
+            after <- gameService.scopeFor(site)
+        } yield (before, after)
+
+        assertEquals(result.unsafeRunSync(), (GameScope.Only(Set.empty), GameScope.Only(Set.empty)))
     }
 
     // Saving an edit with the key the game already has is not a clash with itself.
