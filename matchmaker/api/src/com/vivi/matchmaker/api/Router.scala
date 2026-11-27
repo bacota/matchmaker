@@ -318,7 +318,7 @@ object Router {
 
             // The games the caller may not play, so the UI offers a code where it would offer an entry.
             case ("GET", "me" :: "engine-access" :: Nil) =>
-                ok(services.engineAccess.barred(caller))
+                gameScope(services, request).flatMap(games => ok(services.engineAccess.barred(caller, games)))
 
             /* Players' Elo ratings in a game: anybody registered may see its leaderboard, a page
              * at a time from `page` 0, and any one player's standing on it; an admin, or an admin of this game, may set one. A PUT, because

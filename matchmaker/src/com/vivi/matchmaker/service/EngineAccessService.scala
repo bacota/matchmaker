@@ -162,15 +162,16 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
             }
     }
 
-    /** The games the caller may not play, for the UI to offer a code in place of an entry. None for an overall admin.
+    /** The games in `games` the caller may not play, for the UI to offer a code in place of an entry. None for an
+      * overall admin.
       */
-    def barred(callerExternalId: String): IO[List[GameId]] =
+    def barred(callerExternalId: String, games: GameScope): IO[List[GameId]] =
         sessionPool.use { session =>
             val repos = Repos(session)
             repos.players.readByExternalId(callerExternalId).flatMap {
                 case None                 => IO.raiseError(UnauthorizedError(ErrorText.caller.unregistered))
                 case Some(p) if p.isAdmin => IO.pure(Nil)
-                case Some(p)              => repos.engineAccess.barredGames(p.playerId)
+                case Some(p)              => repos.engineAccess.barredGames(p.playerId, games)
             }
         }
 

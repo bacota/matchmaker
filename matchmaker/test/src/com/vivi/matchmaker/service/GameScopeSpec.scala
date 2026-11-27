@@ -14,7 +14,7 @@ import skunk.Session
 import skunk.implicits._
 import skunk.codec.all.{int4, int8}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameRepo, Generators, TestMatches, TestSession}
+import com.vivi.matchmaker.persistence.{EngineAccessRepo, GameRepo, Generators, TestMatches, TestSession}
 
 class GameScopeSpec extends FunSuite {
 
@@ -265,6 +265,15 @@ class GameScopeSpec extends FunSuite {
 
     test("TournamentRounds.choicesFor") {
         check("choicesFor")(games => services.rounds.choicesFor(fixture.player.externalId, games).map(_.map(_.gameId)))
+    }
+
+    test("EngineAccessService.barred") {
+        val f = fixture
+        run(TestSession.resource.use { session =>
+            val repo = new EngineAccessRepo(session)
+            List(f.first, f.second).traverse_(g => repo.restrict(EngineId(g.externalId), f.watcher.playerId))
+        })
+        check("barred")(games => services.engineAccess.barred(f.player.externalId, games))
     }
 
     test("NotificationService.mine") {

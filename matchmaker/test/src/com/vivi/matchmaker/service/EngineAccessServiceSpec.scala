@@ -299,10 +299,10 @@ class EngineAccessServiceSpec extends PropertySuite {
         val (game, before, after, admin) = run(for {
             f <- fixture()
             _ <- restrict(f)
-            before <- access.barred(f.first.externalId)
+            before <- access.barred(f.first.externalId, GameScope.All)
             _ <- access.grant(gameId = f.game.gameId, nickname = f.first.nickname, callerExternalId = f.host.externalId)
-            after <- access.barred(f.first.externalId)
-            admin <- access.barred(f.overall.externalId)
+            after <- access.barred(f.first.externalId, GameScope.All)
+            admin <- access.barred(f.overall.externalId, GameScope.All)
         } yield (f.game.gameId, before, after, admin))
         assert(before.contains(game), before)
         assert(!after.contains(game), after)

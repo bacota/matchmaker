@@ -112,20 +112,22 @@ class EngineAccessRepo(session: Session[IO]) {
                 )
             })
 
-    private val selectBarred: Query[(PlayerId, PlayerId), GameId] =
+    private val selectBarred: Query[(GameScope, PlayerId, PlayerId), GameId] =
         sql"""SELECT g.game_id
           FROM game g
           JOIN restricted_engine r ON r.external_id = g.external_id
-          WHERE NOT EXISTS (
+          WHERE ${SkunkCodecs.inGameScope("g.game_id")}
+            AND NOT EXISTS (
               SELECT 1 FROM engine_player e WHERE e.external_id = g.external_id AND e.player_id = $playerId)
             AND NOT EXISTS (
               SELECT 1 FROM game_admin a WHERE a.game_id = g.game_id AND a.player_id = $playerId)
           ORDER BY g.game_id""".query(gameId)
 
     /** The games the player may not play: those of a restricted engine they are not listed for and do not administer.
-      * Read plainly, for what the UI offers; an overall admin is the caller's to leave out.
+      * Read plainly, for what the UI offers; an overall admin is the caller's to leave out. Only those in `games`.
       */
-    def barredGames(player: PlayerId): IO[List[GameId]] = session.execute(selectBarred)((player, player))
+    def barredGames(player: PlayerId, games: GameScope): IO[List[GameId]] =
+        session.execute(selectBarred)((games, player, player))
 
     // ---- codes ----------------------------------------------------------------------------------
 
