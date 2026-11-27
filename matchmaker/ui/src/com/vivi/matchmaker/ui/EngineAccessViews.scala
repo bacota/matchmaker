@@ -242,6 +242,20 @@ object EngineAccessViews {
             )
         }
 
+    /* Puts the code on the clipboard and says whether it worked. The clipboard is missing without a secure context,
+     * and writing may be refused, so a failure says to copy it by hand, which the code's `user-select: all` makes
+     * one tap. */
+    private def copy(fresh: String, said: Var[String]): Unit = {
+        val byHand = "Could not copy it: select the code and copy it yourself."
+        val clipboard = dom.window.navigator.asInstanceOf[scalajs.js.Dynamic].clipboard
+        if (scalajs.js.isUndefined(clipboard)) said.set(byHand)
+        else
+            dom.window.navigator.clipboard
+                .writeText(fresh)
+                .toFuture
+                .onComplete(outcome => said.set(if (outcome.isSuccess) "Code copied." else byHand))
+    }
+
     private def makeCodeForm(gameId: GameId, said: Var[String], refresh: () => Unit): HtmlElement = {
         val labelText = Var("")
         val maxUses = Var("")
@@ -302,7 +316,7 @@ object EngineAccessViews {
                       button(
                         tpe := "button",
                         Buttons.access.copy,
-                        onClick --> (_ => dom.window.navigator.clipboard.writeText(fresh))
+                        onClick --> (_ => copy(fresh, said))
                       )
                     )
             }

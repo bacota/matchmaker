@@ -1678,3 +1678,10 @@ h3[tabindex="-1"]:focus-visible {
 .competition-form .with-tip:has(> label > input[type="checkbox"]) > .tip-toggle {
   margin: -10px 0;
 }
+
+/* A just-made access code: one tap selects all of it, for copying by hand when the Copy button cannot. */
+.new-code code {
+  user-select: all;
+  -webkit-user-select: all;
+  overflow-wrap: anywhere;
+}
