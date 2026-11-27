@@ -90,8 +90,10 @@ class HandOffService(
             at <- IO(now())
             answer <- taken match {
                 case Some(t) if t.engineExternalId == callerExternalId && t.expiresAt.isAfter(at) =>
+                    // The refresh token again only if the game is still trusted: an admin may have withdrawn its
+                    // trust in the minute since the code was made, perhaps for the very reason of this engine.
                     log(s"sign-in hand-off redeemed for game ${t.gameId.value} by ${t.cognitoId}")
-                        .as(HandedOff(idToken = t.idToken, refreshToken = t.refreshToken))
+                        .as(HandedOff(idToken = t.idToken, refreshToken = t.refreshToken.filter(_ => t.isGameTrusted)))
                 case Some(t) =>
                     val why = if (t.engineExternalId != callerExternalId) "another engine" else "expired"
                     log(s"sign-in hand-off for game ${t.gameId.value} by ${t.cognitoId} refused: $why") >>

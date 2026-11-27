@@ -200,6 +200,26 @@ class HandOffServiceSpec extends FunSuite with QuietTests {
         } yield assertEquals(handed.refreshToken, None)
     }
 
+    check("a game whose trust is withdrawn after the code is made is not handed the refresh token") {
+        val handOffs = service(Logged())
+        val sub = unique("sub")
+        for {
+            (gameId, engine) <- game(isTrusted = true)
+            made <- handOffs.create(
+              cognitoId = sub,
+              gameId = gameId,
+              idToken = idTokenOf(sub),
+              refreshToken = Some("r-1")
+            )
+            _ <- TestSession.resource.use(
+              _.execute(sql"UPDATE game SET is_trusted = false WHERE game_id = ${skunk.codec.all.int4}".command)(
+                gameId.value
+              )
+            )
+            handed <- handOffs.redeem(made.code, engine)
+        } yield assertEquals(handed.refreshToken, None)
+    }
+
     check("an ID token that is not the caller's is refused, and nothing is stored".tag(Quiet)) {
         val handOffs = service(Logged())
         for {

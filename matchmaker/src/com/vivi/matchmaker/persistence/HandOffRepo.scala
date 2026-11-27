@@ -37,29 +37,31 @@ class HandOffRepo(session: Session[IO]) {
             .void
 
     /* Deleted and read in one statement, so that of any number of calls racing for one code exactly one gets its row.
-     * The game's engine identity comes along, for the caller to be checked against. */
-    private val deleteReturning: Query[Array[Byte], (GameId, String, String, Option[String], Instant, String)] =
+     * The game's engine identity comes along, for the caller to be checked against, and its trust as it is now. */
+    private val deleteReturning
+        : Query[Array[Byte], (GameId, String, String, Option[String], Instant, String, Boolean)] =
         sql"""WITH taken AS (
             DELETE FROM sign_in_handoff WHERE code_hash = $bytea
             RETURNING game_id, cognito_id, id_token, refresh_token, expires_at
           )
-          SELECT t.game_id, t.cognito_id, t.id_token, t.refresh_token, t.expires_at, g.external_id
+          SELECT t.game_id, t.cognito_id, t.id_token, t.refresh_token, t.expires_at, g.external_id, g.is_trusted
           FROM taken t JOIN game g ON g.game_id = t.game_id"""
-            .query(gameId *: text *: text *: text.opt *: instant *: text)
+            .query(gameId *: text *: text *: text.opt *: instant *: text *: bool)
 
     /** The hand-off whose code hashes to `codeHash`, deleted as it is read: a code is taken at most once. */
     def take(codeHash: Array[Byte]): IO[Option[TakenHandOff]] =
         session
             .option(deleteReturning)(codeHash)
             .map(
-              _.map((game, cognitoId, idToken, refreshToken, expiresAt, externalId) =>
+              _.map((game, cognitoId, idToken, refreshToken, expiresAt, externalId, isTrusted) =>
                   TakenHandOff(
                     gameId = game,
                     cognitoId = cognitoId,
                     idToken = idToken,
                     refreshToken = refreshToken,
                     expiresAt = expiresAt,
-                    engineExternalId = externalId
+                    engineExternalId = externalId,
+                    isGameTrusted = isTrusted
                   )
               )
             )
@@ -90,13 +92,16 @@ object HandOffRepo {
         expiresAt: Instant
     )
 
-    /** A hand-off as it was taken, with the engine identity of its game: `game.external_id`. */
+    /** A hand-off as it was taken, with the engine identity of its game (`game.external_id`) and whether the game is
+      * trusted now, which may have changed since the code was made.
+      */
     case class TakenHandOff(
         gameId: GameId,
         cognitoId: String,
         idToken: String,
         refreshToken: Option[String],
         expiresAt: Instant,
-        engineExternalId: String
+        engineExternalId: String,
+        isGameTrusted: Boolean
     )
 }
