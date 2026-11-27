@@ -514,10 +514,16 @@ object Views {
         val tab = Option(dom.window.open("", "_blank"))
         tab.foreach { t =>
             t.asInstanceOf[scala.scalajs.js.Dynamic].opener = null
-            // Something to look at while the code is made. A blank tab of this origin, so it can be written to.
+            // Something to look at while the code is made. A blank tab of this origin, so it can be written to. In
+            // this page's language, and in a status region, so a screen reader says it and in the right voice.
             try {
-                t.document.title = "Opening…"
-                t.document.body.textContent = "Opening…"
+                Option(dom.document.documentElement.getAttribute("lang"))
+                    .foreach(t.document.documentElement.setAttribute("lang", _))
+                t.document.title = Headings.app.opening
+                val status = t.document.createElement("p")
+                status.setAttribute("role", "status")
+                status.textContent = Headings.app.opening
+                t.document.body.appendChild(status)
             } catch { case scala.util.control.NonFatal(_) => () }
         }
         // A code made for a session that has since ended (a sign-out, or the session found expired, while it was being
