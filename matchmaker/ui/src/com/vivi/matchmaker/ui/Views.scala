@@ -520,16 +520,24 @@ object Views {
                 t.document.body.textContent = "Opening…"
             } catch { case scala.util.control.NonFatal(_) => () }
         }
-        Auth.handOff(url = url, gameId = gameId, isTrusted = isTrusted).foreach { target =>
-            tab match {
-                // `target` is `url` with a fragment added, so it is a web url too; checked again all the same, since a
-                // tab of this origin sent anywhere else hands over the session.
-                case Some(t) if WebUrl.isWeb(target) => t.location.href = target
-                case Some(t)                         => t.close()
-                // The browser refused the blank tab: try once more with the page itself.
-                case None => dom.window.open(target, "_blank", "noopener,noreferrer")
+        // A code made for a session that has since ended (a sign-out, or the session found expired, while it was being
+        // made) would open the tab signed in as somebody who has left, or, if another player signed in meanwhile, as
+        // them. Such an answer sends the tab to the bare url, where the engine's page asks who is there.
+        val signIn = Store.currentSignIn
+        Auth.handOff(url = url, gameId = gameId, isTrusted = isTrusted)
+            .map { handed =>
+                if (Store.isStillSignedInAs(signIn)) handed else url
             }
-        }
+            .foreach { target =>
+                tab match {
+                    // `target` is `url` with a fragment added, so it is a web url too; checked again all the same,
+                    // since a tab of this origin sent anywhere else hands over the session.
+                    case Some(t) if WebUrl.isWeb(target) => t.location.href = target
+                    case Some(t)                         => t.close()
+                    // The browser refused the blank tab: try once more with the page itself.
+                    case None => dom.window.open(target, "_blank", "noopener,noreferrer")
+                }
+            }
     }
 
     /** Which cells a table header names: its column, or its row. Not among Laminar's attributes. */
