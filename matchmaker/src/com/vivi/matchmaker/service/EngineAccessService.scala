@@ -34,6 +34,7 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                 isRestricted <- repos.engineAccess.isRestricted(engine)
                 players <- repos.engineAccess.listPlayers(engine)
                 now <- IO.realTimeInstant
+                _ <- markExpired(session, repos, engine, now)
                 live <- codesThrough.fold(livePage(repos = repos, engine = engine, now = now, before = None))(through =>
                     liveThrough(repos = repos, engine = engine, now = now, through = through)
                 )
@@ -47,10 +48,17 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
             val repos = Repos(session)
             for {
                 game <- requireManager(repos, gameId, callerExternalId)
+                engine = EngineId(game.externalId)
                 now <- IO.realTimeInstant
-                page <- livePage(repos = repos, engine = EngineId(game.externalId), now = now, before = Some(before))
+                _ <- markExpired(session, repos, engine, now)
+                page <- livePage(repos = repos, engine = engine, now = now, before = Some(before))
             } yield page
         }
+
+    /* The write in a listing: the codes that have expired since the last one are marked so, in a transaction of their
+     * own, which decides nothing else and reads nothing back. */
+    private def markExpired(session: skunk.Session[IO], repos: Repos, engine: EngineId, now: Instant): IO[Unit] =
+        session.transaction.use(_ => repos.engineAccess.markExpired(engine, now))
 
     /* A page of live codes, those after `before` or the newest: one more is read than is answered, to tell whether
      * there are more. */

@@ -141,11 +141,12 @@ class EngineAccessRepo(session: Session[IO]) {
 
     /* Live codes newest first, with code_id below the first bound and at or above the second, as many as the limit:
      * through engine_access_code_live (V29), whose predicate the first two conditions repeat as it is written there.
-     * "Live" is EngineAccessCode.isRedeemable, stated in SQL. */
+     * "Live" is EngineAccessCode.isRedeemable, stated in SQL; the expiry is checked as well as the mark, for a code
+     * markExpired has passed over. */
     private val selectLiveCodes: Query[(EngineId, Instant, EngineAccessCodeId, EngineAccessCodeId, Int), CodeRow] =
         sql"""SELECT $codeColumns FROM engine_access_code
           WHERE external_id = $engineId
-            AND NOT is_revoked AND (max_uses IS NULL OR uses < max_uses)
+            AND NOT is_revoked AND NOT is_expired AND (max_uses IS NULL OR uses < max_uses)
             AND (expires_at IS NULL OR expires_at > $instant)
             AND code_id < $codeId AND code_id >= $codeId
           ORDER BY code_id DESC
@@ -156,9 +157,18 @@ class EngineAccessRepo(session: Session[IO]) {
     private val selectEndedCodes: Query[(EngineId, Instant, Int), CodeRow] =
         sql"""SELECT $codeColumns FROM engine_access_code
           WHERE external_id = $engineId
-            AND (is_revoked OR (max_uses IS NOT NULL AND uses >= max_uses) OR expires_at <= $instant)
+            AND (is_revoked OR is_expired OR (max_uses IS NOT NULL AND uses >= max_uses) OR expires_at <= $instant)
           ORDER BY code_id DESC
           LIMIT $int4""".query(codeRow)
+
+    /* Through engine_access_code_expiring (V29). A row another transaction holds -- a redeem of that code -- is
+     * skipped, not waited for: the next listing marks it. */
+    private val updateExpired: Command[(EngineId, Instant)] =
+        sql"""UPDATE engine_access_code SET is_expired = true
+          WHERE code_id IN (
+            SELECT code_id FROM engine_access_code
+            WHERE external_id = $engineId AND NOT is_expired AND expires_at IS NOT NULL AND expires_at <= $instant
+            FOR UPDATE SKIP LOCKED)""".command
 
     private val selectCodeByHashForUpdate: Query[Array[Byte], EngineId *: CodeRow] =
         sql"""SELECT external_id, $codeColumns FROM engine_access_code WHERE code_hash = $bytea FOR UPDATE"""
@@ -211,6 +221,12 @@ class EngineAccessRepo(session: Session[IO]) {
               )
             )
             .map(_.map(toCode))
+
+    /** Marks the engine's codes whose expiry has passed by `now` as expired, so that the live codes' index no longer
+      * holds them. Run before the codes are listed: a code it has not yet marked is still expired by its date, but is
+      * read past to be found so.
+      */
+    def markExpired(engine: EngineId, now: Instant): IO[Unit] = session.execute(updateExpired)((engine, now)).void
 
     /** The `limit` newest of the engine's codes that are revoked, expired or used up at `now`. */
     def endedCodes(engine: EngineId, now: Instant, limit: Int): IO[List[EngineAccessCode]] =

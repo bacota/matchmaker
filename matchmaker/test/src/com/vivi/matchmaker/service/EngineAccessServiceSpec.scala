@@ -236,6 +236,33 @@ class EngineAccessServiceSpec extends PropertySuite {
         assertEquals(seen.endedCodes.map(_.label), ended)
     }
 
+    test("a code whose expiry has passed is marked expired as the codes are listed, and listed with the ended") {
+        val (seen, marks) = run(for {
+            f <- fixture()
+            expiring <- access.createCode(
+              gameId = f.game.gameId,
+              label = "until tonight",
+              maxUses = None,
+              expiresAt = Some(Instant.now().plusSeconds(3600)),
+              callerExternalId = f.host.externalId
+            )
+            open <- makeCode(f, "open")
+            id = expiring.access.codeId.value
+            _ <- TestSession.resource.use(
+              _.execute(
+                sql"UPDATE engine_access_code SET expires_at = now() - interval '1 minute' WHERE code_id = $int8".command
+              )(id)
+            )
+            seen <- access.access(gameId = f.game.gameId, codesThrough = None, callerExternalId = f.host.externalId)
+            marks <- TestSession.resource.use(
+              _.unique(sql"SELECT is_expired FROM engine_access_code WHERE code_id = $int8".query(bool))(id)
+            )
+        } yield (seen, marks))
+        assertEquals(seen.liveCodes.codes.map(_.label), List("open"))
+        assertEquals(seen.endedCodes.map(_.label), List("until tonight"))
+        assert(marks, "the expired code is marked")
+    }
+
     test("the live codes come a page at a time, and a refresh reaches as far down as the list was paged") {
         val perPage = EngineAccessRepo.LiveCodesPerPage
         val (made, first, second, throughSecond, throughFirst) = run(for {
