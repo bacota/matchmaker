@@ -764,8 +764,15 @@ object Tournaments {
                             chosen = chosen,
                             me = me,
                             // A refused entry that turns out to be a barred one swaps the code box in for the
-                            // focused Enter: the focus goes to its field, if it fell.
-                            onBarred = () => if (Views.hasFocusFallen) focusFirst(entry, "input")
+                            // focused Enter: the focus goes to its field, if it fell, and what took its place is
+                            // said, as a field focused with no word of why reads as the Enter button gone wrong.
+                            onBarred = () => {
+                                if (Views.hasFocusFallen) focusFirst(entry, "input")
+                                Views.announce(
+                                  s"${d.summary.gameName} is open only to players its admins let in: " +
+                                      "enter an access code from them in place of Enter."
+                                )
+                            }
                           )
                   })
                   entry
