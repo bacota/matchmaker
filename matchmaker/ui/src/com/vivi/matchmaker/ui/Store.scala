@@ -413,28 +413,60 @@ object Store {
 
     /** Reads the game's engine's access again: its live codes as far down as they have been paged, so that a refresh
       * after an action leaves the list as long as it was. The furthest code is read as the request is let go.
+      *
+      * A page of older codes can land while the request is out, and the answer reaches only as far as the list did when
+      * it was asked: the codes held below that point are kept after it, with whether more follow them, rather than
+      * taken away.
       */
     def refreshEngineAccess(gameId: GameId): Future[Unit] =
-        reload(ApiClient.engineAccess(gameId, codesThrough = lastLiveCode(gameId)), Fetch.EngineAccess(gameId))(a =>
-            engineAccessByGame.update(_.updated(gameId, a))
-        )
+        reload(
+          {
+              val through = lastLiveCode(gameId)
+              ApiClient.engineAccess(gameId, codesThrough = through).map(a => (through, a))
+          },
+          Fetch.EngineAccess(gameId)
+        ) { (through, fresh) =>
+            engineAccessByGame.update(byGame =>
+                byGame.updated(
+                  gameId,
+                  (byGame.get(gameId), through) match {
+                      case (Some(held), Some(end)) =>
+                          val below = held.liveCodes.codes.filter(_.codeId.value < end.value)
+                          if (below.isEmpty) fresh
+                          else
+                              fresh.copy(liveCodes =
+                                  EngineAccessCodePage(
+                                    codes = fresh.liveCodes.codes ++ below,
+                                    hasMore = held.liveCodes.hasMore
+                                  )
+                              )
+                      case _ => fresh
+                  }
+                )
+            )
+        }
 
-    /** The next page of the game's engine's live codes, added to those held. Added only if the list still ends where it
-      * did when asked: a refresh that has replaced it meanwhile would leave the page out of place.
+    /** The next page of the game's engine's live codes, added to those held.
+      *
+      * The page is of the codes older than the one the list ended with when it was asked. A refresh may have replaced
+      * the list meanwhile, but it holds every live code down to where it ends, so the page is added after that end:
+      * only its codes older than the list's last, which leaves out none and repeats none.
       */
     def loadMoreLiveCodes(gameId: GameId): Future[Unit] =
         lastLiveCode(gameId).fold(Future.unit) { before =>
             reload(ApiClient.engineAccessCodes(gameId, before), Fetch.EngineAccessCodes(gameId)) { page =>
                 engineAccessByGame.update(byGame =>
                     byGame.get(gameId) match {
-                        case Some(a) if a.liveCodes.codes.lastOption.map(_.codeId).contains(before) =>
+                        case Some(a) =>
+                            val end = a.liveCodes.codes.lastOption.map(_.codeId.value)
+                            val older = page.codes.filter(c => end.forall(c.codeId.value < _))
                             byGame.updated(
                               gameId,
                               a.copy(liveCodes =
-                                  EngineAccessCodePage(codes = a.liveCodes.codes ++ page.codes, hasMore = page.hasMore)
+                                  EngineAccessCodePage(codes = a.liveCodes.codes ++ older, hasMore = page.hasMore)
                               )
                             )
-                        case _ => byGame
+                        case None => byGame
                     }
                 )
             }
