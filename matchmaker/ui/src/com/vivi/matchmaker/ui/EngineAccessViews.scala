@@ -40,11 +40,17 @@ object EngineAccessViews {
       */
     def redeemForm(replacedBy: Option[() => Unit] = None): HtmlElement = {
         readCodeFromLink()
-        val code = Var(Store.linkedAccessCode.now())
+        val linked = Store.linkedAccessCode.now()
+        val code = Var(linked)
         val said = Var("")
         val tip = freshTipId("access-code-tip")
         div(
           cls := "row access-redeem",
+          // The linked code, once redeemed in another box or dropped with the session, is taken out of this one too,
+          // unless it has been typed over.
+          Store.linkedAccessCode.signal.changes --> { now =>
+              if (linked.nonEmpty && now.isEmpty && code.now() == linked) code.set("")
+          },
           tipField(id = tip, caption = Labels.access.code, text = Tips.access.code)(
             input(
               tpe := "text",
