@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import java.security.SecureRandom
 import java.time.Instant
+import skunk.data.{TransactionAccessMode, TransactionIsolationLevel}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{EngineAccessRepo, Repos, TextCodec}
 
@@ -31,15 +32,24 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
             for {
                 game <- requireManager(repos, gameId, callerExternalId)
                 engine = EngineId(game.externalId)
-                isRestricted <- repos.engineAccess.isRestricted(engine)
-                players <- repos.engineAccess.listPlayers(engine)
                 now <- IO.realTimeInstant
                 _ <- markExpired(session, repos, engine, now)
-                live <- codesThrough.fold(livePage(repos = repos, engine = engine, now = now, before = None))(through =>
-                    liveThrough(repos = repos, engine = engine, now = now, through = through)
+                access <- oneSnapshot(session)(
+                  for {
+                      isRestricted <- repos.engineAccess.isRestricted(engine)
+                      players <- repos.engineAccess.listPlayers(engine)
+                      live <- codesThrough.fold(livePage(repos = repos, engine = engine, now = now, before = None))(
+                        through => liveThrough(repos = repos, engine = engine, now = now, through = through)
+                      )
+                      ended <- repos.engineAccess.endedCodes(engine, now, EngineAccessRepo.EndedCodesListed)
+                  } yield EngineAccess(
+                    isRestricted = isRestricted,
+                    players = players,
+                    liveCodes = live,
+                    endedCodes = ended
+                  )
                 )
-                ended <- repos.engineAccess.endedCodes(engine, now, EngineAccessRepo.EndedCodesListed)
-            } yield EngineAccess(isRestricted = isRestricted, players = players, liveCodes = live, endedCodes = ended)
+            } yield access
         }
 
     /** The page of the game's engine's live codes that comes after the code `before`, for its admins. */
@@ -51,9 +61,18 @@ class EngineAccessService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                 engine = EngineId(game.externalId)
                 now <- IO.realTimeInstant
                 _ <- markExpired(session, repos, engine, now)
+                // One statement, so one snapshot already: the page and whether more follow it are read together.
                 page <- livePage(repos = repos, engine = engine, now = now, before = Some(before))
             } yield page
         }
+
+    /* The reads of a listing in one snapshot: the live and ended codes are told apart by state a revoke or a redeem
+     * changes, so read in separate statements a code changed between them would be listed in both or neither, and
+     * `liveThrough`'s probe for older codes could disagree with the codes it follows. */
+    private def oneSnapshot[A](session: skunk.Session[IO])(reads: IO[A]): IO[A] =
+        session
+            .transaction(TransactionIsolationLevel.RepeatableRead, TransactionAccessMode.ReadOnly)
+            .use(_ => reads)
 
     /* The write in a listing: the codes that have expired since the last one are marked so, in a transaction of their
      * own, which decides nothing else and reads nothing back. */
