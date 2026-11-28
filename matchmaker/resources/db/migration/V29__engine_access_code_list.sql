@@ -8,10 +8,13 @@
 -- Until the mark is made, an expires_at in the past still means expired.
 ALTER TABLE engine_access_code ADD COLUMN is_expired BOOLEAN NOT NULL DEFAULT false;
 
--- The ended: walked newest first, past the live, stopping once enough are found. It leads with external_id, so it also
--- serves every lookup the single-column index did.
-CREATE INDEX engine_access_code_newest ON engine_access_code (external_id, code_id DESC);
+-- No query looks the codes up by engine alone any more: each one goes through one of the indexes below.
 DROP INDEX engine_access_code_external_id_idx;
+
+-- The ended: only codes revoked, marked expired or used up, the complement of the live, walked newest first until
+-- enough are found, so the live are not in it to be read past. The query states the predicate as written here.
+CREATE INDEX engine_access_code_ended ON engine_access_code (external_id, code_id DESC)
+    WHERE is_revoked OR is_expired OR (max_uses IS NOT NULL AND uses >= max_uses);
 
 -- The live: only codes neither revoked, nor marked expired, nor used up, so the ended are not in it to be read past.
 -- Its predicate is EngineAccessCode.isRedeemable's, with the mark for the expiry. The queries state it as written

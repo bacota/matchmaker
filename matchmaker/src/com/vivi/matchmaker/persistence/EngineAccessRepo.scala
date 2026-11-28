@@ -152,12 +152,24 @@ class EngineAccessRepo(session: Session[IO]) {
           ORDER BY code_id DESC
           LIMIT $int4""".query(codeRow)
 
-    /* The newest ended codes: engine_access_code_newest (V29) walked from the newest, past the live ones, until `limit`
-     * are found. Revoked codes are kept, so these only grow, and the rest are never read. */
-    private val selectEndedCodes: Query[(EngineId, Instant, Int), CodeRow] =
-        sql"""SELECT $codeColumns FROM engine_access_code
-          WHERE external_id = $engineId
-            AND (is_revoked OR is_expired OR (max_uses IS NOT NULL AND uses >= max_uses) OR expires_at <= $instant)
+    /* The newest ended codes, in two parts each limited, newest first: those revoked, marked expired or used up,
+     * through engine_access_code_ended (V29), whose predicate the first part's repeats as it is written there; and
+     * those expired by their date that markExpired has not yet marked (a row a redeem held), through
+     * engine_access_code_expiring, which holds only codes not yet marked. Neither reads past a live code. */
+    private val selectEndedCodes: Query[(EngineId, Int, EngineId, Instant, Int, Int), CodeRow] =
+        sql"""SELECT $codeColumns FROM (
+            (SELECT $codeColumns FROM engine_access_code
+              WHERE external_id = $engineId
+                AND (is_revoked OR is_expired OR (max_uses IS NOT NULL AND uses >= max_uses))
+              ORDER BY code_id DESC
+              LIMIT $int4)
+            UNION ALL
+            (SELECT $codeColumns FROM engine_access_code
+              WHERE external_id = $engineId AND NOT is_expired AND expires_at IS NOT NULL AND expires_at <= $instant
+                AND NOT is_revoked AND (max_uses IS NULL OR uses < max_uses)
+              ORDER BY code_id DESC
+              LIMIT $int4)
+          ) ended
           ORDER BY code_id DESC
           LIMIT $int4""".query(codeRow)
 
@@ -230,7 +242,7 @@ class EngineAccessRepo(session: Session[IO]) {
 
     /** The `limit` newest of the engine's codes that are revoked, expired or used up at `now`. */
     def endedCodes(engine: EngineId, now: Instant, limit: Int): IO[List[EngineAccessCode]] =
-        session.execute(selectEndedCodes)((engine, now, limit)).map(_.map(toCode))
+        session.execute(selectEndedCodes)((engine, limit, engine, now, limit, limit)).map(_.map(toCode))
 
     /** The code stored by this hash, and its engine, locked for the redeem its answer decides. */
     def codeByHashForUpdate(codeHash: Array[Byte]): IO[Option[FoundCode]] =
