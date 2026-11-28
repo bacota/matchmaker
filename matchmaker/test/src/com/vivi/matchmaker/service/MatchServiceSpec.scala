@@ -839,7 +839,9 @@ class MatchServiceSpec extends PropertySuite {
                           GameParameterValue(
                             gameId = GameId.unassigned,
                             gameParameterId = GameParameterId(0),
-                            value = v
+                            value = v,
+                            // A value shown under another name is listed under it.
+                            displayName = if (v == "hall") "Main hall" else v
                           )
                       ),
                       displayName = displayName
@@ -882,8 +884,8 @@ class MatchServiceSpec extends PropertySuite {
                     } yield (running.map(_.parameters), over.map(_.parameters))
                 }
                 val (running, over) = result.timeout(15.seconds).unsafeRunSync()
-                (running ?= List(Seq(MatchParameter("Rounds", "12"), MatchParameter("Venue", "hall")))) &&
-                (over ?= List(Seq(MatchParameter("Rounds", "6"), MatchParameter("Venue", "hall"))))
+                (running ?= List(Seq(MatchParameter("Rounds", "12"), MatchParameter("Venue", "Main hall")))) &&
+                (over ?= List(Seq(MatchParameter("Rounds", "6"), MatchParameter("Venue", "Main hall"))))
         }
     }
 

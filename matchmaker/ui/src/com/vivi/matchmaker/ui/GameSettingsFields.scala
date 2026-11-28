@@ -9,9 +9,20 @@ object GameSettingsFields {
     import Views.field
 
     /** One of a game's parameters as a competition's creator picks it: `name` is the key it is stored and sent to the
-      * engine under, `label` what they are shown for it.
+      * engine under, `label` what they are shown for it, and `valueLabels` what they are shown for each of `values`.
       */
-    private[ui] case class ParameterChoice(name: String, label: String, values: Seq[String], default: Option[String])
+    private[ui] case class ParameterChoice(
+        name: String,
+        label: String,
+        values: Seq[String],
+        valueLabels: Map[String, String],
+        default: Option[String]
+    ) {
+
+        /** What a player is shown for `value`: its display name, or the value itself where the game no longer has it.
+          */
+        def labelOf(value: String): String = valueLabels.getOrElse(value, value)
+    }
 
     /** The values that may be picked for each of the game's parameters, in the order [[Format.parameterValues]] puts
       * them. Parameters with no values to choose between are left out: there is nothing to offer.
@@ -23,10 +34,20 @@ object GameSettingsFields {
                   name = p.name,
                   label = p.displayName,
                   values = Format.parameterValues(p.values.map(_.value.toString)),
+                  valueLabels = p.values.map(v => v.value.toString -> v.displayName).toMap,
                   default = p.defaultValue.map(_.toString)
                 )
             )
             .filter(_.values.nonEmpty)
+
+    /** What a player is shown for `value` of the game's parameter `name`: the value's display name, or the value itself
+      * where the game has no such parameter or value.
+      */
+    private[ui] def shownValue(game: Option[Game], name: String, value: String): String =
+        game
+            .flatMap(_.parameters.find(_.name == name))
+            .flatMap(_.values.find(_.value.toString == value))
+            .fold(value)(_.displayName)
 
     /** A competition's parameter choices as its `settings` carries them: `{"rounds":"12"}`. The same flat object of
       * strings `ChallengeSettings` reads on the server.
@@ -73,7 +94,7 @@ object GameSettingsFields {
               select(
                 onChange.mapToValue --> (chosen => parameters.update(_.updated(choice.name, chosen))),
                 value <-- parameters.signal.map(_.getOrElse(choice.name, "")),
-                choice.values.map(v => option(value := v, v))
+                choice.values.map(v => option(value := v, choice.labelOf(v)))
               )
             )
         }

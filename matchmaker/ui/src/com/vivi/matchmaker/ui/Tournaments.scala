@@ -310,7 +310,7 @@ object Tournaments {
             .sortBy((name, _) => game.fold(0)(_.parameters.indexWhere(_.name == name)))
             .map { (name, chosen) =>
                 val shown = game.flatMap(_.parameters.find(_.name == name)).map(_.displayName).filter(_ != name)
-                s"${shown.getOrElse(name.capitalize)}: $chosen"
+                s"${shown.getOrElse(name.capitalize)}: ${GameSettingsFields.shownValue(game, name, chosen)}"
             }
         val ticked = List(
           t.settings.isInvitational -> Labels.competition.invitational,

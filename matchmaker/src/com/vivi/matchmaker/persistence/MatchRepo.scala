@@ -823,15 +823,16 @@ class MatchRepo(session: Session[IO]) {
      * Read plainly: this is a listing, which writes nothing. */
     private def selectParametersForGames(
         n: Int
-    ): Query[List[GameId], (GameId, String, String, Option[String], Arr[String])] =
+    ): Query[List[GameId], (GameId, String, String, Option[String], Arr[String], Arr[String])] =
         sql"""SELECT gp.game_id, gp.name, gp.display_name, gp.default_value,
-                 coalesce(array_agg(v.value ORDER BY v.value) FILTER (WHERE v.value IS NOT NULL), '{}')
+                 coalesce(array_agg(v.value ORDER BY v.value) FILTER (WHERE v.value IS NOT NULL), '{}'),
+                 coalesce(array_agg(v.display_name ORDER BY v.value) FILTER (WHERE v.value IS NOT NULL), '{}')
           FROM game_parameter gp
           LEFT JOIN game_parameter_value v
             ON v.game_id = gp.game_id AND v.game_parameter_id = gp.game_parameter_id
           WHERE gp.game_id IN (${gameId.list(n)})
           GROUP BY gp.game_id, gp.game_parameter_id
-          ORDER BY gp.game_id, gp.game_parameter_id""".query(gameId *: text *: text *: text.opt *: _text)
+          ORDER BY gp.game_id, gp.game_parameter_id""".query(gameId *: text *: text *: text.opt *: _text *: _text)
 
     /** The parameters of each of these games, in the order each game defines them. */
     def parametersForGames(gameIds: Set[GameId]): IO[List[GameParameterRow]] =
@@ -841,13 +842,14 @@ class MatchRepo(session: Session[IO]) {
             session
                 .execute(selectParametersForGames(ids.size))(ids)
                 .map(
-                  _.map((game, name, displayName, defaultValue, values) =>
+                  _.map((game, name, displayName, defaultValue, values, valueDisplayNames) =>
                       GameParameterRow(
                         gameId = game,
                         name = name,
                         displayName = displayName,
                         defaultValue = defaultValue,
-                        values = values.flattenTo(List)
+                        values = values.flattenTo(List),
+                        valueDisplayNames = values.flattenTo(List).zip(valueDisplayNames.flattenTo(List)).toMap
                       )
                   )
                 )
@@ -1018,13 +1020,16 @@ object MatchRepo {
         isResultsAskable: Boolean = false
     )
 
-    /** One of a game's parameters, with every value it may take: what a match's settings are resolved against. */
+    /** One of a game's parameters, with every value it may take: what a match's settings are resolved against.
+      * `valueDisplayNames` is what a player is shown for each of `values`.
+      */
     case class GameParameterRow(
         gameId: GameId,
         name: String,
         displayName: String,
         defaultValue: Option[String],
-        values: List[String]
+        values: List[String],
+        valueDisplayNames: Map[String, String]
     )
 
     /** The stretch of time one window of a completed list covers: finished from `from`, up to but not including

@@ -60,15 +60,45 @@ object GameForm {
         ParameterDraft(
           name = Var(parameter.name),
           displayName = Var(parameter.displayName),
-          values = Var(parameter.values.map(_.value).mkString(", ")),
+          values = Var(parameter.values.map(valueText).mkString(", ")),
           default = Var(parameter.defaultValue.getOrElse(""))
         )
 
-    /** The possible values of a parameter, as typed: one comma-separated list, because a parameter with three values is
-      * a sentence an admin can type and a list of three inputs is not.
+    /** One of a parameter's values as the values box shows it: the value alone where players are shown it as it is,
+      * else `value = display name`.
       */
-    private def splitValues(raw: String): Seq[String] =
-        raw.split(',').map(_.trim).filter(_.nonEmpty).toSeq.distinct
+    private def valueText(value: GameParameterValue[?]): String = {
+        val raw = value.value.toString
+        if (value.displayName == raw) raw else s"$raw = ${value.displayName}"
+    }
+
+    /** One of a parameter's values as typed: the value and what players are shown for it.
+      *
+      * Not a tuple of strings, which could be swapped without the compiler noticing.
+      */
+    private case class TypedValue(value: String, displayName: String)
+
+    /** The possible values of a parameter, as typed: one comma-separated list, because a parameter with three values is
+      * a sentence an admin can type and a list of three inputs is not. A value shown under another name is followed by
+      * `=` and that name, `3x3 = Small`; without one, or with a blank one, it is shown as it is. Split at the first
+      * `=`, so a display name may hold one.
+      */
+    private def splitValues(raw: String): Seq[TypedValue] =
+        raw
+            .split(',')
+            .map(_.trim)
+            .filter(_.nonEmpty)
+            .toSeq
+            .map { typed =>
+                typed.split("=", 2) match {
+                    case Array(value, shown) =>
+                        val v = value.trim
+                        TypedValue(value = v, displayName = Option(shown.trim).filter(_.nonEmpty).getOrElse(v))
+                    case _ => TypedValue(value = typed, displayName = typed)
+                }
+            }
+            .filter(_.value.nonEmpty)
+            .distinct
 
     /** `formKey` tells this form's tips apart from another form's on the same page, since every tip is found by id. */
     private def roleEditor(formKey: String, roles: Var[List[RoleDraft]]): HtmlElement =
@@ -292,7 +322,12 @@ object GameForm {
                   name = name,
                   defaultValue = Option(d.default.now().trim).filter(_.nonEmpty),
                   values = splitValues(d.values.now()).map(v =>
-                      GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+                      GameParameterValue(
+                        gameId = GameId.unassigned,
+                        gameParameterId = GameParameterId(0),
+                        value = v.value,
+                        displayName = v.displayName
+                      )
                   ),
                   // Left blank, a parameter is shown by its name -- the server does the same.
                   displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
@@ -300,9 +335,14 @@ object GameForm {
             }
             .filter(_.name.nonEmpty)
         val badDefault = named.find(p => p.defaultValue.exists(d => !p.values.exists(_.value == d)))
+        val repeatedValue = named.find(p => p.values.map(_.value).distinct.sizeIs != p.values.size)
+        val sameValueDisplayName = named.find(p => p.values.map(_.displayName).distinct.sizeIs != p.values.size)
         if (named.map(_.name).distinct.sizeIs != named.size) Left(ErrorText.gameForm.sameParameterName)
         else if (named.map(_.displayName).distinct.sizeIs != named.size)
             Left(ErrorText.gameForm.sameParameterDisplayName)
+        else if (repeatedValue.isDefined) Left(ErrorText.gameForm.repeatedValue(parameter = repeatedValue.get.name))
+        else if (sameValueDisplayName.isDefined)
+            Left(ErrorText.gameForm.sameValueDisplayName(parameter = sameValueDisplayName.get.name))
         else
             badDefault match {
                 case Some(p) =>

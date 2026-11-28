@@ -84,8 +84,14 @@ class WireFormatSpec extends FunSuite {
               gameParameterId = GameParameterId(2),
               name = "clock",
               defaultValue = Some("5+3"),
-              values =
-                  Seq(GameParameterValue(gameId = GameId(7), gameParameterId = GameParameterId(2), value = "10+0")),
+              values = Seq(
+                GameParameterValue(
+                  gameId = GameId(7),
+                  gameParameterId = GameParameterId(2),
+                  value = "10+0",
+                  displayName = "Rapid"
+                )
+              ),
               displayName = "Clock"
             )
           ),
@@ -98,6 +104,16 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.roles, game.roles)
         assertEquals(decoded.parameters.size, 1)
         assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("5+3"))
+        assertEquals(
+          decoded.parameters.head.values.map(v => v.value.toString -> v.displayName),
+          Seq("10+0" -> "Rapid")
+        )
+        // The competition form offers a value under its display name and still sends the engine the value.
+        val choice = GameSettingsFields.parameterChoices(decoded).head
+        assertEquals(choice.values, Seq("10+0"))
+        assertEquals(choice.labelOf("10+0"), "Rapid")
+        assertEquals(GameSettingsFields.shownValue(Some(decoded), "clock", "10+0"), "Rapid")
+        assertEquals(GameSettingsFields.shownValue(Some(decoded), "clock", "gone"), "gone")
     }
 
     // What the admin's "Add a game" form actually posts: no id yet, and both existential-typed

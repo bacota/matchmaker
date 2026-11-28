@@ -1,9 +1,16 @@
 package com.vivi.matchmaker.model
 
+/** One of the values a game parameter may take.
+  *
+  * `value` is what the engine is sent; `displayName` is what a player is shown for it, in the competition form's
+  * dropdown and in a match's settings — "Small" for a board size of `3x3`. Usually the two are the same, and a blank
+  * `displayName` is saved as the value.
+  */
 case class GameParameterValue[T](
     gameId: GameId,
     gameParameterId: GameParameterId,
-    value: T
+    value: T,
+    displayName: String
 )
 
 /** A setting a challenge or tournament picks for the game's engine — how many rounds a bout is, say.

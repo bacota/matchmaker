@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
-import com.vivi.matchmaker.TestMigration
+import com.vivi.matchmaker.{ErrorText, TestMigration}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{GameRepo, Generators, TestSession}
 import scala.concurrent.duration._
@@ -58,7 +58,12 @@ class GameServiceSpec extends PropertySuite {
                     name = "board size",
                     defaultValue = Some("3x3"),
                     values = Seq("3x3", "4x4", "5x5").map(v =>
-                        GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+                        GameParameterValue(
+                          gameId = GameId.unassigned,
+                          gameParameterId = GameParameterId(0),
+                          value = v,
+                          displayName = v
+                        )
                     ),
                     displayName = "Board size"
                   )
@@ -93,7 +98,12 @@ class GameServiceSpec extends PropertySuite {
                     name = "board size",
                     defaultValue = Some(" 3x3"),
                     values = Seq(" 3x3 ", "4x4\n").map(v =>
-                        GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+                        GameParameterValue(
+                          gameId = GameId.unassigned,
+                          gameParameterId = GameParameterId(0),
+                          value = v,
+                          displayName = v
+                        )
                     ),
                     displayName = "Board size"
                   )
@@ -504,7 +514,12 @@ class GameServiceSpec extends PropertySuite {
                     name = "board size",
                     defaultValue = Some("9x9"),
                     values = Seq("3x3").map(v =>
-                        GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+                        GameParameterValue(
+                          gameId = GameId.unassigned,
+                          gameParameterId = GameParameterId(0),
+                          value = v,
+                          displayName = v
+                        )
                     ),
                     displayName = "Board size"
                   )
@@ -548,6 +563,50 @@ class GameServiceSpec extends PropertySuite {
         } yield listed.get.parameters.map(p => p.name -> p.displayName).toMap
 
         assertEquals(result.unsafeRunSync(), Map("board_size" -> "Board size", "rounds" -> "rounds"))
+    }
+
+    private def boardSize(values: (String, String)*): GameParameter[String] =
+        GameParameter[String](
+          gameId = GameId.unassigned,
+          gameParameterId = GameParameterId(0),
+          name = "board_size",
+          defaultValue = None,
+          values = values.map((v, shown) =>
+              GameParameterValue(
+                gameId = GameId.unassigned,
+                gameParameterId = GameParameterId(0),
+                value = v,
+                displayName = shown
+              )
+          ),
+          displayName = "Board size"
+        )
+
+    test("createOrUpdate stores a value's display name trimmed, and a blank one as the value") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            game = base.copy(parameters = Seq(boardSize("3x3" -> "  Small ", " 5x5 " -> "   ")))
+            created <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game)
+            listed <- gameService.list(admin.externalId, GameScope.All).map(_.find(_.gameId == created.gameId))
+        } yield listed.get.parameters.head.values.map(v => v.value.toString -> v.displayName).toMap
+
+        assertEquals(result.unsafeRunSync(), Map("3x3" -> "Small", "5x5" -> "5x5"))
+    }
+
+    // The schema would refuse it too, by its unique constraint, but as a 500.
+    test("createOrUpdate refuses a parameter that shows two values under the same name") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            game = base.copy(parameters = Seq(boardSize("3x3" -> "Small", "4x4" -> "Small")))
+            attempt <- gameService.createOrUpdate(externalUserId = admin.externalId, game = game).attempt
+        } yield attempt.left.exists {
+            case e: ValidationError => e.getMessage.contains(ErrorText.game.sameValueDisplayName("board_size"))
+            case _                  => false
+        }
+
+        assert(result.unsafeRunSync())
     }
 
     test("createOrUpdate stores a role's display name trimmed, and a blank one as the name") {
@@ -851,7 +910,8 @@ class GameServiceSpec extends PropertySuite {
                   GameParameterValue(
                     gameId = GameId.unassigned,
                     gameParameterId = GameParameterId.unassigned,
-                    value = v
+                    value = v,
+                    displayName = v
                   )
               ),
               displayName = name

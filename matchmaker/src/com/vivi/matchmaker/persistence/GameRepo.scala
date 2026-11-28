@@ -166,8 +166,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val clearDefaultValues: Command[GameId] =
         sql"UPDATE game_parameter SET default_value = NULL WHERE game_id = $gameId".command
 
-    private val insertParameterValueStmt: Command[(GameId, GameParameterId, T)] =
-        sql"INSERT INTO game_parameter_value (game_id, game_parameter_id, value) VALUES ($gameId, $gameParameterId, $value)".command
+    private val insertParameterValueStmt: Command[(GameId, GameParameterId, T, String)] =
+        sql"""INSERT INTO game_parameter_value (game_id, game_parameter_id, value, display_name)
+          VALUES ($gameId, $gameParameterId, $value, $text)""".command
 
     private val deleteParameterValues: Command[GameId] =
         sql"DELETE FROM game_parameter_value WHERE game_id = $gameId".command
@@ -180,9 +181,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           FROM game_parameter WHERE game_id = $gameId"""
             .query(gameParameterId *: text *: value.opt *: text)
 
-    private val selectParameterValues: Query[(GameId, GameParameterId), T] =
-        sql"SELECT value FROM game_parameter_value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId"
-            .query(value)
+    private val selectParameterValues: Query[(GameId, GameParameterId), (T, String)] =
+        sql"""SELECT value, display_name FROM game_parameter_value
+          WHERE game_id = $gameId AND game_parameter_id = $gameParameterId"""
+            .query(value *: text)
 
     def create(game: Game): IO[Game] =
         for {
@@ -378,7 +380,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         value: GameParameterValue[T]
     ): IO[GameParameterValue[T]] =
         session
-            .execute(insertParameterValueStmt)((gameId, parameterId, value.value))
+            .execute(insertParameterValueStmt)((gameId, parameterId, value.value, value.displayName))
             .as(value.copy(gameId = gameId, gameParameterId = parameterId))
 
     private def readParameters(gameId: GameId): IO[Seq[GameParameter[T]]] =
@@ -401,7 +403,16 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private def readParameterValues(gameId: GameId, parameterId: GameParameterId): IO[Seq[GameParameterValue[T]]] =
         session
             .execute(selectParameterValues)((gameId, parameterId))
-            .map(_.map(v => GameParameterValue(gameId = gameId, gameParameterId = parameterId, value = v)))
+            .map(
+              _.map((v, displayName) =>
+                  GameParameterValue(
+                    gameId = gameId,
+                    gameParameterId = parameterId,
+                    value = v,
+                    displayName = displayName
+                  )
+              )
+            )
 
     /** One row of the listing join: a game, optionally one of its roles, and optionally one of its parameters together
       * with one of that parameter's values.
@@ -436,7 +447,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         parameterName: Option[String],
         parameterDefault: Option[T],
         parameterDisplayName: Option[String],
-        parameterValue: Option[T]
+        parameterValue: Option[T],
+        parameterValueDisplayName: Option[String]
     )
 
     // Roles and parameter values are independent one-to-many branches off game, so joining both in
@@ -451,7 +463,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                  g.move_type, g.max_turns, g.is_trusted,
                  r.game_role_id, r.name, r.type, r.display_name, r.preference_level,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
-                 v.value
+                 v.value, v.display_name
           FROM game g
           LEFT JOIN game_role r ON r.game_id = g.game_id AND NOT r.is_retired
           LEFT JOIN game_parameter p ON p.game_id = g.game_id
@@ -462,7 +474,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             .query(
               gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
                   int4.opt *: int4.opt *: moveType *: int4.opt *: bool *: int4.opt *: text.opt *: roleType.opt *: text.opt *: int4.opt *:
-                  int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
+                  int4.opt *: text.opt *: value.opt *: text.opt *: value.opt *: text.opt
             )
 
     private val selectIdsNamed: Query[Arr[String], GameId] =
@@ -533,9 +545,17 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                               name = name,
                               defaultValue = first.parameterDefault,
                               values = parameterRows
-                                  .flatMap(_._3.parameterValue)
-                                  .distinct
-                                  .map(GameParameterValue(id, GameParameterId(parameterId), _)),
+                                  .flatMap(row => row._3.parameterValue.map(v => (v, row._3.parameterValueDisplayName)))
+                                  .distinctBy(_._1)
+                                  .map((v, displayName) =>
+                                      GameParameterValue(
+                                        gameId = id,
+                                        gameParameterId = GameParameterId(parameterId),
+                                        value = v,
+                                        // NOT NULL in the table; only the outer join makes it optional here.
+                                        displayName = displayName.getOrElse(codec.encode(v))
+                                      )
+                                  ),
                               // NOT NULL in the table; only the outer join makes it optional here.
                               displayName = first.parameterDisplayName.getOrElse(name)
                             )

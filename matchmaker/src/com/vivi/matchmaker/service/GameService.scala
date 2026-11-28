@@ -240,7 +240,8 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * thing that can post a game.
       *
       * The game's, a role's and a parameter's display names are trimmed too, and a blank one is the name: the form
-      * sends what was typed, and an empty field means it is shown by its name.
+      * sends what was typed, and an empty field means it is shown by its name. A parameter value's display name is
+      * trimmed the same way, and a blank one is the value.
       */
     private def normalize(game: Game): Game =
         game.copy(
@@ -263,7 +264,13 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 name = parameter.name.trim,
                 displayName = Option(parameter.displayName.trim).filter(_.nonEmpty).getOrElse(parameter.name.trim),
                 defaultValue = parameter.defaultValue.map(trimValue),
-                values = parameter.values.map(value => value.copy(value = trimValue(value.value)))
+                values = parameter.values.map { value =>
+                    val trimmed = trimValue(value.value)
+                    value.copy(
+                      value = trimmed,
+                      displayName = Option(value.displayName.trim).filter(_.nonEmpty).getOrElse(codec.encode(trimmed))
+                    )
+                }
               )
           }
         )
@@ -336,6 +343,10 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 for {
                     _ <- IO.raiseWhen(values.distinct.sizeIs != values.size)(
                       ValidationError(ErrorText.game.repeatedValue(parameter.name))
+                    )
+                    // A player picking from the dropdown could not tell two values shown alike apart.
+                    _ <- IO.raiseWhen(parameter.values.map(_.displayName).distinct.sizeIs != values.size)(
+                      ValidationError(ErrorText.game.sameValueDisplayName(parameter.name))
                     )
                     // game_parameter.default_value is a foreign key to game_parameter_value, so a default
                     // that is not one of the parameter's values cannot be stored at all.

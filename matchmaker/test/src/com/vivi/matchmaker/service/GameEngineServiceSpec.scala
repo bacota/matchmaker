@@ -387,7 +387,12 @@ class GameEngineServiceSpec extends PropertySuite {
           name = "rounds",
           defaultValue = Some("4"),
           values = Seq("3", "4", "5").map(v =>
-              GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+              GameParameterValue(
+                gameId = GameId.unassigned,
+                gameParameterId = GameParameterId(0),
+                value = v,
+                displayName = v
+              )
           ),
           displayName = "Rounds"
         )

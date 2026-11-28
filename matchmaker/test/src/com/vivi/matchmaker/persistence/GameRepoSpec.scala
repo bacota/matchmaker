@@ -14,8 +14,14 @@ class GameRepoSpec extends PropertySuite {
       */
     private def gameWithFanOut: Game = {
         val base = Generators.genGame().sample.get.copy(isActive = true)
-        val values = Seq("a", "b", "c").map(v =>
-            GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+        // One value shown under another name, as an admin may give it.
+        val values = Seq("a" -> "a", "b" -> "b", "c" -> "Charlie").map((v, shown) =>
+            GameParameterValue(
+              gameId = GameId.unassigned,
+              gameParameterId = GameParameterId(0),
+              value = v,
+              displayName = shown
+            )
         )
         base.copy(
           roles = Seq(
@@ -112,7 +118,10 @@ class GameRepoSpec extends PropertySuite {
         assertEquals(parameter.name, "parameter")
         assertEquals(parameter.displayName, "Parameter")
         assertEquals(parameter.defaultValue, Some("a"))
-        assertEquals(parameter.values.map(_.value).toSet, Set("a", "b", "c"))
+        assertEquals(
+          parameter.values.map(v => v.value -> v.displayName).toSet,
+          Set("a" -> "a", "b" -> "b", "c" -> "Charlie")
+        )
         assertEquals(parameter.values.size, 3)
     }
 
@@ -135,8 +144,12 @@ class GameRepoSpec extends PropertySuite {
         assertEquals(listed.roles.toSet, read.roles.toSet)
         assertEquals(listed.parameters.map(_.displayName), read.parameters.map(_.displayName))
         assertEquals(
-          listed.parameters.map(_.asInstanceOf[GameParameter[String]].values.map(_.value).toSet).toSet,
-          read.parameters.map(_.asInstanceOf[GameParameter[String]].values.map(_.value).toSet).toSet
+          listed.parameters
+              .map(_.asInstanceOf[GameParameter[String]].values.map(v => v.value -> v.displayName).toSet)
+              .toSet,
+          read.parameters
+              .map(_.asInstanceOf[GameParameter[String]].values.map(v => v.value -> v.displayName).toSet)
+              .toSet
         )
     }
 

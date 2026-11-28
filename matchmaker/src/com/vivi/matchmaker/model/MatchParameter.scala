@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.model
 
-/** One of a game's parameters as a match is being played under it: the name players are shown for it, and its value.
+/** One of a game's parameters as a match is being played under it: the name players are shown for it, and what they are
+  * shown for its value (`GameParameterValue.displayName`).
   *
   * The value is its tournament's choice where it made one the game still allows, and the game's default otherwise —
   * what `ChallengeSettings.resolve` tells the engine as the match is created. Resolved when the list is read, against

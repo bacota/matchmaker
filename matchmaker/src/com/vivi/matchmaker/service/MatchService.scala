@@ -301,7 +301,11 @@ class MatchService(
                 )
                 summary.copy(parameters =
                     ofGame
-                        .map(p => MatchParameter(p.displayName, resolved.getOrElse(p.name, "")))
+                        .map { p =>
+                            val value = resolved.getOrElse(p.name, "")
+                            // Shown as the game shows it in the dropdown it was chosen from.
+                            MatchParameter(p.displayName, p.valueDisplayNames.getOrElse(value, value))
+                        }
                         .filter(_.value.nonEmpty)
                 )
             }

@@ -70,8 +70,8 @@ VALUES (:game_id, 'Red', 'required', 'Red'), (:game_id, 'Blue', 'required', 'Blu
 INSERT INTO game_parameter (game_id, name, display_name) VALUES (:game_id, 'rounds', 'Rounds')
 RETURNING game_parameter_id AS rounds_id \gset
 
-INSERT INTO game_parameter_value (game_id, game_parameter_id, value)
-SELECT :game_id, :rounds_id, n::text FROM generate_series(3, 25) AS n;
+INSERT INTO game_parameter_value (game_id, game_parameter_id, value, display_name)
+SELECT :game_id, :rounds_id, n::text, n::text FROM generate_series(3, 25) AS n;
 
 UPDATE game_parameter SET default_value = '10'
  WHERE game_id = :game_id AND game_parameter_id = :rounds_id;

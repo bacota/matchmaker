@@ -39,8 +39,14 @@ class JsonSpec extends FunSuite {
               gameParameterId = GameParameterId(3),
               name = "parameter",
               defaultValue = Some("default"),
-              values =
-                  Seq(GameParameterValue(gameId = GameId(1), gameParameterId = GameParameterId(3), value = "default")),
+              values = Seq(
+                GameParameterValue(
+                  gameId = GameId(1),
+                  gameParameterId = GameParameterId(3),
+                  value = "default",
+                  displayName = "default"
+                )
+              ),
               displayName = "Parameter"
             )
           ),
